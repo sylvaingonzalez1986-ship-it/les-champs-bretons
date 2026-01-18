@@ -48,7 +48,7 @@
     "burnt": "^0.13.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-    "expo": "53.0.22",
+    "expo": "~53.0.25",
     "expo-application": "~6.1.4",
     "expo-asset": "11.1.5",
     "expo-auth-session": "^6.0.3",
