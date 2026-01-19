@@ -111,6 +111,7 @@ function supabaseToProducer(sp: SupabaseProducer, products: ProducerProduct[]): 
     name: sp.name,
     companyName: sp.profile?.company_name ?? undefined,
     businessName: sp.profile?.business_name ?? undefined,
+    profileId: sp.profile_id ?? undefined, // Lien vers le profil utilisateur
     email: sp.email ?? undefined,
     region: sp.region,
     department: sp.department,
@@ -165,6 +166,7 @@ function producerToSupabase(p: Producer): Omit<SupabaseProducer, 'created_at' | 
     culture_outdoor: p.cultureOutdoor ?? null,
     culture_greenhouse: p.cultureGreenhouse ?? null,
     culture_indoor: p.cultureIndoor ?? null,
+    profile_id: p.profileId ?? p.id, // Use profileId if set, fallback to id
   };
 }
 
@@ -185,7 +187,17 @@ export async function fetchProducers(): Promise<SupabaseProducer[]> {
     throw new Error(`Erreur récupération producteurs: ${error}`);
   }
 
-  return response.json();
+  const producers = await response.json();
+
+  // Debug: log producer images and profile_id
+  console.log('[Producers] Fetched producers:', producers.map((p: SupabaseProducer) => ({
+    id: p.id,
+    name: p.name,
+    profile_id: p.profile_id || 'NULL',
+    image: p.image ? 'SET' : 'NULL',
+  })));
+
+  return producers;
 }
 
 // Add producer to Supabase - WITH AUTHENTICATION
@@ -249,6 +261,9 @@ export async function updateProducerInSupabase(id: string, producer: Partial<Pro
   if (producer.cultureOutdoor !== undefined) updates.culture_outdoor = producer.cultureOutdoor;
   if (producer.cultureGreenhouse !== undefined) updates.culture_greenhouse = producer.cultureGreenhouse;
   if (producer.cultureIndoor !== undefined) updates.culture_indoor = producer.cultureIndoor;
+
+  // Ensure profile_id is always set to link producer to user
+  if (producer.profileId !== undefined) updates.profile_id = producer.profileId;
 
   updates.updated_at = new Date().toISOString();
 

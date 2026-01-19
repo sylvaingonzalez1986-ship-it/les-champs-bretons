@@ -979,6 +979,16 @@ function ProducerCarousel({
                   source={getImageSource(producer.image)}
                   className="w-full h-full"
                   resizeMode="cover"
+                  onError={(e) => {
+                    console.log('[MarcheLocal] Image load error for producer:', producer.name, {
+                      image: producer.image,
+                      imageSource: getImageSource(producer.image),
+                      error: e.nativeEvent.error
+                    });
+                  }}
+                  onLoad={() => {
+                    console.log('[MarcheLocal] Image loaded successfully for:', producer.name);
+                  }}
                 />
               ) : (
                 <View className="w-full h-full items-center justify-center" style={{ backgroundColor: 'rgba(255, 255, 255, 0.06)' }}>

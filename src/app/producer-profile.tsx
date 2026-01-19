@@ -59,9 +59,17 @@ export default function ProducerProfileScreen() {
   const { producers, addProducer, updateProducer } = useProducerStore();
 
   // Find existing producer profile linked to this user
+  // Check by profileId (Supabase link), or by id matching profile.id, or by name matching company_name
   const existingProducer = producers.find(
-    (p) => p.id === profile?.id || p.name === profile?.company_name
+    (p) => p.profileId === profile?.id || p.id === profile?.id || p.name === profile?.company_name
   );
+
+  // Debug log
+  React.useEffect(() => {
+    console.log('[ProducerProfile] Looking for producer with profile.id:', profile?.id);
+    console.log('[ProducerProfile] Found producer:', existingProducer?.id, existingProducer?.name, 'profileId:', existingProducer?.profileId);
+    console.log('[ProducerProfile] Total producers in store:', producers.length);
+  }, [profile?.id, existingProducer, producers.length]);
 
   // Form state
   const [name, setName] = useState('');
@@ -165,6 +173,7 @@ export default function ProducerProfileScreen() {
       const producerData: Producer = {
         id: existingProducer?.id || profile?.id || `producer-${Date.now()}`,
         name: name.trim(),
+        profileId: profile?.id, // Lien vers le profil utilisateur pour retrouver la fiche
         email: email.trim() || undefined,
         region: region.trim(),
         department: department.trim(),
@@ -199,22 +208,44 @@ export default function ProducerProfileScreen() {
         },
       };
 
+      console.log('[ProducerProfile] Saving producer data:', producerData.id, producerData.name, 'profileId:', producerData.profileId);
+
+      // Sync to Supabase FIRST (source of truth)
+      if (isSupabaseSyncConfigured()) {
+        try {
+          console.log('[ProducerProfile] Syncing to Supabase...');
+          await syncProducerToSupabase(producerData);
+          console.log('[ProducerProfile] Successfully synced to Supabase');
+        } catch (error) {
+          console.error('[ProducerProfile] Error syncing to Supabase:', error);
+          // Show error but continue to save locally
+          Alert.alert(
+            'Attention',
+            'La synchronisation avec le serveur a échoué. Les données sont sauvegardées localement et seront synchronisées plus tard.',
+            [{ text: 'OK' }]
+          );
+        }
+      }
+
+      // Then update local store
       if (existingProducer) {
-        // Update existing producer
+        console.log('[ProducerProfile] Updating existing producer in local store');
         updateProducer(existingProducer.id, producerData);
       } else {
-        // Add new producer
+        console.log('[ProducerProfile] Adding new producer to local store');
         addProducer(producerData);
       }
 
-      // Sync to Supabase if configured
-      if (isSupabaseSyncConfigured()) {
-        try {
-          await syncProducerToSupabase(producerData);
-        } catch (error) {
-          console.error('Error syncing producer to Supabase:', error);
+      // Verify the data was saved
+      setTimeout(() => {
+        const { producers } = useProducerStore.getState();
+        const savedProducer = producers.find((p) => p.id === producerData.id);
+        if (savedProducer) {
+          console.log('[ProducerProfile] Verified: Producer saved in store:', savedProducer.name);
+        } else {
+          console.error('[ProducerProfile] WARNING: Producer not found in store after save!');
         }
-      }
+      }, 100);
 
       setSuccessMessage('Fiche producteur enregistrée !');
       setTimeout(() => {
@@ -222,7 +253,7 @@ export default function ProducerProfileScreen() {
         router.canGoBack() ? router.back() : router.replace('/(tabs)/ma-boutique');
       }, 1500);
     } catch (error) {
-      console.error('Error saving producer profile:', error);
+      console.error('[ProducerProfile] Error saving producer profile:', error);
       Alert.alert('Erreur', 'Impossible de sauvegarder la fiche producteur');
     } finally {
       setIsSaving(false);

@@ -5,6 +5,7 @@ export interface Producer {
   name: string;
   companyName?: string; // Nom de l'entreprise (prioritaire pour l'affichage)
   businessName?: string; // Nom commercial
+  profileId?: string; // Lien vers le profil utilisateur Supabase (auth.uid)
   region: string;
   department: string;
   city: string;

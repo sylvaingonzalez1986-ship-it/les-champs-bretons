@@ -98,13 +98,37 @@ const PLAYLIST_TRACKS: Track[] = [
   },
 ];
 
-// Bande son de fond (joue en boucle pour tous)
-const BACKGROUND_TRACK = {
-  id: 'background',
-  title: 'Guinguette du Canal',
-  artist: 'Ambiance',
-  audioSource: require('../../assets/guinguette-du-canal-pro.mp3'),
-};
+// Bande sons de fond Guinguette (3 sons qui tournent en boucle, ordre aléatoire)
+const BACKGROUND_TRACKS = [
+  {
+    id: 'background-1',
+    title: 'Guinguette du Canal',
+    artist: 'Ambiance',
+    audioSource: require('../../assets/guinguette-du-canal-pro.mp3'),
+  },
+  {
+    id: 'background-2',
+    title: 'Guinguette du Canal 2',
+    artist: 'Ambiance',
+    audioSource: require('../../assets/guinguette-2.mp3'),
+  },
+  {
+    id: 'background-3',
+    title: 'Guinguette du Canal 3',
+    artist: 'Ambiance',
+    audioSource: require('../../assets/guinguette-3.mp3'),
+  },
+];
+
+// Fonction pour mélanger un tableau (Fisher-Yates shuffle)
+function shuffleArray<T>(array: T[]): T[] {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
 
 interface AudioProviderProps {
   children: React.ReactNode;
@@ -114,6 +138,10 @@ export function AudioProvider({ children }: AudioProviderProps) {
   // Refs pour les sons
   const backgroundSoundRef = useRef<Audio.Sound | null>(null);
   const playlistSoundRef = useRef<Audio.Sound | null>(null);
+
+  // Refs pour la bande son de fond (3 sons en boucle, ordre aléatoire)
+  const backgroundTracksRef = useRef<typeof BACKGROUND_TRACKS>(shuffleArray(BACKGROUND_TRACKS));
+  const backgroundTrackIndexRef = useRef(0);
 
   // État de la bande son de fond
   const [isBackgroundMusicPlaying, setIsBackgroundMusicPlaying] = useState(false);
@@ -174,31 +202,57 @@ export function AudioProvider({ children }: AudioProviderProps) {
     }
   };
 
-  // Démarrer la bande son de fond
+  // Démarrer la bande son de fond (joue les 3 sons en boucle, ordre aléatoire)
   const startBackgroundMusic = async () => {
     if (backgroundSoundRef.current) return; // Déjà en cours
 
-    try {
-      console.log('[AudioContext] Starting background music: Guinguette du Canal');
-      const { sound } = await Audio.Sound.createAsync(
-        BACKGROUND_TRACK.audioSource,
-        {
-          shouldPlay: true,
-          volume: 0.15, // Volume bas pour la bande son de fond
-          isLooping: true,
+    const playNextBackgroundTrack = async () => {
+      if (!isMountedRef.current) return;
+
+      const tracks = backgroundTracksRef.current;
+      const currentIndex = backgroundTrackIndexRef.current;
+      const track = tracks[currentIndex];
+
+      try {
+        console.log('[AudioContext] Playing background track:', track.title, '(' + (currentIndex + 1) + '/' + tracks.length + ')');
+
+        const { sound } = await Audio.Sound.createAsync(
+          track.audioSource,
+          {
+            shouldPlay: true,
+            volume: 0.15, // Volume bas pour la bande son de fond
+            isLooping: false, // On gère la boucle manuellement pour enchaîner les 3 sons
+          }
+        );
+
+        if (!isMountedRef.current) {
+          await sound.unloadAsync();
+          return;
         }
-      );
 
-      if (!isMountedRef.current) {
-        await sound.unloadAsync();
-        return;
+        backgroundSoundRef.current = sound;
+        setIsBackgroundMusicPlaying(true);
+
+        // Écouter la fin du morceau pour passer au suivant
+        sound.setOnPlaybackStatusUpdate((status) => {
+          if (status.isLoaded && status.didJustFinish) {
+            // Passer au morceau suivant
+            backgroundTrackIndexRef.current = (backgroundTrackIndexRef.current + 1) % tracks.length;
+
+            // Nettoyer l'ancien son
+            sound.unloadAsync().then(() => {
+              backgroundSoundRef.current = null;
+              // Jouer le suivant
+              playNextBackgroundTrack();
+            });
+          }
+        });
+      } catch (error) {
+        console.error('[AudioContext] Error playing background track:', error);
       }
+    };
 
-      backgroundSoundRef.current = sound;
-      setIsBackgroundMusicPlaying(true);
-    } catch (error) {
-      console.error('[AudioContext] Error starting background music:', error);
-    }
+    await playNextBackgroundTrack();
   };
 
   // Pauser la bande son de fond (interne)

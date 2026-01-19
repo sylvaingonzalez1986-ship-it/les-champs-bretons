@@ -10,25 +10,23 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-
       "android": {
-  "edgeToEdgeEnabled": true,
-  "package": "com.leschanvriersunis.app",
-  "permissions": [
-    "INTERNET",
-    "ACCESS_NETWORK_STATE",
-    "READ_MEDIA_IMAGES",
-    "READ_MEDIA_AUDIO"
-  ],
-  "adaptiveIcon": {
-    "foregroundImage": "./assets/adaptive-icon.png",
-    "backgroundImage": "./assets/adaptive-icon-background.png",
-    "backgroundColor": "#FFFFFF"
-  },
-  "versionCode": 1,
-  "googlePlayServicesVersion": "33.2.0"
-}
-
+        "edgeToEdgeEnabled": true,
+        "package": "com.leschanvriersunis.app",
+        "permissions": [
+          "INTERNET",
+          "ACCESS_NETWORK_STATE",
+          "READ_MEDIA_IMAGES",
+          "READ_MEDIA_AUDIO"
+        ],
+        "adaptiveIcon": {
+          "foregroundImage": "./assets/adaptive-icon.png",
+          "backgroundImage": "./assets/adaptive-icon-background.png",
+          "backgroundColor": "#FFFFFF"
+        },
+        "versionCode": 1,
+        "googlePlayServicesVersion": "33.2.0"
+      }
     },
     "plugins": [
       "expo-router",
@@ -45,6 +43,9 @@
       "eas": {
         "projectId": "22cfd01a-59e3-43fa-9ba6-15688ef98af2"
       }
+    },
+    "android": {
+      "package": "com.leschampsbretons.vibecode"
     }
   }
 }

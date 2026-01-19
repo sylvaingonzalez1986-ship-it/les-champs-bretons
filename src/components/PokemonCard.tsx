@@ -245,6 +245,16 @@ export const PokemonCard = ({
                   source={getImageSource(producer.image)}
                   className="w-full h-full"
                   resizeMode="cover"
+                  onError={(e) => {
+                    console.log('[PokemonCard] Image load error for producer:', producer.name, {
+                      image: producer.image,
+                      imageSource: getImageSource(producer.image),
+                      error: e.nativeEvent.error
+                    });
+                  }}
+                  onLoad={() => {
+                    console.log('[PokemonCard] Image loaded successfully for:', producer.name);
+                  }}
                 />
               ) : (
                 <View className="w-full h-full items-center justify-center" style={{ backgroundColor: `${COLORS.text.white}10` }}>

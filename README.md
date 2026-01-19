@@ -2,6 +2,48 @@
 
 Application de tirage au sort de produits chanvre français. Les utilisateurs peuvent ouvrir des box mystères pour recevoir des produits aléatoires de producteurs français, avec un système de rareté.
 
+## Correctifs Récents (2026-01-19)
+
+### Bug Android - Fiche producteur qui se vide
+**Problème**: Sur Android, quand un producteur enregistre sa fiche, elle semble ne pas s'enregistrer et se revide après redémarrage.
+
+**Cause identifiée**:
+- Le champ `profile_id` n'était pas inclus lors de la synchronisation avec Supabase
+- Sans ce lien, la fiche n'était pas associée au profil utilisateur
+- Lors de la synchronisation automatique, l'app ne retrouvait pas la fiche du producteur car elle cherchait par `p.id === profile.id` mais l'ID du producteur Supabase est différent de l'ID du profil
+
+**Correctifs appliqués**:
+1. Ajout du champ `profileId` dans l'interface `Producer` (src/lib/producers.ts)
+2. Mapping du `profile_id` dans `supabaseToProducer()` (src/lib/supabase-sync.ts)
+3. Inclusion du `profileId` lors de la sauvegarde (src/app/producer-profile.tsx)
+4. Recherche du producteur par `profileId` en priorité (src/app/producer-profile.tsx:62-64)
+5. Synchronisation Supabase AVANT le store local pour garantir la source de vérité
+6. Ajout de logs détaillés pour le debugging
+
+**À tester**: Demander à un bêta-testeur Android de créer/modifier sa fiche producteur et vérifier qu'elle persiste après fermeture/réouverture de l'app.
+
+---
+
+### Bug - Photos des producteurs n'apparaissent pas
+**Problème**: Les photos des producteurs n'apparaissent pas dans les cartes Pokémon et leur boutique (Marché local, Map).
+
+**Diagnostic en cours**:
+- Ajout de logs `onError` et `onLoad` sur les composants `<Image>` pour diagnostiquer
+- Logs ajoutés dans `PokemonCard.tsx` et `marche-local.tsx`
+- Vérifier dans les logs si l'URL de l'image est correcte et si elle charge
+
+**Causes possibles**:
+1. **Bucket Supabase Storage non public**: Les images uploadées sur Supabase ne sont pas accessibles publiquement
+2. **URLs Supabase Storage malformées**: Les URLs retournées par l'upload ne sont pas correctes
+3. **Problème de CORS**: Le bucket Supabase Storage bloque les requêtes depuis l'app mobile
+4. **Images locales vs cloud**: Les images "asset:" fonctionnent (bundled) mais les URLs Supabase échouent
+
+**Prochaines étapes**:
+1. Consulter les logs dans l'onglet LOGS de Vibecode pour voir les erreurs de chargement d'images
+2. Vérifier que le bucket Supabase Storage "images" existe et est configuré en public
+3. Si le bucket n'est pas public, le rendre public ou utiliser des URLs signées
+4. Tester avec un bêta-testeur et vérifier les logs d'erreur
+
 ## Features
 
 - **Tirage au Sort**: Animation de tirage avec shake et révélation
@@ -1239,6 +1281,19 @@ CREATE INDEX IF NOT EXISTS idx_profiles_vente_directe_ferme ON profiles(vente_di
 ## Bibliothèque Musicale
 
 L'application dispose d'un lecteur musical style iPod Classic avec une interface d'administration complète.
+
+### Bande Son de Fond - Guinguette du Canal
+
+La bande son de fond comprend 3 morceaux qui tournent en boucle:
+- **Guinguette du Canal** (original)
+- **Guinguette du Canal 2** (untitled--4-.mpeg)
+- **Guinguette du Canal 3** (untitled--2-.mpeg)
+
+**Comportement:**
+- L'ordre des morceaux est aléatoire à chaque connexion de l'utilisateur
+- Les 3 morceaux jouent en boucle continue
+- Volume bas (15%) pour ne pas gêner l'utilisation de l'app
+- Se mute automatiquement quand la playlist des Chanvriers Bretons joue
 
 ### Fonctionnalités
 
