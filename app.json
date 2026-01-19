@@ -2,6 +2,7 @@
   "expo": {
     "name": "vibecode",
     "slug": "vibecode",
+    "owner": "les-champs-bretons",
     "scheme": "vibecode",
     "version": "1.0.0",
     "orientation": "portrait",
