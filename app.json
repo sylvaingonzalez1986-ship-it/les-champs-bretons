@@ -25,7 +25,7 @@
         "backgroundImage": "./assets/adaptive-icon-background.png",
         "backgroundColor": "#FFFFFF"
       },
-      "versionCode": 1,
+      
       "googlePlayServicesVersion": "33.2.0"
     },
     "plugins": [
