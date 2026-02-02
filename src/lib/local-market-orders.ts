@@ -89,8 +89,16 @@ interface LocalMarketOrdersStore {
   error: string | null;
 
   // Actions
-  loadOrders: (userId: string, accessToken: string) => Promise<void>;
-  loadOrdersForProducer: (producerId: string, accessToken: string) => Promise<LocalMarketOrder[]>;
+  loadOrders: (
+    userId: string,
+    accessToken: string,
+    options?: { limit?: number; offset?: number; append?: boolean }
+  ) => Promise<LocalMarketOrder[]>;
+  loadOrdersForProducer: (
+    producerId: string,
+    accessToken: string,
+    options?: { limit?: number; offset?: number }
+  ) => Promise<LocalMarketOrder[]>;
   createOrder: (
     userId: string,
     accessToken: string,
@@ -113,11 +121,6 @@ interface LocalMarketOrdersStore {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
-// Fonction pour générer un code de retrait côté client (backup si le trigger ne fonctionne pas)
-function generatePickupCode(): string {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
 // Store Zustand pour les commandes Marché Local
 export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) => ({
   orders: [],
@@ -125,20 +128,24 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
   error: null,
 
   // Charger les commandes de l'utilisateur
-  loadOrders: async (userId: string, accessToken: string) => {
+  loadOrders: async (userId: string, accessToken: string, options) => {
     if (!userId || !accessToken) {
-      console.log('[LocalMarketOrders] Missing userId or accessToken');
       set({ orders: [], loading: false });
-      return;
+      return [];
     }
 
     set({ loading: true, error: null });
 
     try {
+      const { limit, offset, append } = options ?? {};
       // Construire l'URL avec les paramètres de requête
-      const url = `${SUPABASE_URL}/rest/v1/local_market_orders?customer_id=eq.${userId}&order=created_at.desc&select=*`;
-
-      console.log('[LocalMarketOrders] Fetching orders for user:', userId);
+      let url = `${SUPABASE_URL}/rest/v1/local_market_orders?customer_id=eq.${userId}&order=created_at.desc&select=*`;
+      if (typeof limit === 'number') {
+        url += `&limit=${limit}`;
+      }
+      if (typeof offset === 'number') {
+        url += `&offset=${offset}`;
+      }
 
       const response = await fetch(url, {
         method: 'GET',
@@ -151,27 +158,20 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
       });
 
       const responseText = await response.text();
-      console.log('[LocalMarketOrders] Response status:', response.status);
-
       if (!response.ok) {
-        console.log('[LocalMarketOrders] Error loading orders - Status:', response.status);
-        console.log('[LocalMarketOrders] Error response body:', responseText);
-
         // Gérer les erreurs spécifiques
         if (response.status === 401) {
           set({ orders: [], loading: false, error: 'Session expirée, veuillez vous reconnecter' });
         } else if (response.status === 404 || response.status === 400) {
           // Table n'existe peut-être pas encore ou erreur de requête - pas une erreur critique pour l'utilisateur
-          console.log('[LocalMarketOrders] Table may not exist or bad request - treating as empty');
           set({ orders: [], loading: false, error: null });
         } else if (response.status === 403) {
           // Erreur RLS - l'utilisateur n'a pas les permissions
-          console.log('[LocalMarketOrders] RLS policy denied access');
           set({ orders: [], loading: false, error: null });
         } else {
           set({ orders: [], loading: false, error: `Erreur ${response.status}` });
         }
-        return;
+          return [];
       }
 
       // Parser la réponse JSON
@@ -179,16 +179,23 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
       try {
         data = responseText ? JSON.parse(responseText) : [];
       } catch (parseError) {
-        console.log('[LocalMarketOrders] JSON parse error:', parseError);
         set({ orders: [], loading: false, error: 'Erreur de format des données' });
-        return;
+        return [];
       }
 
-      console.log('[LocalMarketOrders] Loaded', data.length, 'orders');
-      set({ orders: data, loading: false, error: null });
+      const MAX_ORDERS = 200;
+      set((state) => {
+        const merged = append ? [...state.orders, ...data] : data;
+        return {
+          orders: merged.length > MAX_ORDERS ? merged.slice(0, MAX_ORDERS) : merged,
+          loading: false,
+          error: null,
+        };
+      });
+      return data;
     } catch (error) {
-      console.log('[LocalMarketOrders] Network error:', error);
       set({ orders: [], loading: false, error: 'Erreur de connexion au serveur' });
+      return [];
     }
   },
 
@@ -199,56 +206,32 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
     }
 
     try {
-      const pickupCode = generatePickupCode();
-      const totalAmount = params.quantity * params.unit_price;
-
-      const orderData = {
-        customer_id: userId,
-        customer_name: params.customer_name,
-        customer_email: params.customer_email,
-        customer_phone: params.customer_phone || null,
-        producer_id: params.producer_id,
-        producer_name: params.producer_name,
-        producer_email: params.producer_email,
-        producer_phone: params.producer_phone || null,
-        producer_location: params.producer_location || null,
-        product_id: params.product_id,
-        product_name: params.product_name,
-        product_description: params.product_description || null,
-        quantity: params.quantity,
-        unit_price: params.unit_price,
-        total_amount: totalAmount,
-        status: 'pending',
-        pickup_code: pickupCode,
-        pickup_location: params.pickup_location || null,
-        pickup_instructions: params.pickup_instructions || null,
-        customer_notes: params.customer_notes || null,
-      };
-
-      console.log('[LocalMarketOrders] Creating order:', orderData);
-
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/local_market_orders`,
+        `${SUPABASE_URL}/functions/v1/local-market-orders`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
             Authorization: `Bearer ${accessToken}`,
-            Prefer: 'return=representation',
           },
-          body: JSON.stringify(orderData),
+          body: JSON.stringify({
+            action: 'create',
+            producerId: params.producer_id,
+            productId: params.product_id,
+            quantity: params.quantity,
+            pickupLocation: params.pickup_location,
+            pickupInstructions: params.pickup_instructions,
+            customerNotes: params.customer_notes,
+            customerName: params.customer_name,
+            customerEmail: params.customer_email,
+            customerPhone: params.customer_phone,
+          }),
         }
       );
 
       const responseText = await response.text();
-      console.log('[LocalMarketOrders] Create order response status:', response.status);
-      console.log('[LocalMarketOrders] Create order response body:', responseText);
 
       if (!response.ok) {
-        console.log('[LocalMarketOrders] Error creating order - Status:', response.status);
-
-        // Parser l'erreur pour un message plus clair
         let errorMessage = 'Erreur lors de la création de la commande';
         try {
           const errorData = JSON.parse(responseText);
@@ -257,7 +240,6 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
           } else if (errorData.error) {
             errorMessage = errorData.error;
           }
-          console.log('[LocalMarketOrders] Parsed error:', errorData);
         } catch (e) {
           // Réponse non-JSON
         }
@@ -265,15 +247,15 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
         return { success: false, error: errorMessage };
       }
 
-      let createdOrder;
+      let createdOrder: LocalMarketOrder;
+      let pickupCode = '';
       try {
         const data = JSON.parse(responseText);
-        createdOrder = Array.isArray(data) ? data[0] : data;
+        createdOrder = data.order as LocalMarketOrder;
+        pickupCode = data.pickupCode || createdOrder?.pickup_code || '';
       } catch (parseError) {
-        console.log('[LocalMarketOrders] Error parsing created order:', parseError);
         return { success: false, error: 'Erreur de format de réponse' };
       }
-      console.log('[LocalMarketOrders] Order created:', createdOrder);
 
       // Mettre à jour la liste locale des commandes
       set((state) => ({
@@ -282,9 +264,8 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
 
       // Envoyer l'email au producteur
       try {
-        await sendLocalMarketOrderEmail(accessToken, createdOrder, params);
+        await sendLocalMarketOrderEmail(accessToken, createdOrder);
       } catch (emailError) {
-        console.log('[LocalMarketOrders] Email sending failed:', emailError);
         // Ne pas faire échouer la commande si l'email échoue
       }
 
@@ -294,7 +275,6 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
         pickupCode: createdOrder.pickup_code || pickupCode,
       };
     } catch (error) {
-      console.log('[LocalMarketOrders] Error creating order:', error);
       return { success: false, error: 'Erreur de connexion' };
     }
   },
@@ -303,13 +283,17 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
   getOrderByPickupCode: async (accessToken, pickupCode) => {
     try {
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/local_market_orders?pickup_code=eq.${pickupCode}`,
+        `${SUPABASE_URL}/functions/v1/local-market-orders`,
         {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
             Authorization: `Bearer ${accessToken}`,
           },
+          body: JSON.stringify({
+            action: 'getByPickupCode',
+            pickupCode,
+          }),
         }
       );
 
@@ -318,9 +302,8 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
       }
 
       const data = await response.json();
-      return data[0] || null;
+      return data.order || null;
     } catch (error) {
-      console.log('[LocalMarketOrders] Error fetching by pickup code:', error);
       return null;
     }
   },
@@ -333,15 +316,17 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
 
     try {
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/local_market_orders?id=eq.${orderId}&customer_id=eq.${userId}`,
+        `${SUPABASE_URL}/functions/v1/local-market-orders`,
         {
-          method: 'PATCH',
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
             Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify({ status: 'cancelled' }),
+          body: JSON.stringify({
+            action: 'cancel',
+            orderId,
+          }),
         }
       );
 
@@ -358,15 +343,13 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
 
       return { success: true };
     } catch (error) {
-      console.log('[LocalMarketOrders] Error cancelling order:', error);
       return { success: false, error: 'Erreur de connexion' };
     }
   },
 
   // Charger les commandes pour un producteur
-  loadOrdersForProducer: async (producerId: string, accessToken: string) => {
+  loadOrdersForProducer: async (producerId: string, accessToken: string, options) => {
     if (!producerId) {
-      console.log('[LocalMarketOrders] Missing producerId');
       return [];
     }
 
@@ -376,12 +359,17 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
       const validToken = session?.access_token || accessToken;
 
       if (!validToken) {
-        console.log('[LocalMarketOrders] No valid access token');
         return [];
       }
 
-      const url = `${SUPABASE_URL}/rest/v1/local_market_orders?producer_id=eq.${producerId}&order=created_at.desc&select=*`;
-      console.log('[LocalMarketOrders] Fetching orders for producer:', producerId);
+      const { limit, offset } = options ?? {};
+      let url = `${SUPABASE_URL}/rest/v1/local_market_orders?producer_id=eq.${producerId}&order=created_at.desc&select=*`;
+      if (typeof limit === 'number') {
+        url += `&limit=${limit}`;
+      }
+      if (typeof offset === 'number') {
+        url += `&offset=${offset}`;
+      }
 
       const response = await fetch(url, {
         method: 'GET',
@@ -393,19 +381,14 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
       });
 
       const responseText = await response.text();
-      console.log('[LocalMarketOrders] Producer orders response status:', response.status);
-      console.log('[LocalMarketOrders] Producer orders response:', responseText);
 
       if (!response.ok) {
-        console.log('[LocalMarketOrders] Error loading producer orders:', response.status, responseText);
         return [];
       }
 
       const data = responseText ? JSON.parse(responseText) : [];
-      console.log('[LocalMarketOrders] Loaded', data.length, 'orders for producer');
       return data as LocalMarketOrder[];
     } catch (error) {
-      console.log('[LocalMarketOrders] Error loading producer orders:', error);
       return [];
     }
   },
@@ -417,43 +400,28 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
     }
 
     try {
-      const updateData: Record<string, unknown> = {
-        status,
-        updated_at: new Date().toISOString(),
-      };
-
-      if (producerNotes !== undefined) {
-        updateData.producer_notes = producerNotes;
-      }
-
-      if (status === 'completed') {
-        updateData.completed_at = new Date().toISOString();
-      }
-
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/local_market_orders?id=eq.${orderId}`,
+        `${SUPABASE_URL}/functions/v1/local-market-orders`,
         {
-          method: 'PATCH',
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${accessToken}`,
-            'Prefer': 'return=representation',
+            Authorization: `Bearer ${accessToken}`,
           },
-          body: JSON.stringify(updateData),
+          body: JSON.stringify({
+            action: 'updateStatus',
+            orderId,
+            status,
+            producerNotes,
+          }),
         }
       );
 
       if (!response.ok) {
-        const errorText = await response.text();
-        console.log('[LocalMarketOrders] Error updating order status:', response.status, errorText);
         return { success: false, error: 'Erreur lors de la mise à jour' };
       }
-
-      console.log('[LocalMarketOrders] Order status updated to:', status);
       return { success: true };
     } catch (error) {
-      console.log('[LocalMarketOrders] Error updating order status:', error);
       return { success: false, error: 'Erreur de connexion' };
     }
   },
@@ -462,8 +430,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
 // Fonction pour envoyer l'email au producteur via Edge Function
 async function sendLocalMarketOrderEmail(
   accessToken: string,
-  order: LocalMarketOrder,
-  params: CreateLocalOrderParams
+  order: LocalMarketOrder
 ): Promise<void> {
   try {
     const response = await fetch(
@@ -476,28 +443,26 @@ async function sendLocalMarketOrderEmail(
         },
         body: JSON.stringify({
           orderId: order.id,
-          producerEmail: params.producer_email,
-          producerName: params.producer_name,
-          customerName: params.customer_name,
-          customerEmail: params.customer_email,
-          customerPhone: params.customer_phone,
-          productName: params.product_name,
-          quantity: params.quantity,
-          unitPrice: params.unit_price,
+          producerEmail: order.producer_email,
+          producerName: order.producer_name,
+          customerName: order.customer_name,
+          customerEmail: order.customer_email,
+          customerPhone: order.customer_phone || undefined,
+          productName: order.product_name,
+          quantity: order.quantity,
+          unitPrice: order.unit_price,
           totalAmount: order.total_amount,
           pickupCode: order.pickup_code,
-          pickupLocation: params.pickup_location,
-          pickupInstructions: params.pickup_instructions,
-          customerNotes: params.customer_notes,
+          pickupLocation: order.pickup_location || undefined,
+          pickupInstructions: order.pickup_instructions || undefined,
+          customerNotes: order.customer_notes || undefined,
         }),
       }
     );
 
     if (!response.ok) {
-      console.log('[LocalMarketOrders] Email function error:', response.status);
     }
   } catch (error) {
-    console.log('[LocalMarketOrders] Email function error:', error);
   }
 }
 

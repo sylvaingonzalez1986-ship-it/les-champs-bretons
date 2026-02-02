@@ -315,7 +315,6 @@ export const AddProducerModal = ({ visible, onClose, editingProducer }: AddProdu
       if (isSupabaseSyncConfigured()) {
         try {
           await syncProducerToSupabase(producerData);
-          console.log('[AddProducerModal] Producer synced to Supabase');
         } catch (error) {
           console.error('[AddProducerModal] Failed to sync to Supabase:', error);
         }

@@ -28,6 +28,7 @@ import {
   ChevronDown,
   Eye,
   Printer,
+  Mail,
   Store,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
@@ -43,6 +44,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
 import * as Print from 'expo-print';
+import * as MailComposer from 'expo-mail-composer';
+import * as Linking from 'expo-linking';
 
 type PeriodFilter = 'all' | '1month' | '3months' | '6months' | '12months';
 
@@ -54,12 +57,15 @@ const PERIOD_FILTERS: { value: PeriodFilter; label: string }[] = [
   { value: '12months', label: '12 derniers mois' },
 ];
 
+const PAYMENT_LINK_EMAIL = 'leschanvriersunis@gmail.com';
+
 export default function GestionCommandesScreen() {
   const insets = useSafeAreaInsets();
   const { isAdmin, isPro, isProducer } = usePermissions();
   const { session, profile } = useAuth();
   const ordersFromStore = useOrdersStore((s) => s.orders);
   const setOrders = useOrdersStore((s) => s.setOrders);
+  const updateOrderStatus = useOrdersStore((s) => s.updateOrderStatus);
   const { orders: localMarketOrders, loadOrders: loadLocalMarketOrders, loadOrdersForProducer } = useLocalMarketOrders();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -67,6 +73,7 @@ export default function GestionCommandesScreen() {
   const [showPeriodPicker, setShowPeriodPicker] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isRequestingPaymentLink, setIsRequestingPaymentLink] = useState(false);
   const [myProducer, setMyProducer] = useState<ProducerDB | null>(null);
   const [producerLocalOrders, setProducerLocalOrders] = useState<LocalMarketOrder[]>([]);
   const [producerProOrders, setProducerProOrders] = useState<Order[]>([]);
@@ -79,9 +86,7 @@ export default function GestionCommandesScreen() {
   useEffect(() => {
     const loadProducer = async () => {
       if (isProducer && session?.access_token) {
-        console.log('[GestionCommandes] Loading producer for current user...');
         const producer = await fetchMyProducer();
-        console.log('[GestionCommandes] My producer:', producer?.id, producer?.name);
         setMyProducer(producer);
       }
     };
@@ -97,20 +102,15 @@ export default function GestionCommandesScreen() {
 
       if (isProducer && myProducer?.id) {
         // Producteur: charger les commandes PRO ET les commandes marché local
-        console.log('[GestionCommandes] Loading orders for producer:', myProducer.id);
-
         // 1. Charger les commandes PRO (boutique)
         try {
           const proOrders = await fetchProOrdersForProducer(myProducer.id);
-          console.log('[GestionCommandes] Producer PRO orders loaded:', proOrders.length);
           setProducerProOrders(proOrders);
         } catch (err) {
-          console.log('[GestionCommandes] Error loading PRO orders:', err);
         }
 
         // 2. Charger les commandes marché local
         const localOrders = await loadOrdersForProducer(myProducer.id, session.access_token);
-        console.log('[GestionCommandes] Producer local orders loaded:', localOrders.length);
         setProducerLocalOrders(localOrders);
       } else if (isAdmin) {
         // Admin: charger ses propres commandes (customer_id) - il a aussi accès à tout via le dashboard
@@ -496,7 +496,6 @@ export default function GestionCommandesScreen() {
           phone: profile.phone || '',
           email: profile.email || '',
         };
-        console.log('[generateInvoice] Using connected producer profile:', producerInfo.name);
       } else {
         // Sinon, récupérer depuis la table producers + profiles
         const producerId = order.items[0]?.producerId;
@@ -554,7 +553,6 @@ export default function GestionCommandesScreen() {
               }
             }
           } catch (err) {
-            console.log('[generateInvoice] Error fetching producer info:', err);
           }
         }
       }
@@ -828,6 +826,86 @@ export default function GestionCommandesScreen() {
     }
   };
 
+  const markPaymentLinkSent = (orderId: string) => {
+    updateOrderStatus(orderId, 'payment_sent');
+    setProducerProOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: 'payment_sent' } : o)));
+    setSelectedOrder((prev) => (prev && prev.id === orderId ? { ...prev, status: 'payment_sent' } : prev));
+  };
+
+  const requestPaymentLink = async (order: Order) => {
+    if (!order.customerInfo.email) {
+      Alert.alert('Email manquant', "Ajoutez l'email du client avant d'envoyer un lien de paiement.");
+      return;
+    }
+
+    if (!order.isProOrder) {
+      Alert.alert('Non disponible', "Le lien de paiement est disponible uniquement pour les commandes boutique.");
+      return;
+    }
+
+    try {
+      setIsRequestingPaymentLink(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      const itemsSummary = order.items
+        .map(
+          (item) =>
+            `- ${item.productName} (${item.quantity} x ${item.unitPrice.toFixed(2)}€) = ${item.totalPrice.toFixed(2)}€`
+        )
+        .join('\n');
+
+      const clientName = `${order.customerInfo.firstName} ${order.customerInfo.lastName}`.trim();
+      const emailSubject = `Demande lien de paiement - Commande ${order.id}`;
+      const emailBody =
+        `DEMANDE LIEN DE PAIEMENT\n` +
+        `==========================\n\n` +
+        `Commande: ${order.id}\n` +
+        `Type: ${order.isProOrder ? 'PRO' : 'CLIENT'}\n` +
+        `Montant TTC: ${order.total.toFixed(2)} EUR\n` +
+        `Client: ${clientName || 'Non renseigné'}\n` +
+        `Email client: ${order.customerInfo.email}\n` +
+        `Téléphone: ${order.customerInfo.phone || 'Non renseigné'}\n\n` +
+        `PRODUITS\n` +
+        `--------\n` +
+        `${itemsSummary}\n\n` +
+        `Merci d'envoyer le lien de paiement au client à l'adresse ci-dessus.\n` +
+        `\n` +
+        `Mode DEV - Paiement externe (pas de paiement intégré dans l'app).\n`;
+
+      const isAvailable = await MailComposer.isAvailableAsync();
+
+      if (isAvailable) {
+        const result = await MailComposer.composeAsync({
+          recipients: [PAYMENT_LINK_EMAIL],
+          subject: emailSubject,
+          body: emailBody,
+        });
+
+        if (result.status !== MailComposer.MailComposerStatus.CANCELLED) {
+          markPaymentLinkSent(order.id);
+          Alert.alert('Email prêt', "Vérifiez et envoyez l'email pour déclencher le bot.");
+        }
+        return;
+      }
+
+      const mailtoUrl = `mailto:${PAYMENT_LINK_EMAIL}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+      const canOpen = await Linking.canOpenURL(mailtoUrl);
+
+      if (canOpen) {
+        await Linking.openURL(mailtoUrl);
+        markPaymentLinkSent(order.id);
+        Alert.alert('Email prêt', "Vérifiez et envoyez l'email pour déclencher le bot.");
+        return;
+      }
+
+      Alert.alert('Erreur', "Impossible d'ouvrir l'email sur cet appareil.");
+    } catch (error) {
+      Alert.alert('Erreur', "Impossible de préparer l'email de demande de paiement.");
+    } finally {
+      setIsRequestingPaymentLink(false);
+    }
+  };
+
   if (!hasAccess) {
     return (
       <View style={{ flex: 1, backgroundColor: COLORS.background.nightSky }}>
@@ -1083,6 +1161,51 @@ export default function GestionCommandesScreen() {
           )}
 
           {/* Actions */}
+          <View
+            style={{
+              backgroundColor: COLORS.background.charcoal,
+              borderRadius: 12,
+              padding: 16,
+              marginBottom: 16,
+              borderWidth: 1,
+              borderColor: `${COLORS.primary.gold}25`,
+            }}
+          >
+            <Text style={{ fontSize: 14, fontWeight: 'bold', color: COLORS.primary.gold, marginBottom: 6 }}>
+              Paiement (DEV)
+            </Text>
+            <Text style={{ fontSize: 13, color: COLORS.text.muted }}>
+              Aucun paiement intégré dans l'app. Le lien est envoyé par email via le bot.
+            </Text>
+          </View>
+
+          <Pressable
+            onPress={() => requestPaymentLink(selectedOrder)}
+            disabled={isRequestingPaymentLink || !selectedOrder.customerInfo.email}
+            style={{
+              backgroundColor: COLORS.accent.hemp,
+              padding: 16,
+              borderRadius: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 10,
+              opacity: isRequestingPaymentLink || !selectedOrder.customerInfo.email ? 0.6 : 1,
+              marginBottom: 12,
+            }}
+          >
+            {isRequestingPaymentLink ? (
+              <ActivityIndicator color={COLORS.text.white} />
+            ) : (
+              <>
+                <Mail size={20} color={COLORS.text.white} />
+                <Text style={{ fontSize: 16, fontWeight: 'bold', color: COLORS.text.white }}>
+                  Demander lien de paiement
+                </Text>
+              </>
+            )}
+          </Pressable>
+
           <Pressable
             onPress={() => generateInvoice(selectedOrder)}
             disabled={isExporting}

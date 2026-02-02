@@ -172,6 +172,101 @@ export const orderSchema = z.object({
   notes: z.string().max(1000).optional(),
 });
 
+export const orderEmailRequestSchema = z.object({
+  commandeId: uuidSchema,
+  producerId: uuidSchema,
+  userId: uuidSchema,
+});
+
+export type OrderEmailRequestInput = z.infer<typeof orderEmailRequestSchema>;
+
+export const localMarketOrderEmailSchema = z.object({
+  orderId: uuidSchema,
+  producerEmail: emailSchema,
+  producerName: titleSchema,
+  customerName: titleSchema,
+  customerEmail: emailSchema,
+  customerPhone: z.string().max(30).optional(),
+  productName: titleSchema,
+  quantity: quantitySchema,
+  unitPrice: priceSchema,
+  totalAmount: priceSchema,
+  pickupCode: z.string().min(4).max(32),
+  pickupLocation: z.string().max(200).optional(),
+  pickupInstructions: z.string().max(500).optional(),
+  customerNotes: z.string().max(1000).optional(),
+});
+
+export type LocalMarketOrderEmailInput = z.infer<typeof localMarketOrderEmailSchema>;
+
+export const notifyOrderStatusSchema = z.object({
+  commandeId: uuidSchema,
+  newStatus: z.enum(['en_attente', 'confirmee', 'prete', 'recuperee', 'annulee']),
+  userId: uuidSchema,
+  producerId: uuidSchema,
+});
+
+export type NotifyOrderStatusInput = z.infer<typeof notifyOrderStatusSchema>;
+
+// =============================================================================
+// DIRECT SALES (VENTE DIRECTE) SCHEMAS
+// =============================================================================
+
+export const directSaleItemSchema = z.object({
+  productId: z.string().min(1),
+  producerId: z.string().min(1),
+  quantity: quantitySchema,
+});
+
+export const directSaleOrderSchema = z.object({
+  items: z.array(directSaleItemSchema).min(1).max(200),
+});
+
+export type DirectSaleOrderInput = z.infer<typeof directSaleOrderSchema>;
+
+// =============================================================================
+// LOCAL MARKET ORDERS SCHEMAS
+// =============================================================================
+
+export const localMarketOrderStatusSchema = z.enum([
+  'pending',
+  'confirmed',
+  'ready',
+  'completed',
+  'cancelled',
+]);
+
+export const localMarketOrderActionSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('create'),
+    producerId: z.string().min(1),
+    productId: z.string().min(1),
+    quantity: quantitySchema,
+    pickupLocation: z.string().max(200).optional(),
+    pickupInstructions: z.string().max(500).optional(),
+    customerNotes: z.string().max(1000).optional(),
+    customerName: z.string().max(200).optional(),
+    customerEmail: emailSchema.optional(),
+    customerPhone: z.string().max(30).optional(),
+  }),
+  z.object({
+    action: z.literal('cancel'),
+    orderId: uuidSchema,
+  }),
+  z.object({
+    action: z.literal('updateStatus'),
+    orderId: uuidSchema,
+    status: localMarketOrderStatusSchema,
+    producerNotes: z.string().max(1000).optional(),
+  }),
+  z.object({
+    action: z.literal('getByPickupCode'),
+    pickupCode: z.string().min(4).max(32),
+  }),
+]);
+
+export type LocalMarketOrderActionInput = z.infer<typeof localMarketOrderActionSchema>;
+
 // =============================================================================
 // GAME/PROGRESSION SCHEMAS
 // =============================================================================

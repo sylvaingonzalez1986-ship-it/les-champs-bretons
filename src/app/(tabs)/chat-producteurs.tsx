@@ -46,7 +46,7 @@ import {
 // Couleurs du chat
 const CHAT_COLORS = {
   background: {
-    primary: '#1a1d2e',
+    primary: '#1a1f2e',
     secondary: '#0f172a',
   },
 };
@@ -56,37 +56,39 @@ interface LocalChatMessage extends ChatMessage {
   isNew?: boolean;
 }
 
-// Grouper les messages par jour
-const groupMessagesByDay = (messages: LocalChatMessage[]) => {
+// Helper pour grouper les messages par jour
+function groupMessagesByDay(messages: LocalChatMessage[]) {
   const groups: { date: string; timestamp: number; messages: LocalChatMessage[] }[] = [];
-  let currentGroup: { date: string; timestamp: number; messages: LocalChatMessage[] } | null = null;
 
   messages.forEach((message) => {
-    const messageDate = new Date(message.createdAt).toDateString();
+    const date = new Date(message.createdAt).toLocaleDateString('fr-FR');
+    const existingGroup = groups.find((g) => g.date === date);
 
-    if (!currentGroup || currentGroup.date !== messageDate) {
-      currentGroup = {
-        date: messageDate,
+    if (existingGroup) {
+      existingGroup.messages.push(message);
+    } else {
+      groups.push({
+        date,
         timestamp: message.createdAt,
         messages: [message],
-      };
-      groups.push(currentGroup);
-    } else {
-      currentGroup.messages.push(message);
+      });
     }
   });
 
   return groups;
-};
+}
 
 export default function ChatProducteursScreen() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const scrollViewRef = useRef<ScrollView>(null);
+
   const [showInfoModal, setShowInfoModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [onlineCount, setOnlineCount] = useState(1);
   const [newMessageIds, setNewMessageIds] = useState<Set<string>>(new Set());
@@ -111,17 +113,9 @@ export default function ChatProducteursScreen() {
   // Nom d'affichage: préférer le nom complet, puis company_name pour les pros
   const currentUserName = fullName || profile?.full_name || profile?.company_name || (isPro ? 'Professionnel' : 'Producteur');
 
-  // Debug logs
-  console.log('[Chat] Permissions:', { isProducer, isAdmin, isPro, hasAccess });
-  console.log('[Chat] User:', { currentUserId, currentUserName, isAuthenticated });
-  console.log('[Chat] Profile role:', profile?.role);
-
   // Charger les messages depuis Supabase
   const loadMessages = useCallback(async (showLoader = true) => {
-    console.log('[Chat] loadMessages called, isSupabaseConfigured:', isSupabaseSyncConfigured());
-
     if (!isSupabaseSyncConfigured()) {
-      console.log('[Chat] Supabase non configuré, arrêt du chargement');
       setIsLoading(false);
       return;
     }
@@ -129,16 +123,46 @@ export default function ChatProducteursScreen() {
     if (showLoader) setIsLoading(true);
 
     try {
-      console.log('[Chat] Fetching messages...');
       const fetchedMessages = await fetchChatMessages(50);
-      console.log('[Chat] Messages reçus:', fetchedMessages.length);
       setMessages(fetchedMessages);
+      setHasMore(fetchedMessages.length === 50);
     } catch (error) {
       console.error('[Chat] Erreur chargement messages:', error);
     } finally {
       setIsLoading(false);
     }
   }, []);
+
+  const loadOlderMessages = useCallback(async () => {
+    if (isLoadingMore || !hasMore || messages.length === 0) {
+      return;
+    }
+
+    setIsLoadingMore(true);
+
+    try {
+      const oldest = messages[0];
+      const before = new Date(oldest.createdAt).toISOString();
+      const olderMessages = await fetchChatMessages(50, before);
+
+      if (olderMessages.length === 0) {
+        setHasMore(false);
+        return;
+      }
+
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const uniqueOlder = olderMessages.filter((m) => !existingIds.has(m.id));
+        return [...uniqueOlder, ...prev];
+      });
+
+      setHasMore(olderMessages.length === 50);
+    } catch (error) {
+      console.error('[Chat] Erreur chargement anciens messages:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [hasMore, isLoadingMore, messages]);
 
   // Pull-to-refresh handler
   const handleRefresh = useCallback(async () => {
@@ -176,11 +200,8 @@ export default function ChatProducteursScreen() {
 
     // S'abonner aux nouveaux messages en temps réel
     const unsubscribe = subscribeToMessages((newMessage) => {
-      console.log('[Chat] Nouveau message reçu via Realtime:', newMessage.senderName);
-
       // Ignorer les messages qu'on a envoyé nous-même (déjà ajoutés via optimistic UI)
       if (newMessage.senderId === currentUserId) {
-        console.log('[Chat] Message ignoré (envoyé par nous-même)');
         return;
       }
 
@@ -230,10 +251,7 @@ export default function ChatProducteursScreen() {
 
   // Envoyer un message
   const handleSendMessage = useCallback(async (content: string) => {
-    console.log('[Chat] handleSendMessage called', { hasAccess, content: content.substring(0, 20) });
-
     if (!hasAccess) {
-      console.log('[Chat] Pas d\'accès, message non envoyé');
       return;
     }
 
@@ -314,8 +332,6 @@ export default function ChatProducteursScreen() {
   // Supprimer un message (admin uniquement)
   const handleDeleteMessage = useCallback(async (messageId: string) => {
     if (!isAdmin) return;
-
-    console.log('[Chat] Suppression du message:', messageId);
     const success = await deleteChatMessage(messageId);
 
     if (success) {

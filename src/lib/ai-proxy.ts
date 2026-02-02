@@ -45,8 +45,6 @@ async function callAIProxy<T = unknown>(
   }
 
   try {
-    console.log(`[AI Proxy] ${provider}: Calling ${url}`);
-
     const response = await fetch(url, {
       method: 'POST', // Edge Function always receives POST
       headers: {

@@ -75,7 +75,7 @@ export function useGameSounds() {
           shouldDuckAndroid: true,
         });
       } catch (error) {
-        console.log('[GameSounds] Audio setup error:', error);
+        console.warn('[GameSounds] Audio setup error:', error);
       }
     };
     setupAudio();
@@ -116,7 +116,7 @@ export function useGameSounds() {
       }
     } catch (error) {
       // Silently fail on platforms without Web Audio API
-      console.log('[GameSounds] Tone error:', error);
+      console.warn('[GameSounds] Tone error:', error);
     }
   }, []);
 
@@ -224,7 +224,6 @@ export function useAmbientMusic() {
   const startAmbient = useCallback(async () => {
     // Pour l'instant, pas de musique d'ambiance
     // On pourrait ajouter des fichiers audio plus tard
-    console.log('[AmbientMusic] Ambient music not implemented yet');
   }, []);
 
   const stopAmbient = useCallback(async () => {

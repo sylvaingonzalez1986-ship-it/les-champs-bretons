@@ -28,7 +28,6 @@ class AudioManager {
       // await this.loadSound('click', require('@/assets/sounds/click.mp3'));
 
       this.isInitialized = true;
-      console.log('🔊 Audio manager initialized (Haptics fallback active)');
     } catch (error) {
       console.error('Failed to init audio:', error);
     }

@@ -19,7 +19,6 @@ async function confirmAgeDirectly(retryCount = 0): Promise<{ success: boolean; e
   try {
     const userId = session.user.id;
     const userEmail = session.user.email;
-    console.log('[AgeVerification] Confirming age for user:', userId);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
@@ -44,12 +43,9 @@ async function confirmAgeDirectly(retryCount = 0): Promise<{ success: boolean; e
     );
 
     const patchText = await patchResponse.text();
-    console.log('[AgeVerification] PATCH response status:', patchResponse.status);
-    console.log('[AgeVerification] PATCH response:', patchText);
 
     // Si PATCH retourne un tableau vide, le profil n'existe pas - on doit le créer
     if (patchResponse.ok && (patchText === '[]' || patchText === '')) {
-      console.log('[AgeVerification] Profile does not exist, creating with POST...');
 
       // Créer le profil avec POST (UPSERT)
       const postResponse = await fetch(
@@ -78,13 +74,10 @@ async function confirmAgeDirectly(retryCount = 0): Promise<{ success: boolean; e
       clearTimeout(timeoutId);
 
       const postText = await postResponse.text();
-      console.log('[AgeVerification] POST response status:', postResponse.status);
-      console.log('[AgeVerification] POST response:', postText);
 
       if (!postResponse.ok) {
         // Si erreur 409 (conflit), le profil existe peut-être - réessayer PATCH
         if (postResponse.status === 409) {
-          console.log('[AgeVerification] Conflict on POST, retrying PATCH...');
           return confirmAgeDirectly(retryCount);
         }
         return { success: false, error: `Erreur création profil: ${postResponse.status}` };
@@ -105,7 +98,6 @@ async function confirmAgeDirectly(retryCount = 0): Promise<{ success: boolean; e
 
     // Retry automatique en cas d'erreur réseau (max 2 fois)
     if (retryCount < 2) {
-      console.log(`[AgeVerification] Retrying... (attempt ${retryCount + 2})`);
       await new Promise(resolve => setTimeout(resolve, 1000)); // Attendre 1s
       return confirmAgeDirectly(retryCount + 1);
     }
@@ -119,15 +111,9 @@ export default function AgeVerificationScreen() {
   const queryClient = useQueryClient();
   const { signOut, isSigningOut } = useAuth();
 
-  // Log au montage pour debug
-  React.useEffect(() => {
-    console.log('[AgeVerification] Screen mounted - insets:', insets);
-  }, []);
-
   // Mutation pour confirmer l'âge
   const confirmAgeMutation = useMutation({
     mutationFn: async () => {
-      console.log('[AgeVerification] Confirming age...');
       const result = await confirmAgeDirectly();
       if (result.error) {
         throw new Error(result.error);
@@ -135,7 +121,6 @@ export default function AgeVerificationScreen() {
       return true;
     },
     onSuccess: () => {
-      console.log('[AgeVerification] Age confirmed successfully');
       queryClient.invalidateQueries({ queryKey: ['auth', 'profile'] });
     },
     onError: (error) => {

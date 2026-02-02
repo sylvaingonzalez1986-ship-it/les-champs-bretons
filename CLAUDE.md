@@ -151,3 +151,142 @@ You have access to a few skills in the `.claude/skills` folder. Use them to your
 - expo-docs: Use this skill when the user asks you to use an Expo SDK module or package that you might not know much about.
 - frontend-app-design: Use this skill when the user asks you to design a frontend app component or screen.
 </skills>
+
+<security_architecture>
+## CRITICAL: Backend-First Security Model
+This project enforces a STRICT "Backend-First" security model to prevent Vibe Coding vulnerabilities.
+
+### 1. NEVER Trust the Client
+- **NEVER** write business logic in Client Components.
+- **NEVER** use `supabase-js` client methods (`.select`, `.insert`, `.update`, `.delete`) directly in frontend for sensitive operations.
+- **ALWAYS** use Supabase Edge Functions or authenticated API endpoints for ALL data mutations.
+- The Frontend is a View Layer only. It speaks to APIs, not the Database directly for writes.
+- **ALWAYS** validate inputs server-side — never trust client-provided data.
+
+### 2. The "Direct-to-DB" Trap
+Never allow frontend to directly modify sensitive fields. Example of DANGEROUS code:
+```javascript
+// ❌ NEVER DO THIS — user can modify any field including is_admin, role, subscription_status
+supabase.from('users').update({ is_pro: true }).eq('id', user.id)
+```
+Instead, use Edge Functions where the server controls which columns can be modified.
+
+### 3. RLS Policy Requirements (Supabase)
+- **RLS IS MANDATORY:** Enable Row Level Security on EVERY table immediately after creation.
+- RLS protects rows, NOT columns — always restrict which columns users can update via Edge Functions.
+- Use helper functions (`is_admin()`, `is_producer()`) to verify roles.
+- Test policies with different user roles before deploying.
+- **REVOKE public access** to all Postgres functions:
+  ```sql
+  REVOKE EXECUTE ON FUNCTION function_name FROM public;
+  REVOKE EXECUTE ON FUNCTION function_name FROM anon;
+  GRANT EXECUTE ON FUNCTION function_name TO service_role;
+  ```
+
+### 4. Rate Limiting is MANDATORY
+Without rate limits, attackers can:
+- Brute force magic links/OTP codes
+- Insert millions of rows to bloat your database
+- Enumerate IDs to find valid records
+- DDoS your wallet via Stripe calls
+Apply limits to:
+- All API routes
+- Auth endpoints
+- Webhooks
+- File upload endpoints
+
+### 5. Storage Security
+- **NO PUBLIC BUCKETS** for sensitive user data (photos, documents, invoices).
+- **UUID FILENAMES:** Always rename files to `crypto.randomUUID()` to prevent enumeration attacks.
+- **SIGNED URLS:** Always use `createSignedUrl` with expiration for file access. Never expose direct paths.
+- Validate file types and sizes server-side before accepting uploads.
+
+### 6. Environment Variables & Secrets
+- **NEVER** hardcode secrets in code — always use `process.env.VAR_NAME`.
+- **NEVER** commit `.env` files — ensure `.gitignore` includes all env files.
+- The `service_role` key must ONLY exist in Edge Function environment variables.
+- The `anon` key is NOT safe — it exposes your database schema via REST API.
+
+### 7. Webhook Security (Stripe, LemonSqueezy, etc.)
+- **NEVER** trust `req.body` directly for payment webhooks.
+- **ALWAYS** verify cryptographic signatures using provider SDK (e.g., `stripe.webhooks.constructEvent`).
+- If signature verification fails, reject immediately with `400`.
+- Use randomized webhook URL paths (e.g., `/webhooks/stripe-a8f3x9k` not `/webhooks/stripe`).
+
+### 8. Mobile-Specific Concerns
+- Logic bugs in frontend cannot be hot-fixed — App Store review takes 48+ hours.
+- **NEVER** put pricing logic, subscription validation, or business rules in the frontend.
+- Always verify subscription status server-side before granting access.
+
+### 9. Input Validation
+- **TRUST NO ONE:** Validate ALL inputs in Edge Functions using Zod or similar.
+- Sanitize user-provided strings to prevent injection attacks.
+- Validate file uploads: check MIME type, file size, and content.
+
+### 10. Compliance Check
+Before generating any code that accesses data, ask:
+> "Is this code asking the Frontend to talk to the Database directly?"
+> If YES → REJECT IT. Write an Edge Function or server-side action instead.
+
+### Existing Security in This Project
+- RLS is enabled on all tables (see `database/RLS_DOCUMENTATION.md`)
+- Rate limiting implemented in `src/lib/supabase-auth.ts`
+- Authenticated headers used for sensitive operations in `src/lib/supabase-sync.ts`
+- File upload validation in `database/migrations/validate_file_uploads.sql`
+- RGPD compliance functions with proper access controls
+</security_architecture>
+
+<hemptycoon_integration>
+## 🎮 Intégration HempTycoon (Jeu RPG)
+
+Cette app partage son backend Supabase avec **HempTycoon**, un jeu mobile RPG de culture de chanvre.
+
+### Principe
+```
+HempTycoon (Jeu) ←→ Supabase (Partagé) ←→ Les Chanvriers (Boutique)
+                         ↓
+                   Tickets partagés
+                         ↓
+            1 ticket jeu = 1 ticket boutique = 1 tirage
+```
+
+### Système de Tickets Centralisé
+Les tickets ne sont plus stockés localement (Zustand). Ils sont maintenant dans Supabase.
+
+**Tables à créer :**
+```sql
+-- Voir supabase/migrations/YYYYMMDD_tickets_centralized.sql
+-- user_tickets : Solde de tickets par user
+-- ticket_transactions : Historique des gains/dépenses
+```
+
+**Migration du store local :**
+Le `useSubscriptionStore` doit lire/écrire depuis Supabase au lieu de AsyncStorage.
+
+### Sources de Tickets
+| Source | Déclencheur | Quantité |
+|--------|-------------|----------|
+| Achat boutique | 25€ dépensés | 1 ticket |
+| Abonnement | Mensuel | 1-3 selon tier |
+| HempTycoon | Classement hebdo | 1-10 selon rang |
+| HempTycoon | Classement saison | 5-50 selon rang |
+| HempTycoon | Achievements | 1-10 |
+
+### Edge Function `award-tickets`
+Seul moyen d'ajouter des tickets. Jamais le client directement.
+- Vérifie signature HMAC
+- Valide les règles métier
+- Transaction atomique (balance + log)
+
+### Modifications requises dans cette app
+1. **Migrer `useSubscriptionStore.tickets`** vers requête Supabase
+2. **Créer hook `useTicketBalance()`** qui fetch depuis `user_tickets`
+3. **Modifier le tirage** pour appeler une Edge Function qui décrémente les tickets
+4. **Deep linking** : `chanvriers://rewards?source=hemptycoon`
+
+### Sécurité Cross-App
+- Le jeu ne peut PAS attribuer de tickets directement
+- Toute attribution passe par Edge Function avec signature HMAC
+- Les replays de jeu sont stockés pour audit si contestation
+- Top 10 du classement = review manuel avant attribution
+</hemptycoon_integration>

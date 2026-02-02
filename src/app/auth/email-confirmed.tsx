@@ -28,12 +28,6 @@ export default function EmailConfirmedScreen() {
 
   useEffect(() => {
     const verifyConfirmation = async () => {
-      console.log('[EmailConfirmed] Params:', {
-        hasAccessToken: !!params.access_token,
-        type: params.type,
-        error: params.error,
-      });
-
       // Check if there's an error in the URL params
       if (params.error) {
         console.warn('[EmailConfirmed] Error in params:', params.error, params.error_description);
@@ -57,7 +51,6 @@ export default function EmailConfirmedScreen() {
 
           if (response.ok) {
             const userData = await response.json();
-            console.log('[EmailConfirmed] User verified:', userData.email);
             setStatus('success');
           } else {
             console.warn('[EmailConfirmed] Token validation failed:', response.status);
@@ -72,7 +65,6 @@ export default function EmailConfirmedScreen() {
       } else if (!params.access_token && !params.error) {
         // No token and no error - the user may have already confirmed
         // Show success anyway since Supabase redirects here after confirmation
-        console.log('[EmailConfirmed] No token but no error - assuming success');
         setStatus('success');
       } else {
         // No token provided

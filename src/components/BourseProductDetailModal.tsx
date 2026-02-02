@@ -71,11 +71,6 @@ export function BourseProductDetailModal({
   const placeOrder = useBourseStore((s) => s.placeOrder);
   const { isOffline } = useOfflineStatus();
 
-  // Debug log
-  useEffect(() => {
-    console.log('[BourseModal] visible:', visible, 'marketState:', marketState?.product?.name);
-  }, [visible, marketState]);
-
   // Reset state quand le modal s'ouvre
   useEffect(() => {
     if (visible) {

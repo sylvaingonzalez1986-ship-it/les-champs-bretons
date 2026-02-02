@@ -194,9 +194,6 @@ export const useCollectionStore = create<CollectionStore>()(
         discountAmount?: number;
         minOrderAmount?: number;
       }) => {
-        console.log('[CollectionStore] addToCollection called with product:', product?.name, 'lotInfo:', lotInfo);
-        console.log('[CollectionStore] Current collection size:', get().collection.length);
-
         const newItem = {
           id: `${product.id}-${Date.now()}`,
           product,
@@ -209,39 +206,12 @@ export const useCollectionStore = create<CollectionStore>()(
           minOrderAmount: lotInfo?.minOrderAmount,
         };
 
-        console.log('[CollectionStore] Creating new item:', newItem.id);
-
         // Get the current collection before update
         const currentCollection = get().collection;
         const newCollection = [newItem, ...currentCollection];
 
-        console.log('[CollectionStore] New collection size will be:', newCollection.length);
-
         // Update the store
         set({ collection: newCollection });
-
-        // Verify persistence by reading back from AsyncStorage after a delay
-        setTimeout(async () => {
-          try {
-            const stored = await AsyncStorage.getItem('cbd-collection-storage');
-            if (stored) {
-              const parsed = JSON.parse(stored);
-              console.log('[CollectionStore] AsyncStorage content after set:', JSON.stringify(parsed).substring(0, 200));
-              console.log('[CollectionStore] AsyncStorage collection size:', parsed?.state?.collection?.length ?? 'undefined');
-            } else {
-              console.log('[CollectionStore] AsyncStorage is empty after set!');
-            }
-          } catch (err) {
-            console.error('[CollectionStore] Failed to read AsyncStorage:', err);
-          }
-        }, 300);
-
-        // Verify the item was added
-        setTimeout(() => {
-          const currentCollectionAfterSet = get().collection;
-          console.log('[CollectionStore] After set, collection size:', currentCollectionAfterSet.length);
-          console.log('[CollectionStore] First item in collection:', currentCollectionAfterSet[0]?.id);
-        }, 100);
       },
       useCollectionItem: (itemId: string) =>
         set((state) => ({
@@ -275,7 +245,6 @@ export const useCollectionStore = create<CollectionStore>()(
       name: 'cbd-collection-storage',
       storage: createJSONStorage(() => AsyncStorage),
       onRehydrateStorage: () => (state) => {
-        console.log('[CollectionStore] Rehydrated from AsyncStorage, collection size:', state?.collection?.length ?? 0);
       },
     }
   )
@@ -2299,7 +2268,7 @@ const DEFAULT_TABS: TabConfig[] = [
   { id: 'packs', name: 'Packs', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
   { id: 'promo', name: 'Promo', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
   { id: 'bourse', name: 'Bourse', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
-  { id: 'regions', name: 'Régions', visible: true, roleVisibility: { client: false, pro: true, producer: true } },
+  { id: 'regions', name: 'Régions', visible: true, roleVisibility: { client: false, pro: true, producer: false } },
   { id: 'produits', name: 'Produits', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
   { id: 'ma-boutique', name: 'Ma Boutique', visible: true, roleVisibility: { client: false, pro: false, producer: true } },
   { id: 'chat-producteurs', name: 'Agora', visible: true, roleVisibility: { client: false, pro: true, producer: true } },

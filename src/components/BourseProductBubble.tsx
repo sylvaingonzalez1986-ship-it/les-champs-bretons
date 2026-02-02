@@ -104,7 +104,6 @@ export function BourseProductBubble({
   }, [scale, pressed]);
 
   const handlePress = useCallback(() => {
-    console.log('[BourseProductBubble] Pressed:', product_id, product?.name);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onPress(product_id);
   }, [onPress, product_id, product?.name]);

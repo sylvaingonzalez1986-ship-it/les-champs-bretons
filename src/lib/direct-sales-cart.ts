@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase-auth';
 import { isSupabaseConfigured, getSupabaseConfig } from './env-validation';
+import { startMetric, endMetric, incrementMetric } from './perf-metrics';
 
 // Helper pour obtenir la config de manière sécurisée
 const getConfig = () => {
@@ -51,6 +52,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
   // Charger le panier depuis Supabase
   loadCart: async (userId: string, accessToken: string) => {
     try {
+      const metricStart = startMetric('cart.load');
       set({ loading: true });
 
       if (!userId) {
@@ -59,7 +61,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
       }
 
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/panier_vente_directe?user_id=eq.${userId}&order=created_at.desc`,
+        `${SUPABASE_URL}/rest/v1/panier_vente_directe?user_id=eq.${userId}&select=id,product_id,producer_id,quantity,created_at,product:products(id,name,price_public,image),producer:producers(id,name)&order=created_at.desc`,
         {
           headers: {
             'Content-Type': 'application/json',
@@ -72,53 +74,28 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
       if (response.ok) {
         const data = await response.json();
 
-        // Enrichir les données avec les infos produit et producteur
-        const enrichedItems: DirectSalesCartItem[] = await Promise.all(
-          data.map(async (item: any) => {
-            // Récupérer les infos du produit
-            const productResponse = await fetch(
-              `${SUPABASE_URL}/rest/v1/products?id=eq.${item.product_id}&select=name,price_public,image`,
-              {
-                headers: {
-                  'Content-Type': 'application/json',
-                  apikey: SUPABASE_ANON_KEY,
-                  Authorization: `Bearer ${accessToken}`,
-                },
-              }
-            );
-            const product = await productResponse.json();
+        const enrichedItems: DirectSalesCartItem[] = data.map((item: any) => {
+          const product = Array.isArray(item.product) ? item.product[0] : item.product;
+          const producer = Array.isArray(item.producer) ? item.producer[0] : item.producer;
 
-            // Récupérer les infos du producteur
-            const producerResponse = await fetch(
-              `${SUPABASE_URL}/rest/v1/producers?id=eq.${item.producer_id}&select=name`,
-              {
-                headers: {
-                  'Content-Type': 'application/json',
-                  apikey: SUPABASE_ANON_KEY,
-                  Authorization: `Bearer ${accessToken}`,
-                },
-              }
-            );
-            const producer = await producerResponse.json();
-
-            return {
-              id: item.id,
-              product_id: item.product_id,
-              producer_id: item.producer_id,
-              producer_name: producer[0]?.name || 'Unknown',
-              product_name: product[0]?.name || 'Unknown',
-              price: product[0]?.price_public || 0,
-              quantity: item.quantity,
-              image: product[0]?.image || '',
-              created_at: item.created_at,
-            };
-          })
-        );
+          return {
+            id: item.id,
+            product_id: item.product_id,
+            producer_id: item.producer_id,
+            producer_name: producer?.name || 'Unknown',
+            product_name: product?.name || 'Unknown',
+            price: product?.price_public || 0,
+            quantity: item.quantity,
+            image: product?.image || '',
+            created_at: item.created_at,
+          };
+        });
 
         set({ items: enrichedItems });
+        endMetric('cart.load', metricStart, { items: enrichedItems.length });
       }
     } catch (error) {
-      console.log('[DirectSalesCart] Error loading cart:', error);
+      console.warn('[DirectSalesCart] Error loading cart:', error);
     } finally {
       set({ loading: false });
     }
@@ -152,7 +129,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
         await get().loadCart(userId, accessToken);
       }
     } catch (error) {
-      console.log('[DirectSalesCart] Error adding item:', error);
+      console.warn('[DirectSalesCart] Error adding item:', error);
     }
   },
 
@@ -174,7 +151,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
 
       set({ items: get().items.filter((item) => item.id !== id) });
     } catch (error) {
-      console.log('[DirectSalesCart] Error removing item:', error);
+      console.warn('[DirectSalesCart] Error removing item:', error);
     }
   },
 
@@ -207,7 +184,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
         ),
       });
     } catch (error) {
-      console.log('[DirectSalesCart] Error updating quantity:', error);
+      console.warn('[DirectSalesCart] Error updating quantity:', error);
     }
   },
 
@@ -229,13 +206,14 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
 
       set({ items: [] });
     } catch (error) {
-      console.log('[DirectSalesCart] Error clearing cart:', error);
+      console.warn('[DirectSalesCart] Error clearing cart:', error);
     }
   },
 
   // Créer les commandes pour chaque producteur
   createOrders: async (userId: string, accessToken: string) => {
     try {
+      const metricStart = startMetric('orders.create');
       if (!userId) {
         return { success: false, error: 'User not authenticated' };
       }
@@ -251,116 +229,33 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
         return { success: false, error: 'Minimum amount not met for some producers' };
       }
 
-      const orderIds: string[] = [];
+      const items = get().items.map((item) => ({
+        productId: item.product_id,
+        producerId: item.producer_id,
+        quantity: item.quantity,
+      }));
 
-      // Créer une commande par producteur
-      for (const producerId of producerIds) {
-        const items = get().getItemsByProducer(producerId);
-        const total = get().getTotalByProducer(producerId);
-
-        if (items.length === 0 || total < 20) continue;
-
-        try {
-          // Récupérer les infos du producteur (adresse retrait, horaires, etc.)
-          const producerResponse = await fetch(
-            `${SUPABASE_URL}/rest/v1/producers?id=eq.${producerId}&select=name,adresse_retrait,horaires_retrait,instructions_retrait`,
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                apikey: SUPABASE_ANON_KEY,
-                Authorization: `Bearer ${accessToken}`,
-              },
-            }
-          );
-
-          const producerData = await producerResponse.json();
-          const producer = producerData[0] || {};
-
-          // Créer la commande
-          console.log('[DirectSalesCart] Creating order for producer:', producerId, 'total:', total);
-          const commandeResponse = await fetch(
-            `${SUPABASE_URL}/rest/v1/commandes_vente_directe`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                apikey: SUPABASE_ANON_KEY,
-                Authorization: `Bearer ${accessToken}`,
-                Prefer: 'return=representation',
-              },
-              body: JSON.stringify({
-                user_id: userId,
-                producer_id: producerId,
-                total,
-                statut: 'en_attente',
-                adresse_retrait: producer.adresse_retrait || '',
-                horaires_retrait: producer.horaires_retrait || '',
-                instructions_retrait: producer.instructions_retrait || null,
-              }),
-            }
-          );
-
-          if (!commandeResponse.ok) {
-            const errorText = await commandeResponse.text();
-            console.log('[DirectSalesCart] Error creating order:', commandeResponse.status, errorText);
-            continue;
-          }
-
-          const commandeData = await commandeResponse.json();
-          console.log('[DirectSalesCart] Order created:', commandeData);
-          const commande = Array.isArray(commandeData) ? commandeData[0] : commandeData;
-
-          if (!commande?.id) {
-            console.log('[DirectSalesCart] No order ID returned');
-            continue;
-          }
-
-          orderIds.push(commande.id);
-
-          // Créer les lignes de commande en parallèle
-          await Promise.all(
-            items.map((item) =>
-              fetch(
-                `${SUPABASE_URL}/rest/v1/lignes_commande_vente_directe`,
-                {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    apikey: SUPABASE_ANON_KEY,
-                    Authorization: `Bearer ${accessToken}`,
-                  },
-                  body: JSON.stringify({
-                    commande_id: commande.id,
-                    product_id: item.product_id,
-                    quantite: item.quantity,
-                    prix_unitaire: item.price,
-                    sous_total: item.price * item.quantity,
-                  }),
-                }
-              )
-            )
-          );
-
-          // Appeler la fonction d'envoi d'email
-          await fetch(
-            `${SUPABASE_URL}/functions/v1/send-order-email`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${accessToken}`,
-              },
-              body: JSON.stringify({
-                commandeId: commande.id,
-                producerId,
-                userId,
-              }),
-            }
-          );
-        } catch (error) {
-          console.log('[DirectSalesCart] Error creating order for producer:', producerId, error);
+      const response = await fetch(
+        `${SUPABASE_URL}/functions/v1/create-direct-sale-orders`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ items }),
         }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return { success: false, error: errorText || 'Failed to create orders' };
       }
+
+      const result = await response.json();
+      const orderIds: string[] = Array.isArray(result?.orderIds) ? result.orderIds : [];
+      incrementMetric('orders.created', orderIds.length || 0);
+      endMetric('orders.create', metricStart, { orders: orderIds.length || 0 });
 
       // Vider le panier après succès
       if (orderIds.length > 0) {
@@ -373,7 +268,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
         error: orderIds.length === 0 ? 'Failed to create any orders' : undefined,
       };
     } catch (error) {
-      console.log('[DirectSalesCart] Error in createOrders:', error);
+      console.warn('[DirectSalesCart] Error in createOrders:', error);
       return { success: false, error: 'An error occurred while creating orders' };
     }
   },

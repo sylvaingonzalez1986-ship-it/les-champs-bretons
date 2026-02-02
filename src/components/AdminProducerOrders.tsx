@@ -191,7 +191,6 @@ export function AdminProducerOrders() {
 
       if (response.ok) {
         const data = await response.json();
-        console.log('[AdminProducerOrders] Producer lookup result:', data);
         if (data.length > 0) {
           setProducerId(data[0].id);
         }
@@ -199,7 +198,6 @@ export function AdminProducerOrders() {
         const errorText = await response.text();
         // Check if it's a JWT error and try to refresh
         if (errorText.includes('JWT expired') || errorText.includes('JWT')) {
-          console.log('[AdminProducerOrders] JWT expired, refreshing session...');
           await refresh();
           // Retry after refresh
           setTimeout(() => fetchProducerId(), 500);
@@ -218,15 +216,12 @@ export function AdminProducerOrders() {
 
   // Fetch orders for this producer (both direct sales and local market orders)
   const fetchOrders = useCallback(async (showLoading = true) => {
-    console.log('[AdminProducerOrders] fetchOrders called, producerId:', producerId);
     if (!producerId) {
-      console.log('[AdminProducerOrders] Missing producerId, skipping fetch');
       return;
     }
 
     const accessToken = await getAccessToken();
     if (!accessToken) {
-      console.log('[AdminProducerOrders] No valid access token, skipping fetch');
       return;
     }
 
@@ -241,7 +236,6 @@ export function AdminProducerOrders() {
           if (statusFilter !== 'all') {
             url += `&statut=eq.${statusFilter}`;
           }
-          console.log('[AdminProducerOrders] Fetching direct sales orders from:', url);
           const response = await fetch(url, {
             headers: {
               'Content-Type': 'application/json',
@@ -259,9 +253,6 @@ export function AdminProducerOrders() {
         loadOrdersForProducer(producerId, accessToken),
       ]);
 
-      console.log('[AdminProducerOrders] Direct sales orders:', directSalesData.length);
-      console.log('[AdminProducerOrders] Local market orders:', localMarketData.length);
-
       setOrders(directSalesData);
       setLocalMarketOrders(localMarketData);
 
@@ -272,7 +263,6 @@ export function AdminProducerOrders() {
       for (const order of directSalesData) {
         // Skip orders without valid ID
         if (!order?.id) {
-          console.log('[AdminProducerOrders] Skipping direct sale order without ID');
           continue;
         }
         const statusConfig = STATUS_CONFIG[order.statut as OrderStatus];
@@ -292,7 +282,6 @@ export function AdminProducerOrders() {
       for (const order of localMarketData) {
         // Skip orders without valid ID
         if (!order?.id) {
-          console.log('[AdminProducerOrders] Skipping local market order without ID');
           continue;
         }
 
@@ -345,21 +334,10 @@ export function AdminProducerOrders() {
     }
   }, [fetchOrders, producerId]);
 
-  // Debug: Log render state
-  useEffect(() => {
-    console.log('[AdminProducerOrders] Render state:', {
-      producerId,
-      ordersCount: unifiedOrders.length,
-      loading,
-      refreshing,
-    });
-  }, [producerId, unifiedOrders.length, loading, refreshing]);
-
   // Auto-refresh when screen comes into focus (helps with sync issues on Android)
   useFocusEffect(
     useCallback(() => {
       if (producerId) {
-        console.log('[AdminProducerOrders] Screen focused, refreshing orders...');
         fetchOrders(false); // Don't show loading indicator for background refresh
       }
     }, [producerId, fetchOrders])

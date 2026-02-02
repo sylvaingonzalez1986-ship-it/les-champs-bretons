@@ -125,7 +125,7 @@ export default function LocalMarketOrderModal({
         }
       }
     } catch (e) {
-      console.log('[LocalMarketOrderModal] Error fetching producer email:', e);
+      console.warn('[LocalMarketOrderModal] Error fetching producer email:', e);
     }
   };
 
@@ -216,7 +216,7 @@ export default function LocalMarketOrderModal({
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
     } catch (e) {
-      console.log('[LocalMarketOrderModal] Error:', e);
+      console.warn('[LocalMarketOrderModal] Error:', e);
       setError('Une erreur est survenue');
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {

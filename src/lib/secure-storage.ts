@@ -48,7 +48,7 @@ const RUNTIME_KEY_LENGTH = 48; // caractères pour clé générée
  * dans le fichier .env avec une clé de 32+ caractères aléatoires.
  *
  * Génération d'une clé robuste :
- * node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+ * node -e "require('crypto').randomBytes(32).toString('base64')"
  * ou
  * openssl rand -base64 32
  */
@@ -99,7 +99,7 @@ async function getEncryptionSecret(): Promise<string> {
       console.warn(
         '[SecureStorage] ⚠️ EXPO_PUBLIC_ENCRYPTION_KEY non définie.\n' +
         'Une clé temporaire sera générée. En production, définissez cette variable dans .env\n' +
-        'Générez une clé avec: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"'
+        'Générez une clé avec: node -e "require(\'crypto\').randomBytes(32).toString(\'base64\')"'
       );
     } else if (envKey.trim().length < 16) {
       console.warn(
@@ -130,7 +130,6 @@ async function getEncryptionSecret(): Promise<string> {
 
   try {
     await AsyncStorage.setItem(RUNTIME_KEY_STORAGE_KEY, runtimeGeneratedKey);
-    console.log('[SecureStorage] Clé runtime générée et persistée pour cette installation');
   } catch {
     console.warn('[SecureStorage] Impossible de persister la clé runtime');
   }
@@ -394,13 +393,11 @@ export async function initializeSecureStorage(): Promise<void> {
       await getOrCreateSalt();
       await deriveEncryptionKey();
       await AsyncStorage.setItem(STORAGE_PREFIX + KEY_CHECK_KEY, 'initialized');
-      console.log('[SecureStorage] Initialisé avec succès (Web + AES-256-GCM)');
     } catch (error) {
       console.error('[SecureStorage] Erreur initialisation:', error);
       throw error;
     }
   } else {
-    console.log(`[SecureStorage] Utilisation de SecureStore (${Platform.OS})`);
   }
 }
 
@@ -580,8 +577,6 @@ export async function clearAll(): Promise<void> {
  * À appeler une seule fois au démarrage de l'application
  */
 export async function migrateFromLegacyStorage(legacyKeys: string[]): Promise<void> {
-  console.log('[SecureStorage] Début de la migration...');
-
   for (const key of legacyKeys) {
     try {
       // Essayer de lire depuis l'ancien système (préfixe 'secure_')
@@ -593,14 +588,11 @@ export async function migrateFromLegacyStorage(legacyKeys: string[]): Promise<vo
         await setItem(key, oldValue);
         // Supprimer l'ancienne valeur
         await AsyncStorage.removeItem(oldKey);
-        console.log(`[SecureStorage] Migré: ${key}`);
       }
     } catch (error) {
       console.warn(`[SecureStorage] Erreur migration ${key}:`, error);
     }
   }
-
-  console.log('[SecureStorage] Migration terminée');
 }
 
 // ============================================

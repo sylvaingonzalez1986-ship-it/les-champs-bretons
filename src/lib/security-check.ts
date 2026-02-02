@@ -112,7 +112,6 @@ export function logSecurityCheck(): void {
   }
 
   if (result.isSecure && result.warnings.length === 0) {
-    console.log('✅ Security check passed: No exposed secrets detected');
   }
 }
 

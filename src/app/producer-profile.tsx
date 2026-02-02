@@ -45,7 +45,9 @@ import { COLORS } from '@/lib/colors';
 import { useAuth } from '@/lib/useAuth';
 import { useProducerStore } from '@/lib/store';
 import { Producer } from '@/lib/producers';
-import { syncProducerToSupabase, isSupabaseSyncConfigured } from '@/lib/supabase-sync';
+import { syncProducerToSupabase, isSupabaseSyncConfigured, fetchAllProducersWithProducts } from '@/lib/supabase-sync';
+import { useSupabaseSyncStore } from '@/lib/store';
+import { forceDataSync } from '@/lib/useDataSync';
 import { ProducerPhotoManager } from '@/components/ProducerPhotoManager';
 import {
   CultureTypeIcons,
@@ -211,13 +213,6 @@ export default function ProducerProfileScreen() {
     (p) => p.profileId === profile?.id || p.id === profile?.id || p.name === profile?.company_name
   );
 
-  // Debug log
-  React.useEffect(() => {
-    console.log('[ProducerProfile] Looking for producer with profile.id:', profile?.id);
-    console.log('[ProducerProfile] Found producer:', existingProducer?.id, existingProducer?.name, 'profileId:', existingProducer?.profileId);
-    console.log('[ProducerProfile] Total producers in store:', producers.length);
-  }, [profile?.id, existingProducer, producers.length]);
-
   // Form state
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -261,21 +256,22 @@ export default function ProducerProfileScreen() {
   // Load existing producer data
   useEffect(() => {
     if (existingProducer) {
-      setName(existingProducer.name);
+      setName(existingProducer.name || '');
       setEmail(existingProducer.email || '');
-      setRegion(existingProducer.region);
-      setDepartment(existingProducer.department);
-      setCity(existingProducer.city);
-      setDescription(existingProducer.description);
-      setImage(existingProducer.image);
-      setLatitude(existingProducer.coordinates.latitude.toString());
-      setLongitude(existingProducer.coordinates.longitude.toString());
-      setSoilType(existingProducer.soil.type);
-      setSoilPh(existingProducer.soil.ph);
-      setSoilCharacteristics(existingProducer.soil.characteristics);
-      setClimateType(existingProducer.climate.type);
-      setAvgTemp(existingProducer.climate.avgTemp);
-      setRainfall(existingProducer.climate.rainfall);
+      setRegion(existingProducer.region || '');
+      setDepartment(existingProducer.department || '');
+      setCity(existingProducer.city || '');
+      setDescription(existingProducer.description || '');
+      setImage(existingProducer.image || '');
+      // Safe access to nested objects with fallbacks
+      setLatitude(existingProducer.coordinates?.latitude?.toString() || '');
+      setLongitude(existingProducer.coordinates?.longitude?.toString() || '');
+      setSoilType(existingProducer.soil?.type || '');
+      setSoilPh(existingProducer.soil?.ph || '');
+      setSoilCharacteristics(existingProducer.soil?.characteristics || '');
+      setClimateType(existingProducer.climate?.type || '');
+      setAvgTemp(existingProducer.climate?.avgTemp || '');
+      setRainfall(existingProducer.climate?.rainfall || '');
       setCultureOutdoor(existingProducer.cultureOutdoor ?? false);
       setCultureGreenhouse(existingProducer.cultureGreenhouse ?? false);
       setCultureIndoor(existingProducer.cultureIndoor ?? false);
@@ -360,14 +356,10 @@ export default function ProducerProfileScreen() {
         },
       };
 
-      console.log('[ProducerProfile] Saving producer data:', producerData.id, producerData.name, 'profileId:', producerData.profileId);
-
       // Sync to Supabase FIRST (source of truth)
       if (isSupabaseSyncConfigured()) {
         try {
-          console.log('[ProducerProfile] Syncing to Supabase...');
           await syncProducerToSupabase(producerData);
-          console.log('[ProducerProfile] Successfully synced to Supabase');
         } catch (error) {
           console.error('[ProducerProfile] Error syncing to Supabase:', error);
           // Show error but continue to save locally
@@ -381,20 +373,29 @@ export default function ProducerProfileScreen() {
 
       // Then update local store
       if (existingProducer) {
-        console.log('[ProducerProfile] Updating existing producer in local store');
         updateProducer(existingProducer.id, producerData);
       } else {
-        console.log('[ProducerProfile] Adding new producer to local store');
         addProducer(producerData);
+      }
+
+      // Force refresh of synced producers so map screen updates immediately
+      try {
+        // Update the synced producers store directly with fresh data from Supabase
+        const freshProducers = await fetchAllProducersWithProducts();
+        if (freshProducers.length > 0) {
+          useSupabaseSyncStore.getState().setSyncedProducers(freshProducers);
+        }
+        // Also trigger a full data sync in background
+        forceDataSync().catch((err) => console.warn('[ProducerProfile] Background sync error:', err));
+      } catch (syncError) {
+        console.warn('[ProducerProfile] Error refreshing synced data:', syncError);
       }
 
       // Verify the data was saved
       setTimeout(() => {
         const { producers } = useProducerStore.getState();
         const savedProducer = producers.find((p) => p.id === producerData.id);
-        if (savedProducer) {
-          console.log('[ProducerProfile] Verified: Producer saved in store:', savedProducer.name);
-        } else {
+        if (!savedProducer) {
           console.error('[ProducerProfile] WARNING: Producer not found in store after save!');
         }
       }, 100);

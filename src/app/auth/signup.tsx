@@ -169,19 +169,14 @@ export default function SignupScreen() {
       const normalizedEmail = email.trim().toLowerCase();
       // Pass the selected role to signUp so it's stored in user metadata
       const result = await signUp({ email: normalizedEmail, password, fullName, role: selectedRole });
-      console.log('[Signup] signUp result:', result);
-      console.log('[Signup] Role passed to signUp:', selectedRole);
 
       // Check if we have a session (email confirmation disabled)
       if (result?.session) {
-        console.log('[Signup] Session created, moving to profile step');
         setStep('profile');
         setSuccessMessage('Compte créé ! Complétez votre profil.');
       } else {
         // No session means email confirmation is required
         // Save the selected role and email for later use after email confirmation
-        console.log('[Signup] No session, email confirmation required');
-        console.log('[Signup] Saving pending role for later application');
         await AsyncStorage.setItem(PENDING_SIGNUP_ROLE_KEY, selectedRole);
         await AsyncStorage.setItem(PENDING_SIGNUP_EMAIL_KEY, normalizedEmail);
         setStep('email-confirmation');
@@ -225,13 +220,6 @@ export default function SignupScreen() {
 
   // Save profile to Supabase
   const saveProfile = async () => {
-    console.log('[Signup] ========== SAVE PROFILE START ==========');
-    console.log('[Signup] selectedRole:', selectedRole);
-    console.log('[Signup] Full name:', fullName ? 'SET' : 'NOT SET');
-    console.log('[Signup] Phone:', phone ? 'SET' : 'NOT SET');
-    console.log('[Signup] Category:', category ?? 'NOT SET');
-    // Note: Personal data (name, phone, siret, etc.) not logged for security
-
     setIsSaving(true);
     setGeneralError('');
 
@@ -250,18 +238,7 @@ export default function SignupScreen() {
         ...((selectedRole === 'pro' || selectedRole === 'producer') ? { pro_status: 'pending' } : {}),
       };
 
-      console.log('[Signup] CALLING updateProfile with:');
-      console.log('[Signup] - role:', profileData.role);
-      console.log('[Signup] - full_name:', profileData.full_name ? 'SET' : 'NULL');
-      console.log('[Signup] - category:', profileData.category);
-      console.log('[Signup] - profile keys:', Object.keys(profileData));
-
       const result = await updateProfile(profileData as any);
-
-      console.log('[Signup] Profile update result:', result);
-      console.log('[Signup] Result type:', typeof result);
-      console.log('[Signup] Result is UserProfile?', result && 'role' in result);
-      console.log('[Signup] ========== SAVE PROFILE END ==========');
 
       if (!result) {
         throw new Error('Profile not returned from updateProfile');
@@ -271,12 +248,10 @@ export default function SignupScreen() {
 
       // Navigate to home after short delay
       setTimeout(() => {
-        console.log('[Signup] Navigating to home');
         router.replace('/(tabs)');
       }, 1500);
     } catch (error) {
       console.error('[Signup] Error updating profile:', error);
-      console.log('[Signup] ========== SAVE PROFILE ERROR ==========');
       const message = error instanceof Error ? error.message : 'Erreur lors de la mise à jour du profil';
       setGeneralError(message);
     } finally {

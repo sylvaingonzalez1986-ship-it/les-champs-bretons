@@ -58,8 +58,6 @@ export const useOrderQueueStore = create<OrderQueueState>()(
         set((state) => ({
           pendingOrders: [...state.pendingOrders, pendingOrder],
         }));
-
-        console.log('[OrderQueue] Commande ajoutée à la file:', order.id);
       },
 
       removePendingOrder: (orderId: string) => {
@@ -89,20 +87,17 @@ export const useOrderQueueStore = create<OrderQueueState>()(
 
         // Ne pas synchroniser si déjà en cours
         if (state.isSyncing) {
-          console.log('[OrderQueue] Sync déjà en cours');
           return { success: 0, failed: 0 };
         }
 
         // Vérifier la connexion réseau
         const netInfo = await NetInfo.fetch();
         if (!netInfo.isConnected) {
-          console.log('[OrderQueue] Pas de connexion réseau');
           return { success: 0, failed: 0 };
         }
 
         // Vérifier si Supabase est configuré
         if (!isSupabaseSyncConfigured()) {
-          console.log('[OrderQueue] Supabase non configuré');
           return { success: 0, failed: 0 };
         }
 
@@ -111,12 +106,10 @@ export const useOrderQueueStore = create<OrderQueueState>()(
         );
 
         if (pendingToSync.length === 0) {
-          console.log('[OrderQueue] Aucune commande en attente');
           return { success: 0, failed: 0 };
         }
 
         set({ isSyncing: true, lastSyncAttempt: Date.now() });
-        console.log(`[OrderQueue] Synchronisation de ${pendingToSync.length} commande(s)...`);
 
         let success = 0;
         let failed = 0;
@@ -132,7 +125,6 @@ export const useOrderQueueStore = create<OrderQueueState>()(
             // Succès
             get().updateOrderStatus(pending.id, 'synced');
             success++;
-            console.log(`[OrderQueue] Commande ${pending.id} synchronisée avec succès`);
           } catch (error) {
             // Échec
             const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
@@ -151,7 +143,6 @@ export const useOrderQueueStore = create<OrderQueueState>()(
         }
 
         set({ isSyncing: false });
-        console.log(`[OrderQueue] Sync terminée: ${success} réussie(s), ${failed} échouée(s)`);
 
         return { success, failed };
       },
@@ -193,7 +184,6 @@ export function setupOrderQueueNetworkListener() {
     if (state.isConnected && state.isInternetReachable) {
       const pendingCount = useOrderQueueStore.getState().getPendingCount();
       if (pendingCount > 0) {
-        console.log(`[OrderQueue] Réseau rétabli, ${pendingCount} commande(s) en attente`);
         // Petite attente pour laisser le réseau se stabiliser
         setTimeout(() => {
           useOrderQueueStore.getState().syncPendingOrders();
@@ -201,8 +191,6 @@ export function setupOrderQueueNetworkListener() {
       }
     }
   });
-
-  console.log('[OrderQueue] Network listener configuré');
 }
 
 export function cleanupOrderQueueNetworkListener() {

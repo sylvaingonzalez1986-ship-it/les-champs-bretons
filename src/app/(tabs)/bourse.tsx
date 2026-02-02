@@ -46,9 +46,12 @@ export default function BourseScreen() {
   const allOrders = useBourseStore((s) => s.allOrders);
   const stats = useBourseStore((s) => s.stats);
   const isLoading = useBourseStore((s) => s.isLoading);
+  const isLoadingMore = useBourseStore((s) => s.isLoadingMore);
+  const nextCursor = useBourseStore((s) => s.nextCursor);
   const error = useBourseStore((s) => s.error);
 
   const loadMarketData = useBourseStore((s) => s.loadMarketData);
+  const loadMoreMarketData = useBourseStore((s) => s.loadMoreMarketData);
   const refreshMarketData = useBourseStore((s) => s.refreshMarketData);
   const loadMyOrders = useBourseStore((s) => s.loadMyOrders);
   const loadAllOrders = useBourseStore((s) => s.loadAllOrders);
@@ -69,25 +72,15 @@ export default function BourseScreen() {
 
   // Sélectionner un produit pour voir les détails
   const handleProductPress = useCallback((productId: string) => {
-    console.log('[Bourse] Product pressed:', productId);
-    console.log('[Bourse] Market states count:', marketStates.length);
     const found = marketStates.find((ms) => ms.product_id === productId);
-    console.log('[Bourse] Found market state:', found?.product?.name);
-    console.log('[Bourse] Setting selectedProductId to:', productId);
     setSelectedProductId(productId);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }, [marketStates]);
 
   // Fermer le modal
   const handleCloseModal = useCallback(() => {
-    console.log('[Bourse] handleCloseModal called');
     setSelectedProductId(null);
   }, []);
-
-  // Debug: log quand selectedProductId change
-  useEffect(() => {
-    console.log('[Bourse] selectedProductId changed to:', selectedProductId);
-  }, [selectedProductId]);
 
   // Rafraîchir les données
   const handleRefresh = useCallback(async () => {
@@ -324,6 +317,9 @@ export default function BourseScreen() {
             onProductPress={handleProductPress}
             isRefreshing={isLoading}
             onRefresh={handleRefresh}
+            hasMore={!!nextCursor}
+            isLoadingMore={isLoadingMore}
+            onLoadMore={loadMoreMarketData}
           />
         ) : viewMode === 'myOrders' ? (
           <MyOrdersView orders={myOrders} isRefreshing={isLoading} onRefresh={handleRefresh} />

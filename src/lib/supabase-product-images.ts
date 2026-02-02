@@ -29,16 +29,63 @@ export async function uploadProductImage(
     throw new Error('Supabase non configuré');
   }
 
+  const uploadMetricStart = Date.now();
+
   // Read the file as blob
   const response = await fetch(fileUri);
   const blob = await response.blob();
+
+  const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
+  if (blob.size > MAX_IMAGE_BYTES) {
+    throw new Error('Image trop volumineuse (max 10MB)');
+  }
 
   // Generate unique filename with producer/product path
   const timestamp = Date.now();
   const ext = fileUri.split('.').pop()?.toLowerCase() || 'jpg';
   const finalName = `${producerId}/${productId}/${timestamp}.${ext}`;
 
-  console.log('[ProductImages] Uploading image:', finalName);
+  // Validate upload server-side (RPC)
+  try {
+    let isInvalid = false;
+    let invalidReason = 'Validation upload refusée';
+    const validationResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/rpc/validate_file_upload`,
+      {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          p_bucket_name: PRODUCT_IMAGES_BUCKET,
+          p_file_path: finalName,
+          p_file_size: blob.size,
+          p_mime_type: blob.type || 'image/jpeg',
+          p_file_header: null,
+        }),
+      }
+    );
+
+    if (validationResponse.ok) {
+      const validationResult = await validationResponse.json();
+      if (!validationResult?.valid) {
+        isInvalid = true;
+        invalidReason = validationResult?.reason || invalidReason;
+      }
+    }
+
+    if (isInvalid) {
+      throw new Error(invalidReason);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Validation upload refusée';
+    if (message) {
+      throw new Error(message);
+    }
+    console.warn('[ProductImages] Validation upload error:', error);
+  }
 
   // Upload to Supabase Storage
   const uploadResponse = await fetch(
@@ -56,14 +103,17 @@ export async function uploadProductImage(
   );
 
   if (!uploadResponse.ok) {
-    const error = await uploadResponse.text();
-    console.warn('[ProductImages] Upload error:', error);
-    throw new Error(`Erreur upload image: ${error}`);
+    console.warn('[ProductImages] Upload error');
+    throw new Error('Erreur upload image');
   }
 
   // Return the public URL
   const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${PRODUCT_IMAGES_BUCKET}/${finalName}`;
-  console.log('[ProductImages] Image uploaded:', publicUrl);
+
+  if (__DEV__) {
+    const duration = Date.now() - uploadMetricStart;
+    console.info('[Metrics] upload.product_image', { durationMs: duration });
+  }
 
   return publicUrl;
 }
@@ -85,7 +135,6 @@ export async function deleteProductImage(imageUrl: string): Promise<void> {
   }
 
   const filePath = pathMatch[1];
-  console.log('[ProductImages] Deleting image:', filePath);
 
   const response = await fetch(
     `${SUPABASE_URL}/storage/v1/object/${PRODUCT_IMAGES_BUCKET}/${filePath}`,
@@ -99,8 +148,7 @@ export async function deleteProductImage(imageUrl: string): Promise<void> {
   );
 
   if (!response.ok) {
-    const error = await response.text();
-    console.warn('[ProductImages] Delete error:', error);
+    console.warn('[ProductImages] Delete error');
   }
 }
 
@@ -114,18 +162,24 @@ export async function deleteProductImage(imageUrl: string): Promise<void> {
 export async function uploadMultipleProductImages(
   fileUris: string[],
   producerId: string,
-  productId: string
+  productId: string,
+  maxConcurrent: number = 3
 ): Promise<string[]> {
   const urls: string[] = [];
 
-  for (const uri of fileUris) {
-    try {
-      const url = await uploadProductImage(uri, producerId, productId);
-      urls.push(url);
-    } catch (error) {
-      console.warn('[ProductImages] Error uploading image:', error);
-      // Continue with other images even if one fails
-    }
+  for (let i = 0; i < fileUris.length; i += maxConcurrent) {
+    const batch = fileUris.slice(i, i + maxConcurrent);
+    const results = await Promise.allSettled(
+      batch.map((uri) => uploadProductImage(uri, producerId, productId))
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        urls.push(result.value);
+      } else {
+        console.warn('[ProductImages] Error uploading image:', result.reason, batch[index]);
+      }
+    });
   }
 
   return urls;

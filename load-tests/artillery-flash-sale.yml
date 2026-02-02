@@ -1,0 +1,232 @@
+# Artillery Load Test - Flash Sale Scenario
+# Simulates 500 users rushing to purchase during a promo launch
+#
+# Run: artillery run load-tests/artillery-flash-sale.yml
+
+config:
+  target: "{{ $processEnvironment.SUPABASE_URL }}"
+  phases:
+    # Phase 1: Warm-up (simulate pre-promo browsing)
+    - duration: 60
+      arrivalRate: 5
+      name: "Pre-promo warm-up"
+
+    # Phase 2: Flash sale launch (500 users in 60 seconds)
+    - duration: 60
+      arrivalRate: 25  # 25 users/second = 1500 in 60s
+      name: "Flash sale surge"
+
+    # Phase 3: Sustained load (users completing purchases)
+    - duration: 180
+      arrivalRate: 10
+      name: "Post-surge sustained load"
+
+    # Phase 4: Cool down
+    - duration: 60
+      arrivalRate: 2
+      name: "Cool down"
+
+  # Environment variables (set before running)
+  variables:
+    anonKey: "{{ $processEnvironment.SUPABASE_ANON_KEY }}"
+    testUserEmail: "{{ $processEnvironment.TEST_USER_EMAIL }}"
+    testUserPassword: "{{ $processEnvironment.TEST_USER_PASSWORD }}"
+    promoProductId: "promo-product-123"
+    promoProducerId: "producer-456"
+
+  # Performance thresholds
+  ensure:
+    maxErrorRate: 5  # Max 5% error rate
+    p95: 2000        # 95th percentile should be <2s
+    p99: 5000        # 99th percentile should be <5s
+
+  # Load test engine settings
+  http:
+    timeout: 10
+    maxSockets: 100  # Max concurrent connections per worker
+
+  # Plugins for monitoring
+  plugins:
+    expect: {}
+    metrics-by-endpoint: {}
+
+# Before test: Create test users
+before:
+  flow:
+    - log: "🚀 Starting Flash Sale Load Test"
+    - log: "Target: {{ target }}"
+    - log: "Promo Product ID: {{ promoProductId }}"
+
+scenarios:
+  # Scenario 1: New user signs up and purchases (10%)
+  - name: "New User Signup and Purchase"
+    weight: 10
+    flow:
+      # Step 1: Sign up
+      - post:
+          url: "/auth/v1/signup"
+          json:
+            email: "test-{{ $randomString() }}@loadtest.com"
+            password: "TestPassword123!"
+          headers:
+            apikey: "{{ anonKey }}"
+            Content-Type: "application/json"
+          capture:
+            json: "$.access_token"
+            as: "accessToken"
+          expect:
+            - statusCode: 200
+            - hasProperty: "access_token"
+
+      - think: 2  # User confirms email (simulated)
+
+      # Step 2: Browse promo product
+      - get:
+          url: "/rest/v1/products?id=eq.{{ promoProductId }}&select=*"
+          headers:
+            apikey: "{{ anonKey }}"
+            Authorization: "Bearer {{ accessToken }}"
+
+      - think: 3  # User decides to purchase
+
+      # Step 3: Add to cart
+      - post:
+          url: "/rest/v1/panier_vente_directe"
+          json:
+            product_id: "{{ promoProductId }}"
+            producer_id: "{{ promoProducerId }}"
+            quantity: 1
+          headers:
+            apikey: "{{ anonKey }}"
+            Authorization: "Bearer {{ accessToken }}"
+
+      - think: 1
+
+      # Step 4: Create order (critical path)
+      - post:
+          url: "/functions/v1/create-direct-sale-orders"
+          json:
+            items:
+              - productId: "{{ promoProductId }}"
+                producerId: "{{ promoProducerId }}"
+                quantity: 1
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          afterResponse: "recordOrderCreation"
+          expect:
+            - statusCode: 200
+            - hasProperty: "orderIds"
+
+  # Scenario 2: Existing user quick purchase (70%)
+  - name: "Existing User Quick Purchase"
+    weight: 70
+    flow:
+      # Step 1: Login
+      - post:
+          url: "/auth/v1/token?grant_type=password"
+          json:
+            email: "{{ testUserEmail }}"
+            password: "{{ testUserPassword }}"
+          headers:
+            apikey: "{{ anonKey }}"
+            Content-Type: "application/json"
+          capture:
+            json: "$.access_token"
+            as: "accessToken"
+            json: "$.user.id"
+            as: "userId"
+          expect:
+            - statusCode: 200
+
+      # Step 2: Direct to promo product (user clicked push notification)
+      - get:
+          url: "/rest/v1/products?id=eq.{{ promoProductId }}&select=*"
+          headers:
+            apikey: "{{ anonKey }}"
+            Authorization: "Bearer {{ accessToken }}"
+
+      - think: 1  # Quick decision
+
+      # Step 3: Skip cart, direct order (fast path)
+      - post:
+          url: "/functions/v1/create-direct-sale-orders"
+          json:
+            items:
+              - productId: "{{ promoProductId }}"
+                producerId: "{{ promoProducerId }}"
+                quantity: 1
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          afterResponse: "recordOrderCreation"
+          expect:
+            - statusCode: 200
+
+  # Scenario 3: User browses but doesn't purchase (20%)
+  - name: "Browse Only (Abandoned Cart)"
+    weight: 20
+    flow:
+      # Step 1: Login
+      - post:
+          url: "/auth/v1/token?grant_type=password"
+          json:
+            email: "{{ testUserEmail }}"
+            password: "{{ testUserPassword }}"
+          headers:
+            apikey: "{{ anonKey }}"
+            Content-Type: "application/json"
+          capture:
+            json: "$.access_token"
+            as: "accessToken"
+
+      # Step 2: Browse promo product
+      - get:
+          url: "/rest/v1/products?id=eq.{{ promoProductId }}&select=*"
+          headers:
+            apikey: "{{ anonKey }}"
+            Authorization: "Bearer {{ accessToken }}"
+
+      - think: 2
+
+      # Step 3: Browse other products (comparison shopping)
+      - get:
+          url: "/rest/v1/products?select=*&limit=10"
+          headers:
+            apikey: "{{ anonKey }}"
+            Authorization: "Bearer {{ accessToken }}"
+
+      - think: 3
+
+      # Step 4: Add to cart but abandon
+      - post:
+          url: "/rest/v1/panier_vente_directe"
+          json:
+            product_id: "{{ promoProductId }}"
+            producer_id: "{{ promoProducerId }}"
+            quantity: 1
+          headers:
+            apikey: "{{ anonKey }}"
+            Authorization: "Bearer {{ accessToken }}"
+
+      # User leaves without purchasing
+
+# After response hooks
+processor:
+  recordOrderCreation: |
+    function (requestParams, response, context, ee, next) {
+      if (response.statusCode === 200) {
+        ee.emit('counter', 'orders.successful', 1);
+      } else {
+        ee.emit('counter', 'orders.failed', 1);
+      }
+      return next();
+    }
+
+# After test: Summary
+after:
+  flow:
+    - log: "✅ Flash Sale Load Test Complete"
+    - log: "Check results for:"
+    - log: "  - Edge Function cold start times (first 50 users)"
+    - log: "  - Order creation success rate (should be >95%)"
+    - log: "  - Database connection pool usage"
+    - log: "  - Error rate during surge phase"

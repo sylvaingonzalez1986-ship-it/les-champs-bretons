@@ -203,11 +203,7 @@ export default function HomeScreen() {
           const lotType = drawnLot.lotType ?? 'product';
           // Fire and forget - don't block the UI
           recordUserWonLot(userCode, drawnLot, lotType).then((savedLot) => {
-            if (savedLot) {
-              console.log('[Tirage] Lot saved to Supabase with gift code:', savedLot.giftCode);
-            }
           }).catch((err) => {
-            console.log('[Tirage] Could not save to Supabase:', err?.message);
           });
         }
       } else {

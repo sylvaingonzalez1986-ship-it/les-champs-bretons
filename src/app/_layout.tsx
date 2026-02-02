@@ -35,8 +35,11 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 2,
-      staleTime: 1000 * 60 * 5,
-      gcTime: 1000 * 60 * 30,
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+      staleTime: 1000 * 60 * 10,
+      gcTime: 1000 * 60 * 60,
+      refetchOnMount: 'always',
+      refetchOnWindowFocus: false,
     },
   },
 });
@@ -106,21 +109,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   const navigationDone = useRef<string | null>(null);
 
-  // Debug logs
-  useEffect(() => {
-    if (__DEV__) {
-      console.log('[AuthGuard] State:', {
-        isInitialized,
-        isLoading,
-        isAuthenticated,
-        hasProfile: !!profile,
-        hasSession: !!session,
-        loadingTimeout,
-        segments: segments.join('/'),
-      });
-    }
-  }, [isInitialized, isLoading, isAuthenticated, profile, session, loadingTimeout, segments]);
-
   // Safety timeout
   useEffect(() => {
     if (!isInitialized || isLoading) {
@@ -144,7 +132,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     // Skip navigation if user is on reset-password page (deep link from email)
     const currentPath = segments.join('/');
     if (currentPath.includes('reset-password') || currentPath.includes('email-confirmed')) {
-      console.log('[AuthGuard] On auth callback page, skipping navigation');
       return;
     }
 
@@ -179,7 +166,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
     // Only navigate if we have a target and haven't navigated there already
     if (targetRoute && navigationDone.current !== targetRoute) {
-      console.log('[AuthGuard] Navigating to:', targetRoute);
       navigationDone.current = targetRoute;
       router.replace(targetRoute as any);
     }

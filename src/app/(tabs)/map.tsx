@@ -525,7 +525,7 @@ export default function MapScreen() {
             setSyncedProducers(producers);
           }
         } catch (error) {
-          console.log('Error loading from Supabase:', error);
+          console.warn('Error loading from Supabase:', error);
         }
       }
     };
@@ -536,12 +536,43 @@ export default function MapScreen() {
     let producers: Producer[] = [];
 
     if (isAdmin) {
+      // Admin: use custom producers + samples
       const customIds = new Set(customProducers.map(p => p.id));
       const filteredSamples = SAMPLE_PRODUCERS.filter(p => !customIds.has(p.id));
       producers = [...customProducers, ...filteredSamples];
     } else if (syncedProducers.length > 0) {
-      producers = syncedProducers;
+      // For non-admin with synced data: merge synced with local custom producers
+      // Local custom producers (from useProducerStore) may have fresher data
+      // So we use synced as base, but override with custom if same ID exists
+      // Create a lookup object for custom producers by ID
+      const customProducersById: Record<string, Producer> = {};
+      customProducers.forEach(p => {
+        customProducersById[p.id] = p;
+      });
+
+      producers = syncedProducers.map(syncedProducer => {
+        // If this producer exists in customProducers, use the custom version (fresher data)
+        const customVersion = customProducersById[syncedProducer.id];
+        if (customVersion) {
+          return customVersion;
+        }
+        // Also check by profileId for producers linked to user profiles
+        const customByProfileId = customProducers.find(p => p.profileId && p.profileId === syncedProducer.profileId);
+        if (customByProfileId) {
+          return customByProfileId;
+        }
+        return syncedProducer;
+      });
+
+      // Add any custom producers not in synced (new local producers)
+      const syncedIds = new Set(syncedProducers.map(p => p.id));
+      const syncedProfileIds = new Set(syncedProducers.map(p => p.profileId).filter(Boolean));
+      const newLocalProducers = customProducers.filter(p =>
+        !syncedIds.has(p.id) && (!p.profileId || !syncedProfileIds.has(p.profileId))
+      );
+      producers = [...producers, ...newLocalProducers];
     } else {
+      // Fallback: custom producers + samples
       const customIds = new Set(customProducers.map(p => p.id));
       const filteredSamples = SAMPLE_PRODUCERS.filter(p => !customIds.has(p.id));
       producers = [...customProducers, ...filteredSamples];

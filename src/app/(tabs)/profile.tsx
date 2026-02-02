@@ -134,9 +134,7 @@ export default function ProfileScreen() {
   useEffect(() => {
     const loadMyProducer = async () => {
       if (isProducer && isAuthenticated) {
-        console.log('[Profile] Loading producer from Supabase...');
         const producer = await fetchMyProducer();
-        console.log('[Profile] My producer:', producer?.id, producer?.name);
         setMyProducer(producer);
       } else {
         setMyProducer(null);
@@ -171,7 +169,6 @@ export default function ProfileScreen() {
   // On passe explicitement le producerId pour éviter les problèmes de timing
   const syncOrdersFromSupabase = useCallback(async (manual: boolean, producerIdToUse: string | null) => {
     if (!isSupabaseSyncConfigured()) {
-      console.log('[Profile] Supabase not configured, skipping sync');
       return;
     }
 
@@ -179,10 +176,8 @@ export default function ProfileScreen() {
     // Sinon on ne fait RIEN pour éviter d'écraser les commandes existantes
     if (isProducer) {
       if (!producerIdToUse) {
-        console.log('[Profile] SKIP SYNC: Producer mode but no producerId provided - protecting existing orders');
         return;
       }
-      console.log('[Profile] Producer sync with ID:', producerIdToUse);
     }
 
     setOrdersLoading(true);
@@ -195,26 +190,20 @@ export default function ProfileScreen() {
 
       if (isProducer && producerIdToUse) {
         // Producteur: récupérer les commandes contenant ses produits
-        console.log('[Profile] Fetching orders for producer:', producerIdToUse);
         supabaseOrders = await fetchOrdersForProducer(producerIdToUse);
-        console.log('[Profile] Producer orders received:', supabaseOrders.length);
       } else if (!isProducer) {
         // Client/Pro: récupérer ses propres commandes (RLS filtre par user_id)
-        console.log('[Profile] Fetching orders for client/pro user');
         supabaseOrders = await fetchOrders();
-        console.log('[Profile] Client orders received:', supabaseOrders.length);
       }
 
       // PROTECTION: Ne jamais écraser avec un tableau vide pour les producteurs
       // sauf si c'est vraiment le résultat de la requête avec un producerId valide
       if (isProducer && supabaseOrders.length === 0 && !producerIdToUse) {
-        console.log('[Profile] PROTECTION: Refusing to set empty orders for producer without ID');
         return;
       }
 
       // Trier et mettre à jour le store
       const sortedOrders = [...supabaseOrders].sort((a, b) => b.createdAt - a.createdAt);
-      console.log('[Profile] Setting orders in store:', sortedOrders.length, 'orders');
       setOrders(sortedOrders);
 
       // Feedback uniquement pour refresh manuel
@@ -235,7 +224,6 @@ export default function ProfileScreen() {
   // Fonction de refresh manuelle - passe explicitement l'ID du producteur actuel
   const handleManualRefresh = useCallback(() => {
     const currentProducerId = myProducer?.id ?? null;
-    console.log('[Profile] Manual refresh triggered, producerId:', currentProducerId);
     syncOrdersFromSupabase(true, currentProducerId);
   }, [syncOrdersFromSupabase, myProducer]);
 
@@ -245,24 +233,20 @@ export default function ProfileScreen() {
   useEffect(() => {
     // Condition 1: La section commandes doit être ouverte
     if (!showOrders) {
-      console.log('[Profile] Orders section closed, no sync needed');
       return;
     }
 
     if (!isSupabaseSyncConfigured()) {
-      console.log('[Profile] Supabase not configured');
       return;
     }
 
     // Condition 2: Pour les producteurs, attendre que myProducer soit chargé
     if (isProducer && !myProducer) {
-      console.log('[Profile] Producer mode: waiting for myProducer to load...');
       return; // Le useEffect se re-déclenchera quand myProducer sera chargé
     }
 
     // Maintenant on peut sync - on passe explicitement l'ID pour éviter les closures stales
     const producerIdToUse = isProducer ? myProducer?.id ?? null : null;
-    console.log('[Profile] Starting sync, isProducer:', isProducer, 'producerId:', producerIdToUse);
 
     syncOrdersFromSupabase(false, producerIdToUse);
 
@@ -292,7 +276,7 @@ export default function ProfileScreen() {
           setProfileImage(savedImage);
         }
       } catch (error) {
-        console.log('Error loading profile image:', error);
+        console.warn('Error loading profile image:', error);
       }
     };
     loadProfileImage();
@@ -303,10 +287,7 @@ export default function ProfileScreen() {
     try {
       // Request permission
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      console.log('Permission status:', status);
-
       if (status !== 'granted') {
-        console.log('Permission to access media library was denied');
         return;
       }
 
@@ -317,15 +298,13 @@ export default function ProfileScreen() {
         quality: 0.9,
       });
 
-      console.log('Image picker result:', JSON.stringify(result, null, 2));
-
       if (!result.canceled && result.assets && result.assets[0]) {
         // Open cropper for profile image (square)
         setImageToCrop(result.assets[0].uri);
         setShowCropper(true);
       }
     } catch (error) {
-      console.log('Error picking image:', error);
+      console.warn('Error picking image:', error);
     }
   };
 
@@ -338,9 +317,8 @@ export default function ProfileScreen() {
     // Save to AsyncStorage
     try {
       await AsyncStorage.setItem(PROFILE_IMAGE_KEY, croppedUri);
-      console.log('Image saved to AsyncStorage');
     } catch (error) {
-      console.log('Error saving image:', error);
+      console.warn('Error saving image:', error);
     }
   };
 
@@ -353,32 +331,24 @@ export default function ProfileScreen() {
 
   // Handle claiming a gift code via Supabase
   const handleClaimGiftCode = async () => {
-    console.log('[Profile] handleClaimGiftCode called, input:', giftCodeInput);
     if (!giftCodeInput.trim()) {
-      console.log('[Profile] Empty input, returning');
       return;
     }
 
     // Ensure user has a code
     const userCode = myCode || generateMyCode();
-    console.log('[Profile] User code:', userCode);
 
     // Check if Supabase is configured
     if (!isSupabaseSyncConfigured()) {
-      console.log('[Profile] Supabase not configured');
       setGiftCodeError(true);
       setGiftCodeSuccess(false);
       setTimeout(() => setGiftCodeError(false), 3000);
       return;
     }
-
-    console.log('[Profile] Attempting to claim gift code:', giftCodeInput.trim().toUpperCase());
     try {
       const result = await claimGiftedLotWithDetails(giftCodeInput.trim().toUpperCase(), userCode);
-      console.log('[Profile] Claim result:', JSON.stringify(result, null, 2));
 
       if (result.success && result.lot) {
-        console.log('[Profile] Gift claimed successfully, adding to collection');
 
         // Create the product object for collection
         const product = {
@@ -403,8 +373,6 @@ export default function ProfileScreen() {
           minOrderAmount: result.lot.minOrderAmount ?? undefined,
         };
 
-        console.log('[Profile] Adding to collection:', product.name, lotInfo);
-
         // Add to collection
         addToCollection(product, lotInfo);
 
@@ -416,14 +384,13 @@ export default function ProfileScreen() {
         // Reset success message after 3 seconds
         setTimeout(() => setGiftCodeSuccess(false), 3000);
       } else {
-        console.log('[Profile] Claim failed:', result.error, result.errorMessage);
         setGiftCodeError(true);
         setGiftCodeSuccess(false);
         // Reset error message after 3 seconds
         setTimeout(() => setGiftCodeError(false), 3000);
       }
     } catch (error) {
-      console.log('[Profile] Error claiming gift:', error);
+      console.warn('[Profile] Error claiming gift:', error);
       setGiftCodeError(true);
       setGiftCodeSuccess(false);
       setTimeout(() => setGiftCodeError(false), 3000);
@@ -1656,7 +1623,6 @@ export default function ProfileScreen() {
                 placeholderTextColor="#6B7280"
                 value={giftCodeInput}
                 onChangeText={(text) => {
-                  console.log('[Profile] TextInput changed:', text);
                   setGiftCodeInput(text);
                 }}
                 autoCapitalize="characters"

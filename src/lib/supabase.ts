@@ -3,6 +3,7 @@
 
 import { getSupabaseConfig, isSupabaseConfigured } from './env-validation';
 import { secureFetch } from './ssl-pinning';
+import { getValidSession } from './supabase-auth';
 
 export interface AppDataItem {
   id: string;
@@ -18,28 +19,32 @@ export interface AppDataInsert {
   valeur: string;
 }
 
-const getHeaders = () => {
-  const { anonKey } = getSupabaseConfig();
+const getAuthHeaders = async () => {
+  const session = await getValidSession();
+  const token = session?.access_token;
+
+  if (!token) {
+    throw new Error('Utilisateur non authentifié');
+  }
+
   return {
-    'apikey': anonKey,
-    'Authorization': `Bearer ${anonKey}`,
+    'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json',
-    'Prefer': 'return=representation',
   };
 };
 
 // Fetch all data from app_data table
 export async function fetchAppData(): Promise<AppDataItem[]> {
   const { url } = getSupabaseConfig();
+  const headers = await getAuthHeaders();
 
-  const response = await secureFetch(`${url}/rest/v1/app_data?select=*&order=created_at.desc`, {
+  const response = await secureFetch(`${url}/functions/v1/app-data-admin`, {
     method: 'GET',
-    headers: getHeaders(),
+    headers,
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Erreur lors de la récupération des données: ${error}`);
+    throw new Error('Erreur lors de la récupération des données');
   }
 
   return response.json();
@@ -48,16 +53,16 @@ export async function fetchAppData(): Promise<AppDataItem[]> {
 // Add new item to app_data
 export async function addAppData(item: AppDataInsert): Promise<AppDataItem> {
   const { url } = getSupabaseConfig();
+  const headers = await getAuthHeaders();
 
-  const response = await secureFetch(`${url}/rest/v1/app_data`, {
+  const response = await secureFetch(`${url}/functions/v1/app-data-admin`, {
     method: 'POST',
-    headers: getHeaders(),
+    headers,
     body: JSON.stringify(item),
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Erreur lors de l'ajout: ${error}`);
+    throw new Error("Erreur lors de l'ajout");
   }
 
   const data = await response.json();
@@ -67,16 +72,16 @@ export async function addAppData(item: AppDataInsert): Promise<AppDataItem> {
 // Update an item in app_data
 export async function updateAppData(id: string, item: Partial<AppDataInsert>): Promise<AppDataItem> {
   const { url } = getSupabaseConfig();
+  const headers = await getAuthHeaders();
 
-  const response = await secureFetch(`${url}/rest/v1/app_data?id=eq.${id}`, {
+  const response = await secureFetch(`${url}/functions/v1/app-data-admin`, {
     method: 'PATCH',
-    headers: getHeaders(),
-    body: JSON.stringify(item),
+    headers,
+    body: JSON.stringify({ id, ...item }),
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Erreur lors de la mise à jour: ${error}`);
+    throw new Error('Erreur lors de la mise à jour');
   }
 
   const data = await response.json();
@@ -86,15 +91,16 @@ export async function updateAppData(id: string, item: Partial<AppDataInsert>): P
 // Delete an item from app_data
 export async function deleteAppData(id: string): Promise<void> {
   const { url } = getSupabaseConfig();
+  const headers = await getAuthHeaders();
 
-  const response = await secureFetch(`${url}/rest/v1/app_data?id=eq.${id}`, {
+  const response = await secureFetch(`${url}/functions/v1/app-data-admin`, {
     method: 'DELETE',
-    headers: getHeaders(),
+    headers,
+    body: JSON.stringify({ id }),
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Erreur lors de la suppression: ${error}`);
+    throw new Error('Erreur lors de la suppression');
   }
 }
 

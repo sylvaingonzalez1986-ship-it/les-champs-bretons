@@ -2831,14 +2831,7 @@ export default function AdminScreen() {
 
   // Load users data
   const loadUsersData = useCallback(async () => {
-    console.log('[Admin Screen] Loading users data...');
-    console.log('[Admin Screen] isUsersApiConfigured:', isUsersApiConfigured());
-    console.log('[Admin Screen] Role filter:', usersRoleFilter);
-    console.log('[Admin Screen] Category filter:', usersCategoryFilter);
-    console.log('[Admin Screen] Search query:', usersSearchQuery);
-
     if (!isUsersApiConfigured()) {
-      console.log('[Admin Screen] ERROR: Supabase not configured');
       setUsersError('Supabase non configuré');
       return;
     }
@@ -2850,16 +2843,11 @@ export default function AdminScreen() {
         category: usersCategoryFilter || undefined,
         search: usersSearchQuery || undefined,
       });
-      console.log('[Admin Screen] Fetch result - users count:', users?.length || 0);
-      console.log('[Admin Screen] Fetch result - error:', error);
-      console.log('[Admin Screen] Users to display:', JSON.stringify(users));
       if (error) throw error;
       setUsersData(users);
       setUsersLastUpdate(new Date());
-      console.log('[Admin Screen] usersData state updated with', users.length, 'users');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erreur inconnue';
-      console.log('[Admin Screen] ERROR:', message);
       setUsersError(message);
     } finally {
       setUsersLoading(false);
@@ -2903,12 +2891,10 @@ export default function AdminScreen() {
   useEffect(() => {
     if (activeTab === 'users') {
       const interval = setInterval(() => {
-        console.log('[Admin Users] Auto-refresh...');
         loadUsersData();
       }, 60000); // 60 seconds
 
       return () => {
-        console.log('[Admin Users] Stopping auto-refresh');
         clearInterval(interval);
       };
     }
@@ -2994,11 +2980,6 @@ export default function AdminScreen() {
 
   // Handle adding a new user
   const handleAddUser = async () => {
-    console.log('[Admin Users] handleAddUser called');
-    console.log('[Admin Users] Email:', newUserEmail);
-    console.log('[Admin Users] Name:', newUserFullName);
-    console.log('[Admin Users] Role:', newUserRole);
-
     if (!newUserEmail.trim()) {
       Alert.alert('Erreur', 'L\'email est requis');
       return;
@@ -3021,14 +3002,11 @@ export default function AdminScreen() {
       });
 
       if (error) throw error;
-
-      console.log('[Admin Users] User created:', user);
       setAddUserModalVisible(false);
       Alert.alert('Succès', `Utilisateur ${newUserEmail} créé avec succès`);
       await loadUsersData();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erreur inconnue';
-      console.log('[Admin Users] Error adding user:', message);
       Alert.alert('Erreur', message);
     } finally {
       setAddUserLoading(false);
@@ -3616,7 +3594,6 @@ export default function AdminScreen() {
               {/* Add user button */}
               <Pressable
                 onPress={() => {
-                  console.log('[Admin Users] Add button clicked');
                   setNewUserEmail('');
                   setNewUserFullName('');
                   setNewUserRole('client');
@@ -3821,10 +3798,8 @@ export default function AdminScreen() {
                     <View className="flex-row mt-3 pt-3" style={{ borderTopWidth: 1, borderTopColor: `${COLORS.text.white}10` }}>
                       <Pressable
                         onPress={async () => {
-                          console.log('[Admin] Approving user, role:', user.role);
                           Alert.alert('Validation en cours', `Approbation du compte ${user.role === 'producer' ? 'producteur' : 'pro'}...`);
                           const { success, error } = await updateProStatus(user.id, 'approved');
-                          console.log('[Admin] Approval result:', success, error?.message);
                           if (success) {
                             Alert.alert('Succès', 'Le compte a été approuvé');
                             await loadUsersData();
@@ -3841,9 +3816,7 @@ export default function AdminScreen() {
                       </Pressable>
                       <Pressable
                         onPress={async () => {
-                          console.log('[Admin] Rejecting user');
                           const { success, error } = await updateProStatus(user.id, 'rejected');
-                          console.log('[Admin] Rejection result:', success, error?.message);
                           if (success) {
                             Alert.alert('Succès', 'Le compte a été refusé');
                             await loadUsersData();
@@ -3866,7 +3839,6 @@ export default function AdminScreen() {
                     <View className="mt-3 pt-3" style={{ borderTopWidth: 1, borderTopColor: `${COLORS.text.white}10` }}>
                       <Pressable
                         onPress={async () => {
-                          console.log('[Admin] Creating shop for producer');
                           // Créer une nouvelle boutique pour ce producteur
                           const newProducer = {
                             id: `producer-${Date.now()}`,
@@ -3946,7 +3918,6 @@ export default function AdminScreen() {
                               text: 'Supprimer',
                               style: 'destructive',
                               onPress: async () => {
-                                console.log('[Admin] Deleting user');
                                 const { success, error } = await deleteUser(user.id);
                                 if (success) {
                                   Alert.alert('Succès', 'L\'utilisateur a été supprimé');
@@ -4285,7 +4256,7 @@ export default function AdminScreen() {
                             try {
                               await deleteProducerFromSupabase(producer.id);
                             } catch (error) {
-                              console.log('Erreur suppression Supabase:', error);
+                              console.warn('Erreur suppression Supabase:', error);
                             }
                             // Puis supprimer du store local
                             removeProducer(producer.id);

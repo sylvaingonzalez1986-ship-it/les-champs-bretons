@@ -100,7 +100,7 @@ const ShareCodeModal = ({
         message: `J'ai un cadeau pour toi ! Utilise ce code dans l'app Les Chanvriers Unis pour recevoir un lot gratuit : ${giftCode}`,
       });
     } catch (error) {
-      console.log('Error sharing:', error);
+      console.warn('Error sharing:', error);
     }
   };
 
@@ -165,12 +165,10 @@ const ClaimGiftModal = ({
   const [error, setError] = useState('');
 
   const handleClaim = () => {
-    console.log('[ClaimGiftModal] handleClaim called with code:', code);
     if (code.length < 5) {
       setError('Code invalide');
       return;
     }
-    console.log('[ClaimGiftModal] Calling onClaim with:', code.toUpperCase());
     onClaim(code.toUpperCase());
     setCode('');
     setError('');
@@ -267,11 +265,9 @@ export default function CollectionScreen() {
     // Try to get gift code from Supabase first
     if (isSupabaseSyncConfigured() && item.lotId) {
       const userCode = myCode || generateMyCode();
-      console.log('[handleSendGift] Getting gift code from Supabase for lot:', item.lotId);
       const supabaseGiftCode = await getGiftCodeForCollectionItem(userCode, item.lotId);
 
       if (supabaseGiftCode) {
-        console.log('[handleSendGift] Found Supabase gift code:', supabaseGiftCode);
         // Remove item from collection
         removeFromCollection(item.id);
         setGeneratedGiftCode(supabaseGiftCode);
@@ -280,7 +276,6 @@ export default function CollectionScreen() {
         setIsLoading(false);
         return;
       }
-      console.log('[handleSendGift] No Supabase gift code found, falling back to local');
     }
 
     // Fallback to local gift system
@@ -295,21 +290,13 @@ export default function CollectionScreen() {
 
   const handleClaimGift = async (code: string) => {
     setIsLoading(true);
-    console.log('[handleClaimGift] Starting claim process for code:', code);
-    console.log('[handleClaimGift] Supabase configured:', isSupabaseSyncConfigured());
 
     // Try Supabase first
     if (isSupabaseSyncConfigured()) {
       const userCode = myCode || generateMyCode();
-      console.log('[handleClaimGift] User code:', userCode);
-      console.log('[handleClaimGift] Trying to claim from Supabase:', code);
       const result = await claimGiftedLotWithDetails(code, userCode);
 
-      console.log('[handleClaimGift] Claim result:', JSON.stringify(result, null, 2));
-
       if (result.success && result.lot) {
-        console.log('[handleClaimGift] Gift claimed from Supabase:', result.lot);
-        console.log('[handleClaimGift] Lot details - id:', result.lot.lotId, 'type:', result.lot.lotType, 'name:', result.lot.lotName, 'rarity:', result.lot.lotRarity);
 
         // Create the product object
         const product = {
@@ -325,8 +312,6 @@ export default function CollectionScreen() {
           value: result.lot.lotValue ?? 0,
         };
 
-        console.log('[handleClaimGift] Product object created:', JSON.stringify(product, null, 2));
-
         // Create lotInfo with all necessary metadata
         const lotInfo = {
           lotId: result.lot.lotId,
@@ -336,18 +321,10 @@ export default function CollectionScreen() {
           minOrderAmount: result.lot.minOrderAmount ?? undefined,
         };
 
-        console.log('[handleClaimGift] LotInfo object created:', JSON.stringify(lotInfo, null, 2));
-        console.log('[handleClaimGift] Current collection size before add:', collection.length);
-        console.log('[handleClaimGift] Calling addToCollection...');
-
         // Add to collection with the lot info so it appears in inventory
         addToCollection(product, lotInfo);
-
-        console.log('[handleClaimGift] addToCollection called, waiting for state update...');
-
         // Force a small delay and check collection
         await new Promise(resolve => setTimeout(resolve, 200));
-        console.log('[handleClaimGift] Collection size after delay:', collection.length);
 
         addPoints(5); // Points for claiming
         setClaimModalVisible(false);
@@ -356,7 +333,6 @@ export default function CollectionScreen() {
         return;
       } else if (result.error) {
         // Show specific error message
-        console.log('[handleClaimGift] Claim failed with error:', result.error, result.errorMessage);
         setIsLoading(false);
         Alert.alert('Erreur', result.errorMessage || 'Code invalide');
         return;
@@ -364,7 +340,6 @@ export default function CollectionScreen() {
     }
 
     // Fallback to local gift system
-    console.log('[handleClaimGift] Falling back to local gift system');
     const gift = claimGift(code);
     if (gift) {
       // Add to collection

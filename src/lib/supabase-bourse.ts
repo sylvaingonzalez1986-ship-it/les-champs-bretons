@@ -85,6 +85,17 @@ export interface ProductMarketState {
   product?: SupabaseBourseProduct;
 }
 
+export interface BourseFilters {
+  limit?: number;
+  cursor?: string;
+  type?: 'fleur' | 'huile' | 'resine' | 'infusion';
+}
+
+export interface BourseProductsPage {
+  data: ProductMarketState[];
+  nextCursor?: string;
+}
+
 // ==================== STOCKAGE LOCAL DES COMMANDES ====================
 
 // Cache mémoire des commandes locales
@@ -104,7 +115,7 @@ async function loadLocalOrders(): Promise<ProOrder[]> {
     localOrdersCache = orders;
     return orders;
   } catch (error) {
-    console.log('[Bourse] Error loading local orders:', error);
+    console.warn('[Bourse] Error loading local orders:', error);
     localOrdersCache = [];
     return [];
   }
@@ -118,7 +129,7 @@ async function saveLocalOrders(orders: ProOrder[]): Promise<void> {
     localOrdersCache = orders;
     await AsyncStorage.setItem(LOCAL_ORDERS_KEY, JSON.stringify(orders));
   } catch (error) {
-    console.log('[Bourse] Error saving local orders:', error);
+    console.warn('[Bourse] Error saving local orders:', error);
   }
 }
 
@@ -214,46 +225,84 @@ export function calculateDynamicPrice(
 // ==================== FONCTIONS BOURSE ====================
 
 /**
- * Récupère tous les produits cotés en bourse avec leur état de marché
+ * Récupère les produits cotés en bourse avec leur état de marché (paginé)
  */
-export async function fetchBourseProducts(): Promise<ProductMarketState[]> {
+export async function fetchBourseProducts(
+  filters: BourseFilters = { limit: 50 }
+): Promise<BourseProductsPage> {
   try {
+    const { limit = 50, cursor, type } = filters;
+
     // Charger les commandes locales d'abord
     const localOrders = await loadLocalOrders();
-    console.log('[fetchBourseProducts] Local orders count:', localOrders.length);
 
     // Récupérer les produits visibles pour les pros (ou tous les produits si visible_for_pros n'existe pas)
-    let productsResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/products?visible_for_pros=eq.true&select=*,producer:producers(id,name)`,
-      {
-        method: 'GET',
-        headers: getAuthHeaders(),
-      }
-    );
+    let productsQuery = `${SUPABASE_URL}/rest/v1/products?visible_for_pros=eq.true&status=eq.published`;
+    if (cursor) {
+      productsQuery += `&id=gt.${cursor}`;
+    }
+    if (type) {
+      productsQuery += `&type=eq.${type}`;
+    }
+    productsQuery += `&order=id.asc&limit=${limit}&select=*,producer:producers(id,name)`;
+
+    let productsResponse = await fetch(productsQuery, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
 
     // Si la colonne visible_for_pros n'existe pas, essayer sans filtre
     if (!productsResponse.ok) {
-      productsResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/products?select=*,producer:producers(id,name)`,
-        {
-          method: 'GET',
-          headers: getAuthHeaders(),
-        }
-      );
+      let fallbackQuery = `${SUPABASE_URL}/rest/v1/products?status=eq.published`;
+      if (cursor) {
+        fallbackQuery += `&id=gt.${cursor}`;
+      }
+      if (type) {
+        fallbackQuery += `&type=eq.${type}`;
+      }
+      fallbackQuery += `&order=id.asc&limit=${limit}&select=*,producer:producers(id,name)`;
+      productsResponse = await fetch(fallbackQuery, {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      });
     }
 
     if (!productsResponse.ok) {
-      const error = await productsResponse.text();
-      console.warn('[fetchBourseProducts] Erreur produits:', error);
+      console.warn('[fetchBourseProducts] Erreur produits');
       // Retourner des données de démo si pas de produits
-      return getDemoMarketStates();
+      return { data: await getDemoMarketStates(), nextCursor: undefined };
     }
 
     const products: SupabaseBourseProduct[] = await productsResponse.json();
 
     // Si aucun produit, retourner les données de démo
     if (products.length === 0) {
-      return getDemoMarketStates();
+      return { data: await getDemoMarketStates(), nextCursor: undefined };
+    }
+
+    const productIds = products.map((product) => product.id).filter(Boolean);
+    let supabaseDemandsByProduct: Record<string, number> = {};
+
+    if (productIds.length > 0) {
+      try {
+        const demandsResponse = await fetch(
+          `${SUPABASE_URL}/rest/v1/pro_orders?product_id=in.(${productIds.join(',')})&status=eq.pending&select=product_id,quantity`,
+          {
+            method: 'GET',
+            headers: getAuthHeaders(),
+          }
+        );
+
+        if (demandsResponse.ok) {
+          const demands: { product_id: string; quantity: number }[] = await demandsResponse.json();
+          supabaseDemandsByProduct = demands.reduce<Record<string, number>>((acc, demand) => {
+            acc[demand.product_id] = (acc[demand.product_id] ?? 0) + demand.quantity;
+            return acc;
+          }, {});
+        }
+      } catch {
+        // Table pro_orders n'existe pas encore, utiliser seulement les commandes locales
+      }
     }
 
     // Pour chaque produit, calculer l'état du marché
@@ -264,25 +313,7 @@ export async function fetchBourseProducts(): Promise<ProductMarketState[]> {
           .filter(o => o.product_id === product.id && o.status === 'pending')
           .reduce((sum, o) => sum + o.quantity, 0);
 
-        // Essayer aussi de récupérer les demandes depuis Supabase
-        try {
-          const demandsResponse = await fetch(
-            `${SUPABASE_URL}/rest/v1/pro_orders?product_id=eq.${product.id}&status=eq.pending&select=quantity`,
-            {
-              method: 'GET',
-              headers: getAuthHeaders(),
-            }
-          );
-
-          if (demandsResponse.ok) {
-            const demands: { quantity: number }[] = await demandsResponse.json();
-            const supabaseDemand = demands.reduce((sum, d) => sum + d.quantity, 0);
-            // Ajouter la demande Supabase (éviter les doublons n'est pas crucial ici)
-            totalDemand += supabaseDemand;
-          }
-        } catch {
-          // Table pro_orders n'existe pas encore, utiliser seulement les commandes locales
-        }
+        totalDemand += supabaseDemandsByProduct[product.id] ?? 0;
 
         // Utiliser price_pro ou price_public comme base_price si base_price n'existe pas
         // Pour la bourse PRO, on utilise pricePro (prix pro) s'il existe, sinon price (prix public)
@@ -298,7 +329,6 @@ export async function fetchBourseProducts(): Promise<ProductMarketState[]> {
           productAny.price_public ||
           productAny.price || 10;
 
-        console.log('[fetchBourseProducts] Product:', product.name, 'basePrice:', basePrice, 'demand:', totalDemand);
         // Utiliser stock comme stock_available si stock_available n'existe pas
         const stockAvailable = product.stock_available ?? (product as unknown as { stock?: number }).stock ?? 100;
 
@@ -323,11 +353,12 @@ export async function fetchBourseProducts(): Promise<ProductMarketState[]> {
       })
     );
 
-    return marketStates;
+    const nextCursor = products.length === limit ? products[products.length - 1].id : undefined;
+    return { data: marketStates, nextCursor };
   } catch (error) {
     console.warn('[fetchBourseProducts] Erreur:', error);
     // En cas d'erreur, retourner les données de démo
-    return getDemoMarketStates();
+    return { data: await getDemoMarketStates(), nextCursor: undefined };
   }
 }
 
@@ -350,7 +381,6 @@ async function getDemoMarketStates(): Promise<ProductMarketState[]> {
 
   // Charger les commandes locales pour calculer la demande
   const localOrders = await loadLocalOrders();
-  console.log('[Bourse] Local orders loaded:', localOrders.length);
 
   return demoProducts.map((p) => {
     // Calculer la demande à partir des commandes locales en attente
@@ -510,9 +540,6 @@ export async function createProOrder(
 
   // Essayer Supabase d'abord
   try {
-    console.log('[createProOrder] Tentative d\'envoi à Supabase...');
-    console.log('[createProOrder] product_id:', productId, 'quantity:', quantity, 'unitPrice:', unitPrice);
-
     const response = await fetch(`${SUPABASE_URL}/rest/v1/pro_orders`, {
       method: 'POST',
       headers: getAuthHeaders(),
@@ -525,32 +552,26 @@ export async function createProOrder(
         status: 'pending',
       }),
     });
-
-    console.log('[createProOrder] Réponse Supabase:', response.status, response.statusText);
-
     if (response.ok) {
       const data = await response.json();
-      console.log('[createProOrder] Commande créée dans Supabase:', data);
       const supabaseOrder = Array.isArray(data) ? data[0] : data;
       // Sauvegarder aussi localement pour synchronisation
       await addLocalOrder({ ...orderData, id: supabaseOrder.id });
       return supabaseOrder;
     } else {
-      const errorText = await response.text();
-      console.error('[createProOrder] Erreur Supabase:', response.status, errorText);
+      console.error('[createProOrder] Erreur Supabase:', response.status);
       // Si c'est une erreur 404 (table n'existe pas) ou 401/403 (pas autorisé), on continue en local
       // Sinon on lance l'erreur
       if (response.status !== 404 && response.status !== 401 && response.status !== 403) {
-        throw new Error(`Erreur Supabase: ${response.status} - ${errorText}`);
+        throw new Error('Erreur Supabase');
       }
     }
   } catch (error) {
-    console.log('[createProOrder] Supabase non disponible ou erreur:', error);
+    console.warn('[createProOrder] Supabase non disponible ou erreur:', error);
   }
 
   // Fallback: stockage local
   await addLocalOrder(orderData);
-  console.log('[createProOrder] Commande créée localement:', orderId);
   return orderData;
 }
 
@@ -566,8 +587,6 @@ export async function fetchMyProOrders(): Promise<ProOrder[]> {
 
   // Essayer Supabase d'abord
   try {
-    console.log('[fetchMyProOrders] Récupération des commandes depuis Supabase pour user:', session.user.id);
-
     const response = await fetch(
       `${SUPABASE_URL}/rest/v1/pro_orders?pro_user_id=eq.${session.user.id}&select=*&order=created_at.desc`,
       {
@@ -575,26 +594,20 @@ export async function fetchMyProOrders(): Promise<ProOrder[]> {
         headers: getAuthHeaders(),
       }
     );
-
-    console.log('[fetchMyProOrders] Réponse Supabase:', response.status);
-
     if (response.ok) {
       const supabaseOrders = await response.json();
-      console.log('[fetchMyProOrders] Commandes Supabase:', supabaseOrders.length);
       // Retourner même si vide
       return supabaseOrders;
     } else {
-      const errorText = await response.text();
-      console.error('[fetchMyProOrders] Erreur Supabase:', response.status, errorText);
+      console.error('[fetchMyProOrders] Erreur Supabase:', response.status);
     }
   } catch (error) {
-    console.log('[fetchMyProOrders] Supabase non disponible:', error);
+    console.warn('[fetchMyProOrders] Supabase non disponible:', error);
   }
 
   // Fallback: stockage local
   const localOrders = await loadLocalOrders();
   const myOrders = localOrders.filter(o => o.pro_user_id === session.user.id);
-  console.log('[fetchMyProOrders] Commandes locales:', myOrders.length);
   return myOrders;
 }
 
@@ -605,8 +618,6 @@ export async function fetchMyProOrders(): Promise<ProOrder[]> {
 export async function fetchAllProOrders(): Promise<ProOrder[]> {
   // Essayer Supabase d'abord
   try {
-    console.log('[fetchAllProOrders] Récupération des commandes depuis Supabase...');
-
     // D'abord essayer avec les jointures
     let response = await fetch(
       `${SUPABASE_URL}/rest/v1/pro_orders?select=*,profile:profiles(id,full_name,company_name,business_name)&order=created_at.desc`,
@@ -615,25 +626,19 @@ export async function fetchAllProOrders(): Promise<ProOrder[]> {
         headers: getAuthHeaders(),
       }
     );
-
-    console.log('[fetchAllProOrders] Réponse Supabase:', response.status);
-
     if (response.ok) {
       const supabaseOrders = await response.json();
-      console.log('[fetchAllProOrders] Commandes Supabase:', supabaseOrders.length);
       // Retourner même si vide (pour ne pas tomber dans le fallback local)
       return supabaseOrders;
     } else {
-      const errorText = await response.text();
-      console.error('[fetchAllProOrders] Erreur Supabase:', response.status, errorText);
+      console.error('[fetchAllProOrders] Erreur Supabase:', response.status);
     }
   } catch (error) {
-    console.log('[fetchAllProOrders] Supabase non disponible:', error);
+    console.warn('[fetchAllProOrders] Supabase non disponible:', error);
   }
 
   // Fallback: stockage local
   const localOrders = await loadLocalOrders();
-  console.log('[fetchAllProOrders] Commandes locales:', localOrders.length);
   return localOrders;
 }
 
@@ -665,12 +670,11 @@ export async function updateProOrderStatus(
       return;
     }
   } catch (error) {
-    console.log('[updateProOrderStatus] Supabase non disponible');
+    console.warn('[updateProOrderStatus] Supabase non disponible');
   }
 
   // Fallback: stockage local
   await updateLocalOrderStatus(orderId, status);
-  console.log('[updateProOrderStatus] Statut mis à jour localement:', orderId, status);
 }
 
 /**
@@ -722,7 +726,7 @@ export async function fetchBourseStats(): Promise<BourseStats> {
   }
 
   // Récupérer l'état du marché
-  const marketStates = await fetchBourseProducts();
+  const { data: marketStates } = await fetchBourseProducts({ limit: 200 });
 
   // Calculer les stats
   const totalOrders = orders.length;

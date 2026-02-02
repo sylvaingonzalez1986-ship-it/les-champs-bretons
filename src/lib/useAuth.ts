@@ -40,30 +40,31 @@ export const AUTH_QUERY_KEYS = {
 export function useAuth() {
   const queryClient = useQueryClient();
   const [isInitialized, setIsInitialized] = useState(false);
-  console.log('[useAuth] Hook start');
 
   // Charger la session au démarrage
   const { data: session, isLoading: isLoadingSession } = useQuery({
     queryKey: AUTH_QUERY_KEYS.session,
     queryFn: async () => {
-      console.log('[useAuth] Loading stored session...');
       const stored = await loadStoredSession();
-      setIsInitialized(true);
-      console.log('[useAuth] Session loaded:', stored?.user?.id);
       return stored;
     },
     staleTime: 1000 * 60 * 5, // 5 minutes
     gcTime: 1000 * 60 * 30, // 30 minutes
   });
 
+  // Marquer comme initialisé une fois que la session est chargée
+  useEffect(() => {
+    if (!isLoadingSession) {
+      setIsInitialized(true);
+    }
+  }, [isLoadingSession]);
+
   // Charger le profil si connecté
   // La queryKey inclut le user.id pour isoler le cache entre utilisateurs
   const { data: profile, isLoading: isLoadingProfile } = useQuery({
     queryKey: [...AUTH_QUERY_KEYS.profile, session?.user?.id],
     queryFn: async () => {
-      console.log('[useAuth] Fetching profile for user:', session?.user?.id);
       const result = await fetchProfile();
-      console.log('[useAuth] Profile fetched:', result.profile?.id, result.profile?.company_name || result.profile?.full_name);
       // React Query requires a non-undefined return value
       return result.profile ?? null;
     },
@@ -80,7 +81,6 @@ export function useAuth() {
       return result.session;
     },
     onSuccess: (newSession) => {
-      console.log('[useAuth] SignIn success, new user:', newSession?.user?.id);
       // D'abord effacer le cache de l'ancien profil
       queryClient.removeQueries({ queryKey: AUTH_QUERY_KEYS.profile });
       // Puis définir la nouvelle session
@@ -108,7 +108,6 @@ export function useAuth() {
     },
     onSuccess: (data) => {
       if (data.session) {
-        console.log('[useAuth] SignUp success, new user:', data.session?.user?.id);
         // Effacer l'ancien cache de profil
         queryClient.removeQueries({ queryKey: AUTH_QUERY_KEYS.profile });
         queryClient.setQueryData(AUTH_QUERY_KEYS.session, data.session);
@@ -123,7 +122,6 @@ export function useAuth() {
       if (result.error) throw new Error(result.error.message);
     },
     onSuccess: () => {
-      console.log('[useAuth] SignOut success, clearing all user data');
       // Effacer complètement le cache de profil (pour tous les utilisateurs)
       queryClient.removeQueries({ queryKey: AUTH_QUERY_KEYS.profile });
       queryClient.setQueryData(AUTH_QUERY_KEYS.session, null);
@@ -212,13 +210,6 @@ export function useAuth() {
     return newSession;
   }, [queryClient]);
 
-  console.log('[useAuth] Return:', {
-    isInitialized,
-    isLoading: isLoadingSession || isLoadingProfile,
-    isAuthenticated: !!session,
-    session,
-    profile,
-  });
   return {
     // État
     session,
@@ -356,9 +347,6 @@ export function usePermissions() {
   const role = profile?.role ?? 'client';
   const proStatus = (profile as any)?.pro_status ?? null;
   const isAdmin = role === 'admin';
-
-  // Debug logging
-  console.log('[usePermissions] role:', role, 'proStatus:', proStatus, 'isAdmin:', isAdmin);
 
   // Un pro est approuvé seulement si son statut est 'approved'
   const isProApproved = role === 'pro' && proStatus === 'approved';

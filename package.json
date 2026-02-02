@@ -43,6 +43,7 @@
     "@react-navigation/stack": "^7.1.1",
     "@shopify/flash-list": "1.7.6",
     "@shopify/react-native-skia": "v2.0.0-next.4",
+    "@supabase/supabase-js": "^2.93.2",
     "@tanstack/react-query": "5.90.2",
     "@vibecodeapp/sdk": "^0.4.14",
     "burnt": "^0.13.0",
@@ -136,7 +137,7 @@
     "react-native-view-shot": "~4.0.3",
     "react-native-vision-camera": "^4.6.4",
     "react-native-web": "^0.20.0",
-    "react-native-webview": "^13.16.0",
+    "react-native-webview": "13.13.5",
     "reanimated-tab-view": "^0.4.0",
     "tailwind-merge": "^3.2.0",
     "tailwindcss": "^3.4.17",
@@ -148,7 +149,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
-    "@react-native-community/cli": "^20.1.0",
+    "@react-native-community/cli": "^14.0.1",
     "@tanstack/eslint-plugin-query": "^5.62.10",
     "@testing-library/react-native": "^13.3.3",
     "@types/jest": "^30.0.0",
@@ -176,5 +177,16 @@
   "patchedDependencies": {
     "react-native@0.79.6": "patches/react-native@0.79.6.patch",
     "expo-asset@11.1.5": "patches/expo-asset@11.1.5.patch"
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "expo-av",
+          "react-native-markdown-display"
+        ],
+        "listUnknownPackages": false
+      }
+    }
   }
 }

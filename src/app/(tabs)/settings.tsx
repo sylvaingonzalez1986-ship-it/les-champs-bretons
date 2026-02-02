@@ -169,7 +169,7 @@ export default function SettingsScreen() {
         }
         setHasLoadedData(true);
       } catch (error) {
-        console.log('Error loading coordinates:', error);
+        console.warn('Error loading coordinates:', error);
         setHasLoadedData(true);
       }
     };
@@ -232,7 +232,7 @@ export default function SettingsScreen() {
         rotation.value = withSpring(180);
       }, 1000);
     } catch (error) {
-      console.log('Error saving coordinates:', error);
+      console.warn('Error saving coordinates:', error);
     }
   };
 

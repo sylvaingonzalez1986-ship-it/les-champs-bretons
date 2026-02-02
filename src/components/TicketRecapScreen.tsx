@@ -57,7 +57,6 @@ export function TicketRecapScreen({
   // Log render state
   useEffect(() => {
     if (visible && orderData) {
-      console.log('[TicketRecapScreen] Visible with orderData:', orderData.ticketsEarned, 'tickets');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
   }, [visible, orderData]);

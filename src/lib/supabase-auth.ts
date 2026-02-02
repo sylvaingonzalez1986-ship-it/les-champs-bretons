@@ -26,9 +26,6 @@ async function authFetch(url: string, options: RequestInit = {}): Promise<Respon
   return fetchWithRetry(url, {
     ...options,
     ...AUTH_RETRY_CONFIG,
-    onRetry: (attempt, error) => {
-      console.log(`[Auth] Tentative ${attempt}/3 après erreur:`, error.message);
-    },
   });
 }
 
@@ -289,8 +286,6 @@ async function saveSession(session: AuthSession): Promise<void> {
       refresh_token: '***SECURE***', // Placeholder
     };
     await AsyncStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(sessionMetadata));
-
-    console.log('[Auth] Session saved successfully');
   } catch (error) {
     console.warn('[Auth] Error saving session:', error);
     // Clear any partial data
@@ -312,8 +307,6 @@ async function clearSession(): Promise<void> {
 
     // Supprimer les métadonnées d'AsyncStorage
     await AsyncStorage.removeItem(AUTH_SESSION_KEY);
-
-    console.log('[Auth] Session cleared');
   } catch (error) {
     console.warn('[Auth] Error clearing session:', error);
   }
@@ -339,7 +332,6 @@ export async function getValidSession(): Promise<AuthSession | null> {
   const bufferTime = 60 * 1000; // 60 seconds buffer
 
   if (Date.now() + bufferTime >= expiresAt) {
-    console.log('[Auth] Token expired or expiring soon, refreshing...');
     const refreshed = await refreshSession(currentSession.refresh_token);
     return refreshed;
   }
@@ -382,9 +374,6 @@ export async function signUp(
     // Normalize email: remove invisible characters, trim whitespace, convert to lowercase
     const normalizedEmail = normalizeEmail(email);
 
-    console.log('[Auth] signUp called with normalized email length:', normalizedEmail.length);
-    console.log('[Auth] signUp metadata role:', metadata?.role);
-
     // URL de redirection après confirmation email
     // Note: Pour que cela fonctionne, cette URL doit être ajoutée dans
     // Supabase Dashboard > Authentication > URL Configuration > Redirect URLs
@@ -409,10 +398,7 @@ export async function signUp(
 
     const data = await response.json();
 
-    console.log('[Auth] signUp response status:', response.status);
-
     if (!response.ok) {
-      console.warn('[Auth] signUp error:', data);
       // Provide more user-friendly error messages
       let errorMessage = data.error_description || data.msg || 'Erreur inscription';
 
@@ -466,17 +452,13 @@ export async function signIn(
   const normalizedEmail = normalizeEmail(email);
   const rateLimitKey = `signIn:${normalizedEmail}`;
 
-  console.log('[Auth] signIn: attempting login for email (length):', normalizedEmail.length);
-
   // Check if rate limited
   const { isBlocked, remainingSeconds } = checkRateLimit(rateLimitKey);
   if (isBlocked) {
-    console.log('[Auth] signIn: rate limited');
     return { session: null, error: createRateLimitError(remainingSeconds) };
   }
 
   try {
-    console.log('[Auth] signIn: sending request to Supabase');
     const response = await authFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
       method: 'POST',
       headers: getPublicHeaders(),
@@ -484,11 +466,6 @@ export async function signIn(
     });
 
     const data = await response.json();
-
-    console.log('[Auth] signIn response status:', response.status);
-    console.log('[Auth] signIn response error:', data.error, data.error_description);
-    console.log('[Auth] signIn response error_code:', data.error_code);
-    console.log('[Auth] signIn full response data keys:', Object.keys(data));
 
     if (!response.ok) {
       // Record failed attempt
@@ -500,8 +477,6 @@ export async function signIn(
       // Améliorer les messages d'erreur
       let errorMessage = data.error_description || data.msg || 'Identifiants incorrects';
       const errorCode = data.error_code || data.error || '';
-
-      console.log('[Auth] signIn error analysis - error:', data.error, 'code:', errorCode, 'desc:', data.error_description);
 
       // Supabase retourne "Invalid login credentials" pour plusieurs cas:
       // - Email non confirmé
@@ -527,9 +502,6 @@ export async function signIn(
     // Success - clear rate limit for this email
     rateLimitStore.delete(rateLimitKey);
 
-    console.log('[Auth] signIn: SUCCESS - user id:', data.user?.id);
-    console.log('[Auth] signIn: email_confirmed_at:', data.user?.email_confirmed_at);
-
     const session: AuthSession = {
       access_token: data.access_token,
       refresh_token: data.refresh_token,
@@ -542,7 +514,6 @@ export async function signIn(
     await saveSession(session);
     return { session, error: null };
   } catch (error) {
-    console.log('[Auth] signIn: network/catch error:', error);
     return {
       session: null,
       error: { message: error instanceof Error ? error.message : 'Erreur réseau' },
@@ -730,11 +701,9 @@ export async function resetPassword(
 
   try {
     // Construire l'URL de redirection vers l'app
-    // Pour mobile: utilise le scheme de l'app (chanvriersapp://auth/reset-password)
+    // Pour mobile: utilise le scheme de l'app (chanvriers://auth/reset-password)
     // Pour web: utilise l'URL du site Supabase configuré
-    const redirectTo = 'chanvriersapp://auth/reset-password';
-
-    console.log('[Auth] resetPassword: sending recovery email with redirectTo:', redirectTo);
+    const redirectTo = 'chanvriers://auth/reset-password';
 
     const response = await authFetch(`${SUPABASE_URL}/auth/v1/recover`, {
       method: 'POST',
@@ -843,15 +812,12 @@ export async function fetchProfile(): Promise<{ profile: UserProfile | null; err
 export async function updateProfile(
   updates: Partial<Omit<UserProfile, 'id' | 'created_at' | 'updated_at'>>
 ): Promise<{ profile: UserProfile | null; error: AuthError | null }> {
-  console.log('[Auth] updateProfile called');
   if (!currentSession?.access_token) {
     console.warn('[Auth] updateProfile: No access token');
     return { profile: null, error: { message: 'Non authentifié' } };
   }
 
   const userId = currentSession.user.id;
-  console.log('[Auth] updateProfile: userId =', userId);
-  console.log('[Auth] updateProfile: updates =', JSON.stringify(updates, null, 2));
 
   try {
     // Préparer les données de mise à jour
@@ -861,8 +827,6 @@ export async function updateProfile(
     };
 
     const requestBody = JSON.stringify(updateData);
-    console.log('[Auth] updateProfile: sending PATCH request to', `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`);
-    console.log('[Auth] updateProfile: request body =', requestBody);
 
     // Utiliser PATCH pour forcer la mise à jour des champs existants (y compris role)
     const response = await fetch(
@@ -878,8 +842,6 @@ export async function updateProfile(
     );
 
     const responseText = await response.text();
-    console.log('[Auth] updateProfile: response status =', response.status);
-    console.log('[Auth] updateProfile: response text =', responseText);
 
     let data;
     try {
@@ -891,14 +853,11 @@ export async function updateProfile(
 
     if (!response.ok) {
       console.warn('[Auth] Profile update failed - status:', response.status);
-      console.warn('[Auth] Error data:', data);
       return {
         profile: null,
         error: { message: data?.message || 'Erreur mise à jour profil', status: response.status },
       };
     }
-
-    console.log('[Auth] updateProfile: SUCCESS');
 
     const profile = Array.isArray(data) ? data[0] : data;
 
@@ -950,7 +909,6 @@ export async function updateProfile(
             );
 
             if (updateProducerResponse.ok) {
-              console.log('[Auth] Producer direct sales info synced successfully');
             } else {
               console.warn('[Auth] Failed to sync producer direct sales info:', updateProducerResponse.status);
             }
@@ -1059,8 +1017,6 @@ export async function resendConfirmationEmail(
   }
 
   try {
-    console.log('[Auth] resendConfirmationEmail: sending to', normalizedEmail.substring(0, 3) + '***');
-
     const response = await authFetch(`${SUPABASE_URL}/auth/v1/resend`, {
       method: 'POST',
       headers: getPublicHeaders(),
@@ -1072,10 +1028,7 @@ export async function resendConfirmationEmail(
 
     const data = await response.json();
 
-    console.log('[Auth] resendConfirmationEmail response status:', response.status);
-
     if (!response.ok) {
-      console.log('[Auth] resendConfirmationEmail error:', data);
       return {
         error: {
           message: data.error_description || data.msg || 'Impossible de renvoyer l\'email de confirmation',
@@ -1083,11 +1036,8 @@ export async function resendConfirmationEmail(
         },
       };
     }
-
-    console.log('[Auth] resendConfirmationEmail: SUCCESS');
     return { error: null };
   } catch (error) {
-    console.log('[Auth] resendConfirmationEmail: network error:', error);
     return {
       error: { message: error instanceof Error ? error.message : 'Erreur réseau' },
     };

@@ -32,6 +32,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { getImageSource } from '@/lib/asset-images';
+import { optimizeImageSource, optimizeImageUrl } from '@/lib/image-utils';
 import { CultureTypeIcons } from '@/components/CultureTypeIcons';
 import { PRODUCT_TYPE_COLORS } from '@/lib/producers';
 
@@ -194,9 +195,14 @@ export default function MarcheLocal() {
   const [producers, setProducers] = useState<DirectSalesProducer[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [producersLoadingMore, setProducersLoadingMore] = useState(false);
+  const [producersHasMore, setProducersHasMore] = useState(true);
+  const [producersPage, setProducersPage] = useState(0);
   const [addingProductId, setAddingProductId] = useState<string | null>(null);
   const [addedProductIds, setAddedProductIds] = useState<Set<string>>(new Set());
   const [expandedDepartments, setExpandedDepartments] = useState<Set<string>>(new Set());
+
+  const PRODUCERS_PAGE_SIZE = 50;
 
   // État pour le modal de commande directe
   const [orderModalVisible, setOrderModalVisible] = useState(false);
@@ -259,7 +265,6 @@ export default function MarcheLocal() {
     try {
       const session = await getValidSession();
       if (!session?.user?.id || !session?.access_token) {
-        console.log('[MarcheLocal] User not authenticated, redirecting to login');
         router.push('/auth/login');
         return;
       }
@@ -287,7 +292,6 @@ export default function MarcheLocal() {
       }, 2000);
 
     } catch (error) {
-      console.log('[MarcheLocal] Error adding to cart:', error);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setAddingProductId(null);
@@ -299,16 +303,12 @@ export default function MarcheLocal() {
     product: DirectSalesProduct,
     producer: DirectSalesProducer
   ) => {
-    console.log('[MarcheLocal] handleDirectOrder called for product:', product.name);
-
     const session = await getValidSession();
     if (!session?.user?.id || !session?.access_token) {
-      console.log('[MarcheLocal] User not authenticated, redirecting to login');
       router.push('/auth/login');
       return;
     }
 
-    console.log('[MarcheLocal] Opening order modal');
     setSelectedProduct(product);
     setSelectedProducer(producer);
     setOrderModalVisible(true);
@@ -317,7 +317,6 @@ export default function MarcheLocal() {
 
   // Handler appelé après une commande réussie
   const handleOrderSuccess = useCallback((pickupCode: string) => {
-    console.log('[MarcheLocal] Order success, pickup code:', pickupCode);
   }, []);
 
   // Toggle département expansion
@@ -330,12 +329,21 @@ export default function MarcheLocal() {
   }, []);
 
   // Charger les producteurs qui ont des produits disponibles en vente directe
-  const loadProducers = async () => {
-    console.log('[MarcheLocal] Loading producers with direct sales products...');
+  const loadProducers = async (reset = false) => {
     try {
-      const productsUrl = `${SUPABASE_URL}/rest/v1/products?select=producer_id&disponible_vente_directe=eq.true&status=eq.published`;
+      if (reset) {
+        setLoading(true);
+        setProducers([]);
+        setProducersPage(0);
+        setProducersHasMore(true);
+      } else {
+        setProducersLoadingMore(true);
+      }
 
-      console.log('[MarcheLocal] Fetching products URL:', productsUrl);
+      const nextPage = reset ? 0 : producersPage;
+      const offset = nextPage * PRODUCERS_PAGE_SIZE;
+
+      const productsUrl = `${SUPABASE_URL}/rest/v1/products?select=producer_id&disponible_vente_directe=eq.true&status=eq.published&limit=${PRODUCERS_PAGE_SIZE}&offset=${offset}`;
       const productsResponse = await fetch(productsUrl, {
         method: 'GET',
         headers: {
@@ -349,13 +357,10 @@ export default function MarcheLocal() {
       });
 
       const responseText = await productsResponse.text();
-      console.log('[MarcheLocal] Products response status:', productsResponse.status);
 
       if (!productsResponse.ok) {
-        console.log('[MarcheLocal] Error fetching products, trying fallback...');
-
         // Joindre avec profiles pour récupérer company_name (nom de l'entreprise)
-        const fallbackUrl = `${SUPABASE_URL}/rest/v1/producers?select=id,name,city,region,department,image,vente_directe_ferme,adresse_retrait,horaires_retrait,instructions_retrait,soil_type,climate_type,culture_outdoor,culture_greenhouse,culture_indoor,profile_id,profile:profiles(company_name,business_name)&vente_directe_ferme=eq.true&order=name.asc`;
+        const fallbackUrl = `${SUPABASE_URL}/rest/v1/producers?select=id,name,city,region,department,image,vente_directe_ferme,adresse_retrait,horaires_retrait,instructions_retrait,soil_type,climate_type,culture_outdoor,culture_greenhouse,culture_indoor,profile_id,profile:profiles(company_name,business_name)&vente_directe_ferme=eq.true&order=name.asc&limit=${PRODUCERS_PAGE_SIZE}&offset=${offset}`;
 
         const fallbackResponse = await fetch(fallbackUrl, {
           method: 'GET',
@@ -368,10 +373,16 @@ export default function MarcheLocal() {
 
         if (fallbackResponse.ok) {
           const fallbackData = await fallbackResponse.json();
-          console.log('[MarcheLocal] Fallback loaded producers:', fallbackData?.length || 0);
-          setProducers(fallbackData || []);
+          setProducers((prev) => {
+            const merged = [...prev, ...(fallbackData || [])];
+            const unique = new Map(merged.map((p: DirectSalesProducer) => [p.id, p]));
+            return Array.from(unique.values());
+          });
+          setProducersHasMore((fallbackData || []).length === PRODUCERS_PAGE_SIZE);
+          setProducersPage((prev) => (reset ? 1 : prev + 1));
         } else {
           setProducers([]);
+          setProducersHasMore(false);
         }
         setLoading(false);
         return;
@@ -381,20 +392,18 @@ export default function MarcheLocal() {
       try {
         productsData = JSON.parse(responseText);
       } catch {
-        console.log('[MarcheLocal] Failed to parse products response');
         setProducers([]);
         setLoading(false);
         return;
       }
 
-      console.log('[MarcheLocal] Products with vente directe:', productsData?.length || 0);
-
       const producerIds = [...new Set(productsData?.map((p: { producer_id: string }) => p.producer_id).filter(Boolean) || [])] as string[];
-      console.log('[MarcheLocal] Unique producer IDs with products:', producerIds.length);
 
       if (producerIds.length === 0) {
-        console.log('[MarcheLocal] No producers with direct sales products');
-        setProducers([]);
+        if (reset) {
+          setProducers([]);
+        }
+        setProducersHasMore(false);
         setLoading(false);
         return;
       }
@@ -402,8 +411,6 @@ export default function MarcheLocal() {
       const producerIdsFilter = producerIds.map(id => `"${id}"`).join(',');
       // Joindre avec profiles pour récupérer company_name (nom de l'entreprise)
       const producersUrl = `${SUPABASE_URL}/rest/v1/producers?select=id,name,city,region,department,image,vente_directe_ferme,adresse_retrait,horaires_retrait,instructions_retrait,soil_type,climate_type,culture_outdoor,culture_greenhouse,culture_indoor,profile_id,profile:profiles(company_name,business_name)&id=in.(${producerIdsFilter})&order=name.asc`;
-
-      console.log('[MarcheLocal] Fetching producer details...');
       const producersResponse = await fetch(producersUrl, {
         method: 'GET',
         headers: {
@@ -415,13 +422,8 @@ export default function MarcheLocal() {
         },
       });
 
-      console.log('[MarcheLocal] Producers response status:', producersResponse.status);
-
       if (producersResponse.ok) {
         const producersData = await producersResponse.json();
-        console.log('[MarcheLocal] Loaded producers:', producersData?.length || 0);
-
-        console.log('[MarcheLocal] Fetching products for producers...');
         const productsForProducers = await fetch(
           `${SUPABASE_URL}/rest/v1/products?select=id,name,price_public,price_pro,image,description,producer_id,disponible_vente_directe,stock,price_tiers&producer_id=in.(${producerIdsFilter})&disponible_vente_directe=eq.true&status=eq.published`,
           {
@@ -440,7 +442,6 @@ export default function MarcheLocal() {
 
         if (productsForProducers.ok) {
           const allProducts = await productsForProducers.json();
-          console.log('[MarcheLocal] Loaded products:', allProducts?.length || 0);
 
           producersList = producersData.map((producer: DirectSalesProducer) => ({
             ...producer,
@@ -453,25 +454,33 @@ export default function MarcheLocal() {
           (producer: DirectSalesProducer, index: number, self: DirectSalesProducer[]) =>
             index === self.findIndex((p) => p.id === producer.id)
         );
-        console.log('[MarcheLocal] Unique producers after dedup:', uniqueProducers.length);
 
-        setProducers(uniqueProducers);
+        setProducers((prev) => {
+          const merged = [...prev, ...uniqueProducers];
+          const unique = new Map(merged.map((p) => [p.id, p]));
+          return Array.from(unique.values());
+        });
+        setProducersHasMore(productsData.length === PRODUCERS_PAGE_SIZE);
+        setProducersPage((prev) => (reset ? 1 : prev + 1));
       } else {
         const errorText = await producersResponse.text();
-        console.log('[MarcheLocal] Error loading producers:', producersResponse.status, errorText);
         setProducers([]);
+        setProducersHasMore(false);
       }
     } catch (error) {
-      console.log('[MarcheLocal] Error:', error);
-      setProducers([]);
+      if (reset) {
+        setProducers([]);
+      }
+      setProducersHasMore(false);
     } finally {
       setLoading(false);
+      setProducersLoadingMore(false);
     }
   };
 
   useFocusEffect(
     useCallback(() => {
-      loadProducers();
+      loadProducers(true);
     }, [])
   );
 
@@ -494,8 +503,15 @@ export default function MarcheLocal() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadProducers();
+    await loadProducers(true);
     setRefreshing(false);
+  };
+
+  const onLoadMore = async () => {
+    if (producersLoadingMore || !producersHasMore) {
+      return;
+    }
+    await loadProducers(false);
   };
 
   const handleProducerPress = (producerId: string) => {
@@ -593,6 +609,21 @@ export default function MarcheLocal() {
                 onPress={() => toggleDepartment(group.department, group.producers)}
               />
             ))}
+
+            {producersHasMore && (
+              <View className="items-center my-6">
+                <Pressable
+                  onPress={onLoadMore}
+                  disabled={producersLoadingMore}
+                  className="px-4 py-2 rounded-full"
+                  style={{ backgroundColor: `${COLORS.text.white}10` }}
+                >
+                  <Text style={{ color: COLORS.text.lightGray }}>
+                    {producersLoadingMore ? 'Chargement...' : 'Charger plus'}
+                  </Text>
+                </Pressable>
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
@@ -743,7 +774,7 @@ function DepartmentCard({ department, departmentName, producers, onPress }: Depa
             >
               {producer.image ? (
                 <Image
-                  source={getImageSource(producer.image)}
+                  source={optimizeImageSource(getImageSource(producer.image), 200)}
                   className="w-full h-full"
                 />
               ) : (
@@ -981,19 +1012,9 @@ function ProducerCarousel({
             <View className="h-[35%] relative">
               {producer.image ? (
                 <Image
-                  source={getImageSource(producer.image)}
+                  source={optimizeImageSource(getImageSource(producer.image), 800)}
                   className="w-full h-full"
                   resizeMode="cover"
-                  onError={(e) => {
-                    console.log('[MarcheLocal] Image load error for producer:', producer.name, {
-                      image: producer.image,
-                      imageSource: getImageSource(producer.image),
-                      error: e.nativeEvent.error
-                    });
-                  }}
-                  onLoad={() => {
-                    console.log('[MarcheLocal] Image loaded successfully for:', producer.name);
-                  }}
                 />
               ) : (
                 <View className="w-full h-full items-center justify-center" style={{ backgroundColor: 'rgba(255, 255, 255, 0.06)' }}>
@@ -1158,14 +1179,13 @@ function ProducerCarousel({
                     Produits disponibles ({producer.products.length})
                   </Text>
                   {producer.products.slice(0, 3).map((product) => {
-                    // Force stock to number and log for debugging
+                    // Force stock to number for consistent checks
                     const stockValue = typeof product.stock === 'string' ? parseInt(product.stock, 10) : (product.stock ?? 0);
                     const isOutOfStock = typeof stockValue === 'number' && !isNaN(stockValue) && stockValue <= 0;
                     const hasTieredPricing = product.price_tiers && product.price_tiers.length > 0;
                     const lowestTierPrice = hasTieredPricing && product.price_tiers
                       ? Math.min(...product.price_tiers.map(t => t.price))
                       : null;
-                    console.log('[MarcheLocal] Product stock check:', { name: product.name, rawStock: product.stock, parsedStock: stockValue, isOutOfStock });
                     return (
                       <View
                         key={product.id}
@@ -1180,7 +1200,7 @@ function ProducerCarousel({
                         <View className="flex-row p-2 items-center">
                           {product.image ? (
                             <Image
-                              source={{ uri: product.image }}
+                              source={{ uri: optimizeImageUrl(product.image, 200) }}
                               className="w-12 h-12 rounded-lg mr-2"
                             />
                           ) : (

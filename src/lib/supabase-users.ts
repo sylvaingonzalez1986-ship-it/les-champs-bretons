@@ -469,8 +469,6 @@ export async function updateUserProfile(
     if (updates.tva_number !== undefined) sanitizedUpdates.tva_number = sanitizeString(updates.tva_number);
     if (updates.full_name !== undefined) sanitizedUpdates.full_name = sanitizeString(updates.full_name);
 
-    console.log('[updateUserProfile] Updating user:', userId);
-
     const response = await fetchWithTimeout(
       `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`,
       {
@@ -484,7 +482,6 @@ export async function updateUserProfile(
       throw new Error(`HTTP error: ${response.status}`);
     }
 
-    console.log('[updateUserProfile] Success');
     return { success: true, error: null };
   } catch (error) {
     const userMessage = toUserError(error, 'updateUserProfile');
@@ -638,7 +635,6 @@ export async function linkProducerToProfile(
         throw new Error(`HTTP error: ${createResponse.status}`);
       }
 
-      console.log('[linkProducerToProfile] Producer created and linked successfully');
       return { success: true, error: null };
     }
 
@@ -659,7 +655,6 @@ export async function linkProducerToProfile(
       throw new Error(`HTTP error: ${response.status}`);
     }
 
-    console.log('[linkProducerToProfile] Producer linked successfully');
     return { success: true, error: null };
   } catch (error) {
     const userMessage = toUserError(error, 'linkProducerToProfile');

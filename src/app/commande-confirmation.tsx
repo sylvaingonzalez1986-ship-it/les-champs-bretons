@@ -210,10 +210,10 @@ export default function CommandeConfirmation() {
                   style={{ backgroundColor: `${COLORS.accent.hemp}20` }}
                 >
                   <Text className="text-xs font-bold" style={{ color: COLORS.accent.hemp }}>
-                    Statut: En attente
+                    Statut: En attente de paiement
                   </Text>
                   <Text className="text-xs" style={{ color: COLORS.accent.hemp }}>
-                    Confirmation du producteur
+                    Lien de paiement à venir
                   </Text>
                 </View>
               </View>
@@ -241,7 +241,17 @@ export default function CommandeConfirmation() {
             Prochaine étape
           </Text>
           <Text className="text-sm" style={{ color: COLORS.text.lightGray }}>
-            Les producteurs recevront votre commande et vous confirmeront la disponibilité des produits. Un email de confirmation vous a été envoyé.
+            Les producteurs recevront votre commande et vous enverront un lien de paiement sécurisé par email. Une fois le paiement effectué, votre commande sera préparée pour le retrait.
+          </Text>
+        </View>
+
+        {/* Payment Info */}
+        <View className="mx-4 mt-4 p-4 rounded-2xl" style={{ backgroundColor: `${COLORS.primary.gold}10` }}>
+          <Text className="font-bold mb-2" style={{ color: COLORS.primary.gold }}>
+            💳 Paiement
+          </Text>
+          <Text className="text-sm" style={{ color: COLORS.text.lightGray }}>
+            Vous recevrez un lien de paiement par email sous peu. Surveillez votre boîte de réception (et vos spams).
           </Text>
         </View>
       </ScrollView>

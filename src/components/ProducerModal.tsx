@@ -69,11 +69,6 @@ const ProductCard = ({ product, producer, onEdit }: { product: ProducerProduct; 
     return product;
   }, [customProducers, producer.id, product.id]);
 
-  // Debug log pour vérifier si videoUrl est présent
-  React.useEffect(() => {
-    console.log('ProductCard - currentProduct:', currentProduct.name, 'videoUrl:', currentProduct.videoUrl, 'images:', currentProduct.images);
-  }, [currentProduct]);
-
   // Check if product is on promo - use currentProduct which has the latest data
   const productHasPromo = !!(currentProduct.isOnPromo && currentProduct.promoPercent && currentProduct.promoPercent > 0);
 

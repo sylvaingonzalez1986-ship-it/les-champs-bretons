@@ -50,7 +50,6 @@ export function isMusicApiConfigured(): boolean {
 // Fetch all music tracks ordered by position
 export async function fetchMusicTracks(): Promise<MusicTrack[]> {
   if (!isMusicApiConfigured()) {
-    console.log('[MusicAPI] Supabase not configured');
     return [];
   }
 
@@ -69,16 +68,13 @@ export async function fetchMusicTracks(): Promise<MusicTrack[]> {
       // Silently handle missing table - this is expected if not configured
       const errorText = await response.text();
       if (errorText.includes('music_tracks') || errorText.includes('PGRST')) {
-        console.log('[MusicAPI] Table music_tracks not found - using local tracks');
         return [];
       }
-      console.log('[MusicAPI] Error fetching tracks:', errorText);
       return [];
     }
 
     return response.json();
   } catch (error) {
-    console.log('[MusicAPI] Network error:', error);
     return [];
   }
 }
@@ -102,8 +98,7 @@ export async function addMusicTrack(track: MusicTrackInsert): Promise<MusicTrack
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Erreur lors de l'ajout: ${error}`);
+    throw new Error("Erreur lors de l'ajout");
   }
 
   const data = await response.json();
@@ -131,8 +126,7 @@ export async function updateMusicTrack(
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Erreur lors de la mise à jour: ${error}`);
+    throw new Error('Erreur lors de la mise à jour');
   }
 
   const data = await response.json();
@@ -153,8 +147,7 @@ export async function deleteMusicTrack(id: string): Promise<void> {
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Erreur lors de la suppression: ${error}`);
+    throw new Error('Erreur lors de la suppression');
   }
 }
 
@@ -210,8 +203,7 @@ export async function uploadAudioFile(
   );
 
   if (!uploadResponse.ok) {
-    const error = await uploadResponse.text();
-    throw new Error(`Erreur upload audio: ${error}`);
+    throw new Error('Erreur upload audio');
   }
 
   // Return the public URL (or signed URL for private bucket)
@@ -254,8 +246,7 @@ export async function uploadCoverImage(
   );
 
   if (!uploadResponse.ok) {
-    const error = await uploadResponse.text();
-    throw new Error(`Erreur upload cover: ${error}`);
+    throw new Error('Erreur upload cover');
   }
 
   // Return the public URL
@@ -285,8 +276,7 @@ export async function deleteStorageFile(
   );
 
   if (!response.ok) {
-    const error = await response.text();
-    console.error(`[MusicAPI] Error deleting file: ${error}`);
+    console.error('[MusicAPI] Error deleting file');
   }
 }
 
@@ -312,8 +302,7 @@ export async function getSignedAudioUrl(filePath: string): Promise<string> {
   );
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Erreur signed URL: ${error}`);
+    throw new Error('Erreur signed URL');
   }
 
   const data = await response.json();

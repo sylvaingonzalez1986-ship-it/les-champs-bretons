@@ -76,7 +76,6 @@ async function loadFromCache<T>(key: string): Promise<T | null> {
     const cached = await AsyncStorage.getItem(key);
     if (cached) {
       const data = JSON.parse(cached) as T;
-      console.log(`[Cache] Loaded ${key}:`, Array.isArray(data) ? `${(data as unknown[]).length} items` : 'data');
       return data;
     }
     return null;
@@ -89,7 +88,6 @@ async function loadFromCache<T>(key: string): Promise<T | null> {
 async function saveToCache<T>(key: string, data: T): Promise<void> {
   try {
     await AsyncStorage.setItem(key, JSON.stringify(data));
-    console.log(`[Cache] Saved ${key}`);
   } catch (error) {
     console.warn(`[Cache] Error saving ${key}:`, error);
   }
@@ -141,7 +139,6 @@ export function useDataSync() {
     async function syncData() {
       // Prevent concurrent syncs
       if (syncInProgress.current) {
-        console.log('[DataSync] Sync already in progress');
         return;
       }
 
@@ -150,7 +147,6 @@ export function useDataSync() {
       // Step 1: Load from cache first (offline-first)
       if (!cacheLoaded.current) {
         setSyncState({ status: 'loading-cache', isUsingCache: true });
-        console.log('[DataSync] Loading from cache first...');
 
         const cachedData = await loadAllFromCache();
         const hasCache =
@@ -160,8 +156,6 @@ export function useDataSync() {
           cachedData.lots.length > 0;
 
         if (hasCache) {
-          console.log('[DataSync] Found cached data, loading into stores...');
-
           if (cachedData.producers.length > 0) {
             useProducerStore.setState({ producers: cachedData.producers });
           }
@@ -188,7 +182,6 @@ export function useDataSync() {
 
       // Step 2: Try to sync from server
       if (!isSupabaseSyncConfigured()) {
-        console.log('[DataSync] Supabase not configured, using cache only');
         setSyncState({ status: 'idle', isUsingCache: true });
         syncInProgress.current = false;
         return;
@@ -197,14 +190,12 @@ export function useDataSync() {
       // Check if we've synced recently
       const now = Date.now();
       if (now - lastSyncTime < MIN_SYNC_INTERVAL) {
-        console.log('[DataSync] Skipping sync, last sync was recent');
         setSyncState({ status: 'idle' });
         syncInProgress.current = false;
         return;
       }
 
       setSyncState({ status: 'syncing', error: null });
-      console.log('[DataSync] Syncing from Supabase...');
 
       try {
         // Fetch all data in parallel with error handling per request
@@ -229,10 +220,6 @@ export function useDataSync() {
             console.warn(`[DataSync] Failed to fetch ${names[index]}:`, result.reason?.message || result.reason);
           }
         });
-
-        console.log(
-          `[DataSync] Fetched ${producers.length} producers, ${packs.length} packs, ${promoProducts.length} promo products, ${lots.length} lots`
-        );
 
         // Update local stores with fetched data
         if (producers.length > 0) {
@@ -293,7 +280,6 @@ export function useDataSync() {
           lastSyncAt: now,
           isUsingCache: hasPartialFailure,
         });
-        console.log('[DataSync] Sync completed' + (hasPartialFailure ? ` with partial failures (${failedRequests.join(', ')})` : ' successfully'));
 
         // Reset status after a short delay
         setTimeout(() => {
@@ -334,12 +320,10 @@ export async function forceDataSync(): Promise<{
   isUsingCache: boolean;
 }> {
   if (!isSupabaseSyncConfigured()) {
-    console.log('[DataSync] Supabase not configured');
     return { success: false, error: 'Configuration manquante', isUsingCache: true };
   }
 
   setSyncState({ status: 'syncing', error: null });
-  console.log('[DataSync] Force sync initiated...');
 
   try {
     // Fetch all data in parallel with error handling per request
@@ -365,10 +349,6 @@ export async function forceDataSync(): Promise<{
         failedRequests.push(names[index]);
       }
     });
-
-    console.log(
-      `[DataSync] Force sync: ${producers.length} producers, ${packs.length} packs, ${promoProducts.length} promo products, ${lots.length} lots`
-    );
 
     // Update stores - for force sync, we replace data entirely from Supabase
     if (producers.length > 0) {
@@ -402,8 +382,6 @@ export async function forceDataSync(): Promise<{
       lastSyncAt: lastSyncTime,
       isUsingCache: hasPartialFailure,
     });
-
-    console.log('[DataSync] Force sync completed' + (hasPartialFailure ? ' with partial failures' : ''));
 
     setTimeout(() => {
       setSyncState({ status: 'idle' });
@@ -439,7 +417,6 @@ export async function clearDataCache(): Promise<void> {
       AsyncStorage.removeItem(CACHE_KEYS.LOTS),
       AsyncStorage.removeItem(CACHE_KEYS.LAST_SYNC),
     ]);
-    console.log('[Cache] All data cache cleared');
   } catch (error) {
     console.warn('[Cache] Error clearing cache:', error);
   }

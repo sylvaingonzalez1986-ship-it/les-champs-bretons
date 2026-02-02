@@ -87,8 +87,6 @@ function PdfViewer({ uri }: { uri: string }) {
             encoding: FileSystem.EncodingType.Base64,
           });
         } catch (copyError) {
-          console.log('[PdfViewer] Copy failed, trying with content URI:', copyError);
-
           // Essayer avec l'URI originale sans le préfixe file://
           try {
             const cleanUri = uri.replace('file://', '');
@@ -100,15 +98,12 @@ function PdfViewer({ uri }: { uri: string }) {
               encoding: FileSystem.EncodingType.Base64,
             });
           } catch (secondError) {
-            console.log('[PdfViewer] Second copy attempt failed:', secondError);
-
             // Dernier recours: essayer de lire directement
             try {
               base64Data = await FileSystem.readAsStringAsync(uri, {
                 encoding: FileSystem.EncodingType.Base64,
               });
             } catch (readError) {
-              console.log('[PdfViewer] Direct read failed:', readError);
               throw new Error('Fichier non accessible. Veuillez réessayer de sélectionner le document.');
             }
           }
@@ -341,7 +336,6 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
               return;
             } catch (shareError) {
               // Si l'utilisateur annule ou l'API échoue, ouvrir dans un nouvel onglet
-              console.log('[LabAnalysisViewer] Web Share failed, opening in new tab');
             }
           }
           // Ouvrir dans un nouvel onglet
@@ -388,7 +382,6 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
           const fileInfo = await FileSystem.getInfoAsync(sourceUri);
           if (!fileInfo.exists) {
             // Fichier n'existe pas, partager juste l'URL
-            console.log('[LabAnalysisViewer] File does not exist, sharing URL instead');
             await Share.share({
               message: `Analyse de laboratoire: ${url}`,
             });
@@ -406,7 +399,6 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
             UTI: isPdf ? 'com.adobe.pdf' : 'public.jpeg',
           });
         } catch (copyError) {
-          console.log('[LabAnalysisViewer] Copy failed, sharing URL:', copyError);
           await Share.share({
             message: `Analyse de laboratoire: ${url}`,
           });

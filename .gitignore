@@ -31,7 +31,22 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+
+# Claude local settings
+.claude/settings.local.json
+
+# Windows artifacts
+nul
+
+# Supabase temp
+supabase/.temp/
 
 # typescript
 *.tsbuildinfo

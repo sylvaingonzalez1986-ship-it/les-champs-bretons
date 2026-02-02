@@ -117,7 +117,6 @@ export const ProductPhotoManager = ({
 
     if (!isProductImagesConfigured()) {
       // Fallback: use local URI if Supabase not configured
-      console.log('[ProductPhotoManager] Supabase not configured, using local URI');
       setImages(prev => [...prev, uri]);
       return;
     }

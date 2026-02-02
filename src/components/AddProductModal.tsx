@@ -313,13 +313,7 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
   };
 
   const handleSave = async () => {
-    console.log('=== handleSave called ===');
-    console.log('formData:', JSON.stringify({ name: formData.name, price: formData.price, type: formData.type }));
-    console.log('producerId:', producerId);
-    console.log('canSave:', canSave);
-
     if (!canSave) {
-      console.log('Cannot save - missing name or price');
       return;
     }
 
@@ -350,13 +344,6 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
       const deliveryType = formData.deliveryType || undefined;
       const deliveryFlatPrice = formData.deliveryFlatPrice.trim() ? parseFloat(formData.deliveryFlatPrice) : undefined;
       const deliveryMinOrderAmount = formData.deliveryMinOrderAmount.trim() ? parseFloat(formData.deliveryMinOrderAmount) : undefined;
-
-      // Log delivery options for debugging
-      console.log('[AddProductModal] Delivery options:', {
-        delivery_type: deliveryType,
-        delivery_flat_price: deliveryFlatPrice,
-        delivery_min_order_amount: deliveryMinOrderAmount,
-      });
 
       // Parse price tiers for clients
       const parsedPriceTiers: PriceTier[] = formData.enablePriceTiers
@@ -422,21 +409,12 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
           : undefined,
       };
 
-      // Debug log pour vérifier la sauvegarde
-      console.log('AddProductModal - Saving product with images:', productImages);
-
-      console.log('=== Saving product to store ===');
-      console.log('productData:', JSON.stringify(productData));
-
       if (editingProduct) {
         // Update existing product using the new function that handles both custom and sample producers
-        console.log('Updating existing product...');
         updateProductInProducer(producerId, productData);
       } else {
-        console.log('Adding new product to producer:', producerId);
         addProductToProducer(producerId, productData);
       }
-      console.log('Product saved successfully!');
 
       // Synchronize with promo products store
       const existingPromoProduct = promoProducts.find(
@@ -1117,7 +1095,6 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
                 <Switch
                   value={formData.disponibleVenteDirecte}
                   onValueChange={(v) => {
-                    console.log('[AddProductModal] Vente directe toggle:', v);
                     updateForm('disponibleVenteDirecte', v);
                   }}
                   trackColor={{ false: COLORS.text.muted, true: `${COLORS.accent.teal}80` }}

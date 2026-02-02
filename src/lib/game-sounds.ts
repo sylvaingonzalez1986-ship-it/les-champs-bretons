@@ -65,9 +65,8 @@ async function evictLRU(): Promise<void> {
         const sound = soundCache.get(oldest);
         await sound?.unloadAsync();
         soundCache.delete(oldest);
-        console.log(`[GameSounds] Evicted LRU sound: ${oldest}`);
       } catch (error) {
-        console.log(`[GameSounds] Error evicting ${oldest}:`, error);
+        console.warn(`[GameSounds] Error evicting ${oldest}:`, error);
       }
     }
   }
@@ -87,7 +86,7 @@ async function configureAudio() {
     });
     audioConfigured = true;
   } catch (error) {
-    console.log('[GameSounds] Audio config error:', error);
+    console.warn('[GameSounds] Audio config error:', error);
   }
 }
 
@@ -114,7 +113,7 @@ async function loadSound(type: GameSoundType): Promise<Audio.Sound | null> {
     updateLRUOrder(type);
     return sound;
   } catch (error) {
-    console.log(`[GameSounds] Error loading ${type}:`, error);
+    console.warn(`[GameSounds] Error loading ${type}:`, error);
     return null;
   }
 }
@@ -134,7 +133,7 @@ export async function playGameSound(type: GameSoundType, volume: number = 0.5): 
     await sound.setVolumeAsync(volume);
     await sound.playAsync();
   } catch (error) {
-    console.log(`[GameSounds] Error playing ${type}:`, error);
+    console.warn(`[GameSounds] Error playing ${type}:`, error);
   }
 }
 
@@ -160,7 +159,7 @@ export async function playLoopingSound(
 
     return sound;
   } catch (error) {
-    console.log(`[GameSounds] Error playing looping ${type}:`, error);
+    console.warn(`[GameSounds] Error playing looping ${type}:`, error);
     return null;
   }
 }
@@ -173,7 +172,7 @@ export async function stopLoopingSound(sound: Audio.Sound | null): Promise<void>
     await sound.stopAsync();
     await sound.unloadAsync();
   } catch (error) {
-    console.log('[GameSounds] Error stopping looping sound:', error);
+    console.warn('[GameSounds] Error stopping looping sound:', error);
   }
 }
 
@@ -189,11 +188,7 @@ export async function preloadGameSounds(): Promise<void> {
     'success',
   ];
 
-  console.log('[GameSounds] Preloading sounds...');
-
   await Promise.all(frequentSounds.map(loadSound));
-
-  console.log('[GameSounds] Sounds preloaded');
 }
 
 // Nettoyer tous les sons (à appeler quand on quitte le jeu)
@@ -202,7 +197,7 @@ export async function unloadAllSounds(): Promise<void> {
     try {
       await sound.unloadAsync();
     } catch (error) {
-      console.log(`[GameSounds] Error unloading ${type}:`, error);
+      console.warn(`[GameSounds] Error unloading ${type}:`, error);
     }
   }
   soundCache.clear();

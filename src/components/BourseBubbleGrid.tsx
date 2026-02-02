@@ -4,7 +4,7 @@
  */
 
 import React, { useMemo } from 'react';
-import { View, ScrollView, Dimensions, RefreshControl } from 'react-native';
+import { View, FlatList, Dimensions, RefreshControl, Pressable, ActivityIndicator } from 'react-native';
 import { Text } from '@/components/ui';
 import Animated, {
   FadeInUp,
@@ -21,6 +21,9 @@ interface BourseBubbleGridProps {
   onProductPress: (productId: string) => void;
   isRefreshing?: boolean;
   onRefresh?: () => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -32,6 +35,9 @@ export function BourseBubbleGrid({
   onProductPress,
   isRefreshing = false,
   onRefresh,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore,
 }: BourseBubbleGridProps) {
   // Statistiques rapides
   const stats = useMemo(() => {
@@ -69,10 +75,28 @@ export function BourseBubbleGrid({
   }
 
   return (
-    <ScrollView
-      className="flex-1"
-      contentContainerStyle={{ paddingBottom: 100 }}
+    <FlatList
+      data={sortedMarketStates}
+      keyExtractor={(item) => item.product_id}
+      numColumns={2}
       showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingBottom: 100, paddingHorizontal: 8 }}
+      columnWrapperStyle={{ justifyContent: 'center' }}
+      renderItem={({ item, index }) => (
+        <Animated.View
+          entering={FadeInUp.delay(100 + index * 50)
+            .duration(400)
+            .springify()}
+          layout={Layout.springify()}
+        >
+          <BourseProductBubble
+            marketState={item}
+            onPress={onProductPress}
+            minSize={MIN_BUBBLE_SIZE}
+            maxSize={MAX_BUBBLE_SIZE}
+          />
+        </Animated.View>
+      )}
       refreshControl={
         onRefresh ? (
           <RefreshControl
@@ -83,174 +107,173 @@ export function BourseBubbleGrid({
           />
         ) : undefined
       }
-    >
-      {/* Résumé du marché */}
-      <Animated.View
-        entering={FadeInDown.delay(100).duration(500)}
-        className="flex-row justify-around px-4 py-4 mx-4 mt-4 rounded-2xl"
-        style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)' }}
-      >
-        <View className="items-center">
-          <View className="flex-row items-center">
-            <TrendingUp size={16} color="#22C55E" />
-            <Text
-              className="ml-1 font-bold"
-              style={{ color: '#22C55E', fontSize: 18 }}
-            >
-              {stats.positive}
-            </Text>
-          </View>
-          <Text style={{ color: COLORS.text.muted, fontSize: 11 }}>
-            En hausse
-          </Text>
-        </View>
-
-        <View className="items-center">
-          <View className="flex-row items-center">
-            <TrendingDown size={16} color="#EF4444" />
-            <Text
-              className="ml-1 font-bold"
-              style={{ color: '#EF4444', fontSize: 18 }}
-            >
-              {stats.negative}
-            </Text>
-          </View>
-          <Text style={{ color: COLORS.text.muted, fontSize: 11 }}>
-            En baisse
-          </Text>
-        </View>
-
-        <View className="items-center">
-          <View className="flex-row items-center">
-            <Activity size={16} color={COLORS.primary.gold} />
-            <Text
-              className="ml-1 font-bold"
-              style={{
-                color:
-                  stats.avgVariation > 0
-                    ? '#22C55E'
-                    : stats.avgVariation < 0
-                    ? '#EF4444'
-                    : COLORS.text.muted,
-                fontSize: 18,
-              }}
-            >
-              {stats.avgVariation > 0 ? '+' : ''}
-              {stats.avgVariation.toFixed(1)}%
-            </Text>
-          </View>
-          <Text style={{ color: COLORS.text.muted, fontSize: 11 }}>
-            Variation moy.
-          </Text>
-        </View>
-      </Animated.View>
-
-      {/* Titre de la section */}
-      <Animated.View
-        entering={FadeInDown.delay(200).duration(500)}
-        className="px-4 mt-6 mb-2"
-      >
-        <Text
-          className="font-bold"
-          style={{ color: COLORS.text.cream, fontSize: 16 }}
-        >
-          Produits cotés
-        </Text>
-        <Text style={{ color: COLORS.text.muted, fontSize: 12 }}>
-          Appuyez sur une bulle pour plus de détails
-        </Text>
-      </Animated.View>
-
-      {/* Grille de bulles */}
-      <Animated.View
-        layout={Layout.springify()}
-        className="flex-row flex-wrap justify-center px-2 py-4"
-      >
-        {sortedMarketStates.map((marketState, index) => (
+      ListHeaderComponent={
+        <View>
+          {/* Résumé du marché */}
           <Animated.View
-            key={marketState.product_id}
-            entering={FadeInUp.delay(100 + index * 50)
-              .duration(400)
-              .springify()}
-            layout={Layout.springify()}
+            entering={FadeInDown.delay(100).duration(500)}
+            className="flex-row justify-around px-4 py-4 mx-4 mt-4 rounded-2xl"
+            style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)' }}
           >
-            <BourseProductBubble
-              marketState={marketState}
-              onPress={onProductPress}
-              minSize={MIN_BUBBLE_SIZE}
-              maxSize={MAX_BUBBLE_SIZE}
-            />
+            <View className="items-center">
+              <View className="flex-row items-center">
+                <TrendingUp size={16} color="#22C55E" />
+                <Text
+                  className="ml-1 font-bold"
+                  style={{ color: '#22C55E', fontSize: 18 }}
+                >
+                  {stats.positive}
+                </Text>
+              </View>
+              <Text style={{ color: COLORS.text.muted, fontSize: 11 }}>
+                En hausse
+              </Text>
+            </View>
+
+            <View className="items-center">
+              <View className="flex-row items-center">
+                <TrendingDown size={16} color="#EF4444" />
+                <Text
+                  className="ml-1 font-bold"
+                  style={{ color: '#EF4444', fontSize: 18 }}
+                >
+                  {stats.negative}
+                </Text>
+              </View>
+              <Text style={{ color: COLORS.text.muted, fontSize: 11 }}>
+                En baisse
+              </Text>
+            </View>
+
+            <View className="items-center">
+              <View className="flex-row items-center">
+                <Activity size={16} color={COLORS.primary.gold} />
+                <Text
+                  className="ml-1 font-bold"
+                  style={{
+                    color:
+                      stats.avgVariation > 0
+                        ? '#22C55E'
+                        : stats.avgVariation < 0
+                        ? '#EF4444'
+                        : COLORS.text.muted,
+                    fontSize: 18,
+                  }}
+                >
+                  {stats.avgVariation > 0 ? '+' : ''}
+                  {stats.avgVariation.toFixed(1)}%
+                </Text>
+              </View>
+              <Text style={{ color: COLORS.text.muted, fontSize: 11 }}>
+                Variation moy.
+              </Text>
+            </View>
           </Animated.View>
-        ))}
-      </Animated.View>
 
-      {/* Légende */}
-      <Animated.View
-        entering={FadeInUp.delay(300).duration(500)}
-        className="px-4 mt-4 mb-6"
-      >
-        <Text
-          className="font-medium mb-3"
-          style={{ color: COLORS.text.muted, fontSize: 12 }}
-        >
-          Légende
-        </Text>
-
-        <View className="flex-row flex-wrap gap-4">
-          <View className="flex-row items-center">
-            <View
-              style={{
-                width: 16,
-                height: 16,
-                borderRadius: 8,
-                backgroundColor: '#22C55E',
-                marginRight: 6,
-              }}
-            />
-            <Text style={{ color: COLORS.text.lightGray, fontSize: 11 }}>
-              Prix en hausse
+          {/* Titre de la section */}
+          <Animated.View
+            entering={FadeInDown.delay(200).duration(500)}
+            className="px-4 mt-6 mb-2"
+          >
+            <Text
+              className="font-bold"
+              style={{ color: COLORS.text.cream, fontSize: 16 }}
+            >
+              Produits cotés
             </Text>
-          </View>
-
-          <View className="flex-row items-center">
-            <View
-              style={{
-                width: 16,
-                height: 16,
-                borderRadius: 8,
-                backgroundColor: '#EF4444',
-                marginRight: 6,
-              }}
-            />
-            <Text style={{ color: COLORS.text.lightGray, fontSize: 11 }}>
-              Prix en baisse
+            <Text style={{ color: COLORS.text.muted, fontSize: 12 }}>
+              Appuyez sur une bulle pour plus de détails
             </Text>
-          </View>
-
-          <View className="flex-row items-center">
-            <View
-              style={{
-                width: 16,
-                height: 16,
-                borderRadius: 8,
-                backgroundColor: '#6B7280',
-                marginRight: 6,
-              }}
-            />
-            <Text style={{ color: COLORS.text.lightGray, fontSize: 11 }}>
-              Prix stable
-            </Text>
-          </View>
+          </Animated.View>
         </View>
+      }
+      ListFooterComponent={
+        <View className="px-4 mt-4 mb-6">
+          {/* Légende */}
+          <Animated.View entering={FadeInUp.delay(300).duration(500)}>
+            <Text
+              className="font-medium mb-3"
+              style={{ color: COLORS.text.muted, fontSize: 12 }}
+            >
+              Légende
+            </Text>
 
-        <Text
-          className="mt-3"
-          style={{ color: COLORS.text.muted, fontSize: 10 }}
-        >
-          La taille de la bulle reflète le prix dynamique. Plus la bulle est
-          grande, plus le prix est élevé (proche de +30%).
-        </Text>
-      </Animated.View>
-    </ScrollView>
+            <View className="flex-row flex-wrap gap-4">
+              <View className="flex-row items-center">
+                <View
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    backgroundColor: '#22C55E',
+                    marginRight: 6,
+                  }}
+                />
+                <Text style={{ color: COLORS.text.lightGray, fontSize: 11 }}>
+                  Prix en hausse
+                </Text>
+              </View>
+
+              <View className="flex-row items-center">
+                <View
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    backgroundColor: '#EF4444',
+                    marginRight: 6,
+                  }}
+                />
+                <Text style={{ color: COLORS.text.lightGray, fontSize: 11 }}>
+                  Prix en baisse
+                </Text>
+              </View>
+
+              <View className="flex-row items-center">
+                <View
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    backgroundColor: '#6B7280',
+                    marginRight: 6,
+                  }}
+                />
+                <Text style={{ color: COLORS.text.lightGray, fontSize: 11 }}>
+                  Prix stable
+                </Text>
+              </View>
+            </View>
+
+            <Text className="mt-3" style={{ color: COLORS.text.muted, fontSize: 10 }}>
+              La taille de la bulle reflète le prix dynamique. Plus la bulle est
+              grande, plus le prix est élevé (proche de +30%).
+            </Text>
+          </Animated.View>
+
+          {hasMore && onLoadMore && (
+            <View className="items-center mt-6 mb-10">
+              <Pressable
+                onPress={onLoadMore}
+                disabled={isLoadingMore}
+                className="px-4 py-2 rounded-full"
+                style={{ backgroundColor: 'rgba(255, 255, 255, 0.08)' }}
+              >
+                {isLoadingMore ? (
+                  <View className="flex-row items-center">
+                    <ActivityIndicator size="small" color={COLORS.primary.gold} />
+                    <Text className="ml-2" style={{ color: COLORS.text.lightGray }}>
+                      Chargement...
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={{ color: COLORS.text.lightGray }}>Charger plus</Text>
+                )}
+              </Pressable>
+            </View>
+          )}
+        </View>
+      }
+    />
   );
 }

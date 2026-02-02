@@ -1,24 +1,192 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
+import { createClient, SupabaseClient, User } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
+import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Max-Age': '86400',
+};
+
+const RATE_LIMIT_PRESETS = {
+  ORDERS: {
+    limit: 10,
+    windowMs: 60 * 1000,
+    identifier: 'orders',
+  },
+} as const;
+
+interface RateLimitConfig {
+  limit: number;
+  windowMs: number;
+  identifier: string;
+}
+
+interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  resetAt: number;
+  retryAfterSeconds?: number;
+}
+
+const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(userId: string, config: RateLimitConfig): RateLimitResult {
+  const now = Date.now();
+  const key = `${config.identifier}:${userId}`;
+  const entry = rateLimitStore.get(key);
+
+  if (!entry || now > entry.resetAt) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + config.windowMs });
+    return { allowed: true, remaining: config.limit - 1, resetAt: now + config.windowMs };
+  }
+
+  if (entry.count >= config.limit) {
+    return {
+      allowed: false,
+      remaining: 0,
+      resetAt: entry.resetAt,
+      retryAfterSeconds: Math.ceil((entry.resetAt - now) / 1000),
+    };
+  }
+
+  entry.count += 1;
+  return { allowed: true, remaining: config.limit - entry.count, resetAt: entry.resetAt };
+}
+
+function createRateLimitResponse(
+  result: RateLimitResult,
+  config: RateLimitConfig
+): Response {
+  return new Response(
+    JSON.stringify({
+      error: 'RATE_LIMIT_EXCEEDED',
+      message: `Rate limit exceeded. Maximum ${config.limit} requests per ${Math.ceil(config.windowMs / 1000)} seconds.`,
+      retryAfter: result.retryAfterSeconds,
+      resetAt: new Date(result.resetAt).toISOString(),
+    }),
+    {
+      status: 429,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    }
+  );
+}
+
+const uuidSchema = z.string().uuid('Invalid UUID format');
+const emailSchema = z.string().email('Invalid email format').max(255);
+const quantitySchema = z.number().int().positive().max(10000);
+const priceSchema = z.number().positive().max(999999.99);
+
+const localMarketOrderEmailSchema = z.object({
+  orderId: uuidSchema,
+  producerEmail: emailSchema,
+  producerName: z.string().min(1).max(200),
+  customerName: z.string().min(1).max(200),
+  customerEmail: emailSchema,
+  customerPhone: z.string().max(30).optional(),
+  productName: z.string().min(1).max(200),
+  quantity: quantitySchema,
+  unitPrice: priceSchema,
+  totalAmount: priceSchema,
+  pickupCode: z.string().min(4).max(32),
+  pickupLocation: z.string().max(200).optional(),
+  pickupInstructions: z.string().max(500).optional(),
+  customerNotes: z.string().max(1000).optional(),
+});
+
+type LocalMarketOrderEmailInput = z.infer<typeof localMarketOrderEmailSchema>;
+
+interface ValidatedRequest<T> {
+  user: User;
+  data: T;
+  supabase: SupabaseClient;
+}
+
+function createValidatedHandler<T>(
+  config: { schema: z.ZodSchema<T>; rateLimit: RateLimitConfig; functionName: string },
+  handler: (validated: ValidatedRequest<T>) => Promise<Response>
+): (req: Request) => Promise<Response> {
+  const { schema, rateLimit, functionName } = config;
+
+  return async (req: Request): Promise<Response> => {
+    if (req.method === 'OPTIONS') {
+      return new Response('ok', { headers: corsHeaders });
+    }
+
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: authHeader } } }
+    );
+
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
+      return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const userId = userData.user.id;
+    const rateLimitResult = checkRateLimit(userId, rateLimit);
+    if (!rateLimitResult.allowed) {
+      return createRateLimitResponse(rateLimitResult, rateLimit);
+    }
+
+    let body: unknown = {};
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ error: 'PARSE_ERROR' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const validation = schema.safeParse(body);
+    if (!validation.success) {
+      return new Response(JSON.stringify({
+        error: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: validation.error.errors.map(err => ({
+          path: err.path.join('.'),
+          message: err.message,
+        })),
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    try {
+      return await handler({
+        user: userData.user,
+        data: validation.data,
+        supabase,
+      });
+    } catch (error) {
+      console.error(`[${functionName}] Handler error:`, error);
+      return new Response(JSON.stringify({ error: 'INTERNAL_ERROR' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+  };
+}
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
-const COMPANY_EMAIL = 'leschanvriersunis@gmail.com';
+const COMPANY_EMAIL = 'leschanvriersbretons@gmail.com';
 
-interface LocalMarketOrderEmailRequest {
-  orderId: string;
-  producerEmail: string;
-  producerName: string;
-  customerName: string;
-  customerEmail: string;
-  customerPhone?: string;
-  productName: string;
-  quantity: number;
-  unitPrice: number;
-  totalAmount: number;
-  pickupCode: string;
-  pickupLocation?: string;
-  pickupInstructions?: string;
-  customerNotes?: string;
-}
+type LocalMarketOrderEmailRequest = LocalMarketOrderEmailInput;
 
 // Fonction pour envoyer un email via Resend
 async function sendEmail(
@@ -282,87 +450,52 @@ function generateCustomerEmailHTML(data: LocalMarketOrderEmailRequest): string {
   `;
 }
 
-serve(async (req: Request) => {
-  // CORS headers
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  };
+const handler = createValidatedHandler<LocalMarketOrderEmailInput>(
+  {
+    schema: localMarketOrderEmailSchema,
+    rateLimit: RATE_LIMIT_PRESETS.ORDERS,
+    functionName: 'send-local-market-order-email',
+  },
+  async ({ user, data, supabase }) => {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
 
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
-
-  // Vérifier la méthode
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  try {
-    const data = await req.json() as LocalMarketOrderEmailRequest;
-
-    // Validation
-    if (!data.orderId || !data.producerEmail || !data.customerEmail || !data.pickupCode) {
-      return new Response(
-        JSON.stringify({ error: 'Missing required parameters' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    const role = profile?.role ?? 'user';
+    if (role !== 'producer' && role !== 'admin') {
+      return new Response(JSON.stringify({ error: 'FORBIDDEN', message: 'Producer or admin role required' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
-    console.log('[send-local-market-order-email] Processing order:', data.orderId);
+    const producerEmailHTML = generateProducerEmailHTML(data as LocalMarketOrderEmailRequest);
+    const customerEmailHTML = generateCustomerEmailHTML(data as LocalMarketOrderEmailRequest);
 
-    // Générer les emails
-    const producerEmailHTML = generateProducerEmailHTML(data);
-    const customerEmailHTML = generateCustomerEmailHTML(data);
-
-    // Envoyer l'email au producteur avec CC au company email
     const producerEmailSent = await sendEmail(
       data.producerEmail,
-      `🛒 Nouvelle commande Marché Local - Code ${data.pickupCode}`,
+      `Nouvelle commande Marché Local #${data.orderId.slice(0, 8)}`,
       producerEmailHTML,
       [COMPANY_EMAIL]
     );
 
-    if (!producerEmailSent) {
-      console.warn('[send-local-market-order-email] Failed to send producer email');
-    } else {
-      console.log('[send-local-market-order-email] Producer email sent to:', data.producerEmail);
-    }
-
-    // Envoyer l'email de confirmation au client
     const customerEmailSent = await sendEmail(
       data.customerEmail,
-      `✓ Commande confirmée - Code de retrait: ${data.pickupCode}`,
+      `Confirmation de votre commande #${data.orderId.slice(0, 8)}`,
       customerEmailHTML
     );
-
-    if (!customerEmailSent) {
-      console.warn('[send-local-market-order-email] Failed to send customer email');
-    } else {
-      console.log('[send-local-market-order-email] Customer email sent to:', data.customerEmail);
-    }
 
     return new Response(
       JSON.stringify({
         success: true,
         producerEmailSent,
         customerEmailSent,
-        message: 'Emails processed',
       }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
-  } catch (error) {
-    console.error('[send-local-market-order-email] Error:', error);
-    return new Response(
-      JSON.stringify({ error: 'Internal server error', details: String(error) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
-});
+);
+
+serve(handler);

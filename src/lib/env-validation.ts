@@ -64,8 +64,6 @@ The application cannot start without them.
   if (result.missingOptional.length > 0) {
     console.warn('[ENV] Optional variables not configured:', result.missingOptional.join(', '));
   }
-
-  console.log('[ENV] Environment validation passed');
 }
 
 /**

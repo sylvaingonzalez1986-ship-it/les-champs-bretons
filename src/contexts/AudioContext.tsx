@@ -142,7 +142,7 @@ export function AudioProvider({ children }: AudioProviderProps) {
         await soundRef.current.stopAsync();
         await soundRef.current.unloadAsync();
       } catch (e) {
-        console.log('[AudioContext] Error cleaning up sound:', e);
+        console.warn('[AudioContext] Error cleaning up sound:', e);
       }
       soundRef.current = null;
     }
@@ -155,7 +155,6 @@ export function AudioProvider({ children }: AudioProviderProps) {
     const trackList = tracksToUse || tracks;
     const track = trackList[trackIndex];
     if (!track) {
-      console.log('[AudioContext] No track found at index:', trackIndex);
       return;
     }
 
@@ -164,8 +163,6 @@ export function AudioProvider({ children }: AudioProviderProps) {
     try {
       // Arrêter le morceau actuel de la playlist si existe
       await cleanupSound(playlistSoundRef);
-
-      console.log('[AudioContext] Loading playlist track:', track.title);
 
       // Charger le nouveau morceau
       const { sound: newSound } = await Audio.Sound.createAsync(
@@ -196,7 +193,6 @@ export function AudioProvider({ children }: AudioProviderProps) {
   // Initialiser l'audio
   useEffect(() => {
     if (globalIsInitialized) {
-      console.log('[AudioContext] Already initialized globally, skipping');
       return;
     }
     globalIsInitialized = true;
@@ -216,7 +212,6 @@ export function AudioProvider({ children }: AudioProviderProps) {
 
         if (isMusicApiConfigured()) {
           try {
-            console.log('[AudioContext] Loading tracks from Supabase...');
             const supabaseTracks = await fetchMusicTracks();
 
             if (supabaseTracks.length > 0) {
@@ -230,19 +225,17 @@ export function AudioProvider({ children }: AudioProviderProps) {
               }));
 
               allTracks = [...PLAYLIST_TRACKS, ...convertedTracks];
-              console.log('[AudioContext] Loaded', supabaseTracks.length, 'tracks from Supabase');
             }
           } catch (err) {
-            console.log('[AudioContext] Error loading Supabase tracks:', err);
+            console.warn('[AudioContext] Error loading Supabase tracks:', err);
           }
         }
 
         if (isMountedRef.current) {
           setTracks(allTracks);
-          console.log('[AudioContext] Initialized with', allTracks.length, 'playlist tracks');
         }
       } catch (error) {
-        console.log('[AudioContext] Error initializing audio:', error);
+        console.warn('[AudioContext] Error initializing audio:', error);
       }
     };
 
@@ -290,7 +283,7 @@ export function AudioProvider({ children }: AudioProviderProps) {
         setIsPlaying(true);
       }
     } catch (error) {
-      console.log('[AudioContext] Error toggling play/pause:', error);
+      console.warn('[AudioContext] Error toggling play/pause:', error);
     }
   };
 
@@ -348,7 +341,6 @@ export function AudioProvider({ children }: AudioProviderProps) {
       let allTracks: Track[] = [...PLAYLIST_TRACKS];
 
       if (isMusicApiConfigured()) {
-        console.log('[AudioContext] Refreshing tracks from Supabase...');
         const supabaseTracks = await fetchMusicTracks();
 
         if (supabaseTracks.length > 0) {
@@ -362,13 +354,12 @@ export function AudioProvider({ children }: AudioProviderProps) {
           }));
 
           allTracks = [...PLAYLIST_TRACKS, ...convertedTracks];
-          console.log('[AudioContext] Refreshed', supabaseTracks.length, 'tracks from Supabase');
         }
       }
 
       setTracks(allTracks);
     } catch (err) {
-      console.log('[AudioContext] Error refreshing tracks:', err);
+      console.warn('[AudioContext] Error refreshing tracks:', err);
     }
   };
 

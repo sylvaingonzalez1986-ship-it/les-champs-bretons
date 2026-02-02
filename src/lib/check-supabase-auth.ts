@@ -88,8 +88,5 @@ export async function checkSupabaseAuthSetup(): Promise<{
 // Exécution directe si appelé comme script
 if (typeof require !== 'undefined' && require.main === module) {
   checkSupabaseAuthSetup().then((result) => {
-    console.log('\n=== Vérification Supabase Auth ===\n');
-    console.log('Table profiles:', result.profiles.exists ? '✅' : '❌', result.profiles.error || '');
-    console.log('\n' + result.summary + '\n');
   });
 }

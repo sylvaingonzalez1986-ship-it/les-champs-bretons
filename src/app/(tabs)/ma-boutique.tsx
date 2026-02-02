@@ -63,6 +63,7 @@ import {
   ProductInsert,
 } from '@/lib/supabase-producer';
 import { uploadProductImage, isProductImagesConfigured } from '@/lib/supabase-product-images';
+import { uploadLabAnalysis, isLabAnalysesConfigured } from '@/lib/supabase-lab-analyses';
 import { LabAnalysisUploader } from '@/components/LabAnalysisUploader';
 import { useOrdersStore, Order, OrderStatus, ORDER_STATUS_CONFIG } from '@/lib/store';
 import { isSupabaseSyncConfigured, fetchOrdersForProducer, updateOrderInSupabase } from '@/lib/supabase-sync';
@@ -87,6 +88,7 @@ interface ProductFormData {
   price_pro: string;
   weight: string;
   image: string;
+  images: string[];
   description: string;
   stock: string;
   tva_rate: string;
@@ -115,6 +117,7 @@ const initialFormData: ProductFormData = {
   price_pro: '',
   weight: '',
   image: '',
+  images: [],
   description: '',
   stock: '',
   tva_rate: '20',
@@ -162,12 +165,20 @@ export default function MaBoutiqueScreen() {
   const updateOrderStatus = useOrdersStore((s) => s.updateOrderStatus);
   const updateOrderTrackingNumber = useOrdersStore((s) => s.updateOrderTrackingNumber);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersLoadingMore, setOrdersLoadingMore] = useState(false);
+  const [ordersHasMore, setOrdersHasMore] = useState(true);
+  const [ordersPage, setOrdersPage] = useState(0);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const ORDERS_PAGE_SIZE = 20;
 
   // Direct sales (Local Market) state
   const { loadOrdersForProducer, updateOrderStatus: updateLocalOrderStatus } = useLocalMarketOrders();
   const [directSalesOrders, setDirectSalesOrders] = useState<LocalMarketOrder[]>([]);
   const [directSalesLoading, setDirectSalesLoading] = useState(false);
+  const [directSalesLoadingMore, setDirectSalesLoadingMore] = useState(false);
+  const [directSalesHasMore, setDirectSalesHasMore] = useState(true);
+  const [directSalesPage, setDirectSalesPage] = useState(0);
+  const DIRECT_SALES_PAGE_SIZE = 20;
   const [selectedDirectOrder, setSelectedDirectOrder] = useState<LocalMarketOrder | null>(null);
 
   // Modal states
@@ -180,24 +191,22 @@ export default function MaBoutiqueScreen() {
   const [error, setError] = useState<string | null>(null);
 
   // Image upload states
-  const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [showImagePicker, setShowImagePicker] = useState(false);
+  const [uploadingLabAnalysis, setUploadingLabAnalysis] = useState(false);
 
   // Toast
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  const isNoTva = formData.tva_rate === '0' || formData.tva_rate === '0.0';
+
   // Charger les données
   const loadData = async () => {
-    console.log('[MaBoutique] Loading data...');
     try {
       const myProducer = await fetchMyProducer();
-      console.log('[MaBoutique] My producer:', myProducer?.id, myProducer?.name);
       setProducer(myProducer);
 
       if (myProducer) {
         const myProducts = await fetchProducerProducts(myProducer.id);
-        console.log('[MaBoutique] Loaded', myProducts.length, 'products');
         setProducts(myProducts);
       }
     } catch (err) {
@@ -217,74 +226,111 @@ export default function MaBoutiqueScreen() {
     setRefreshing(true);
     loadData();
     if (activeTab === 'orders') {
-      loadOrdersFromSupabase();
+      setOrdersPage(0);
+      setOrdersHasMore(true);
+      loadOrdersFromSupabase(true);
     }
     if (activeTab === 'direct_sales') {
-      loadDirectSalesOrders();
+      setDirectSalesPage(0);
+      setDirectSalesHasMore(true);
+      loadDirectSalesOrders(true);
     }
   };
 
+  const onLoadMoreOrders = () => {
+    if (ordersLoadingMore || !ordersHasMore) {
+      return;
+    }
+    loadOrdersFromSupabase(false);
+  };
+
   // Load direct sales orders (Local Market)
-  const loadDirectSalesOrders = async () => {
+  const loadDirectSalesOrders = async (reset = false) => {
     if (!producer?.id || !session?.access_token) {
-      console.log('[MaBoutique] SKIP direct sales: No producer or session');
       return;
     }
 
-    setDirectSalesLoading(true);
+    if (reset) {
+      setDirectSalesLoading(true);
+    } else {
+      setDirectSalesLoadingMore(true);
+    }
     try {
-      console.log('[MaBoutique] Fetching direct sales orders for producer:', producer.id);
-      const orders = await loadOrdersForProducer(producer.id, session.access_token);
-      console.log('[MaBoutique] Direct sales orders received:', orders.length);
-      setDirectSalesOrders(orders);
+      const nextPage = reset ? 0 : directSalesPage;
+      const offset = nextPage * DIRECT_SALES_PAGE_SIZE;
+      const orders = await loadOrdersForProducer(producer.id, session.access_token, {
+        limit: DIRECT_SALES_PAGE_SIZE,
+        offset,
+      });
+      setDirectSalesHasMore(orders.length === DIRECT_SALES_PAGE_SIZE);
+      setDirectSalesPage((prev) => (reset ? 1 : prev + 1));
+      setDirectSalesOrders((prev) => (reset ? orders : [...prev, ...orders]));
     } catch (error) {
       console.error('[MaBoutique] Error loading direct sales orders:', error);
     } finally {
       setDirectSalesLoading(false);
+      setDirectSalesLoadingMore(false);
     }
+  };
+
+  const onLoadMoreDirectSales = () => {
+    if (directSalesLoadingMore || !directSalesHasMore) return;
+    loadDirectSalesOrders(false);
   };
 
   // Load direct sales when switching to tab
   useEffect(() => {
     if (activeTab === 'direct_sales' && producer?.id && session?.access_token) {
-      loadDirectSalesOrders();
+      setDirectSalesPage(0);
+      setDirectSalesHasMore(true);
+      loadDirectSalesOrders(true);
     }
   }, [activeTab, producer?.id, session?.access_token]);
 
   // Load orders from Supabase - filtered by producer for security
-  const loadOrdersFromSupabase = async () => {
+  const loadOrdersFromSupabase = async (reset = false) => {
     // PROTECTION: Ne JAMAIS appeler sans un producer valide
     if (!isSupabaseSyncConfigured()) {
-      console.log('[MaBoutique] Supabase not configured');
       return;
     }
 
     if (!producer?.id) {
-      console.log('[MaBoutique] SKIP: No producer loaded yet - protecting existing orders');
       return;
     }
 
-    setOrdersLoading(true);
+    if (reset) {
+      setOrdersLoading(true);
+    } else {
+      setOrdersLoadingMore(true);
+    }
     try {
-      console.log('[MaBoutique] Fetching orders for producer:', producer.id);
       // Server-side filtering by producer_id for security
-      const supabaseOrders = await fetchOrdersForProducer(producer.id);
-      console.log('[MaBoutique] Orders received:', supabaseOrders.length);
+      const nextPage = reset ? 0 : ordersPage;
+      const offset = nextPage * ORDERS_PAGE_SIZE;
+      const supabaseOrders = await fetchOrdersForProducer(producer.id, {
+        limit: ORDERS_PAGE_SIZE,
+        offset,
+      });
+
+      setOrdersHasMore(supabaseOrders.length === ORDERS_PAGE_SIZE);
+      setOrdersPage((prev) => (reset ? 1 : prev + 1));
 
       // Toujours mettre à jour le store avec les données reçues (même vide = producteur sans commandes)
-      setOrders(supabaseOrders);
+      setOrders((prev) => (reset ? supabaseOrders : [...prev, ...supabaseOrders]));
     } catch (error) {
       console.error('[MaBoutique] Error loading orders:', error);
     } finally {
       setOrdersLoading(false);
+      setOrdersLoadingMore(false);
     }
   };
 
   // Load orders when switching to orders tab - only if producer is loaded
   useEffect(() => {
     if (activeTab === 'orders' && producer?.id) {
-      console.log('[MaBoutique] Orders tab selected with producer:', producer.id);
-      loadOrdersFromSupabase();
+      setOrdersPage(0);
+      setOrdersHasMore(true);
+      loadOrdersFromSupabase(true);
     }
   }, [activeTab, producer?.id]);
 
@@ -377,13 +423,10 @@ export default function MaBoutiqueScreen() {
 
   // Ouvrir le formulaire pour un nouveau produit
   const handleAddProduct = () => {
-    console.log('[MaBoutique] handleAddProduct called, producer:', producer?.id);
     setEditingProduct(null);
     setFormData(initialFormData);
-    setSelectedImageUri(null);
     setError(null);
     setShowProductModal(true);
-    console.log('[MaBoutique] Modal should be visible now');
   };
 
   // Ouvrir le formulaire pour éditer un produit
@@ -400,6 +443,9 @@ export default function MaBoutiqueScreen() {
     }));
 
     setEditingProduct(product);
+    const existingImages = (product.images && product.images.length > 0)
+      ? product.images
+      : (product.image ? [product.image] : []);
     setFormData({
       name: product.name,
       type: product.type,
@@ -408,7 +454,8 @@ export default function MaBoutiqueScreen() {
       price_public: product.price_public?.toString() || '',
       price_pro: product.price_pro?.toString() || '',
       weight: product.weight || '',
-      image: product.image || '',
+      image: existingImages[0] || '',
+      images: existingImages,
       description: product.description || '',
       stock: product.stock?.toString() || '',
       tva_rate: product.tva_rate?.toString() || '20',
@@ -427,7 +474,6 @@ export default function MaBoutiqueScreen() {
       availableOnBourse: (product as any).available_on_bourse ?? false,
       bourseBasePrice: (product as any).bourse_base_price?.toString() || '',
     });
-    setSelectedImageUri(null);
     setError(null);
     setShowProductModal(true);
   };
@@ -545,8 +591,35 @@ export default function MaBoutiqueScreen() {
     return true;
   };
 
+  const addImagesToForm = (uris: string[]) => {
+    setFormData((prev) => {
+      const nextImages = [...prev.images, ...uris].slice(0, 3);
+      return {
+        ...prev,
+        images: nextImages,
+        image: nextImages[0] || '',
+      };
+    });
+  };
+
+  const removeImageFromForm = (index: number) => {
+    setFormData((prev) => {
+      const nextImages = prev.images.filter((_, i) => i !== index);
+      return {
+        ...prev,
+        images: nextImages,
+        image: nextImages[0] || '',
+      };
+    });
+  };
+
   // Prendre une photo
   const takePhoto = async () => {
+    if (formData.images.length >= 3) {
+      Alert.alert('Limite atteinte', 'Vous ne pouvez pas ajouter plus de 3 photos par produit.');
+      return;
+    }
+
     const hasPermission = await requestCameraPermission();
     if (!hasPermission) return;
 
@@ -559,8 +632,7 @@ export default function MaBoutiqueScreen() {
       });
 
       if (!result.canceled && result.assets[0]) {
-        setSelectedImageUri(result.assets[0].uri);
-        console.log('[MaBoutique] Photo taken:', result.assets[0].uri);
+        addImagesToForm([result.assets[0].uri]);
       }
     } catch (error) {
       console.error('[MaBoutique] Camera error:', error);
@@ -570,20 +642,25 @@ export default function MaBoutiqueScreen() {
 
   // Choisir depuis la galerie
   const pickFromGallery = async () => {
+    if (formData.images.length >= 3) {
+      Alert.alert('Limite atteinte', 'Vous ne pouvez pas ajouter plus de 3 photos par produit.');
+      return;
+    }
+
     const hasPermission = await requestMediaLibraryPermission();
     if (!hasPermission) return;
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
+        allowsMultipleSelection: true,
+        selectionLimit: 3 - formData.images.length,
+        allowsEditing: false,
         quality: 0.8,
       });
 
-      if (!result.canceled && result.assets[0]) {
-        setSelectedImageUri(result.assets[0].uri);
-        console.log('[MaBoutique] Image selected:', result.assets[0].uri);
+      if (!result.canceled && result.assets.length > 0) {
+        addImagesToForm(result.assets.map((asset) => asset.uri));
       }
     } catch (error) {
       console.error('[MaBoutique] Gallery error:', error);
@@ -591,26 +668,34 @@ export default function MaBoutiqueScreen() {
     }
   };
 
-  // Upload image et retourner l'URL
-  const uploadImageAndGetUrl = async (productId: string): Promise<string | null> => {
-    if (!selectedImageUri || !producer) return null;
+  // Upload des images et retourner les URLs
+  const uploadImagesAndGetUrls = async (productId: string, images: string[]): Promise<string[]> => {
+    if (!producer || images.length === 0) return [];
 
     setUploadingImage(true);
     try {
-      if (isProductImagesConfigured()) {
-        console.log('[MaBoutique] Uploading image to Supabase...');
-        const publicUrl = await uploadProductImage(selectedImageUri, producer.id, productId);
-        console.log('[MaBoutique] Image uploaded:', publicUrl);
-        return publicUrl;
-      } else {
-        // Si Supabase n'est pas configuré, on garde l'URI locale (temporaire)
-        console.log('[MaBoutique] Supabase not configured, using local URI');
-        return selectedImageUri;
+      const uploadedImages: string[] = [];
+
+      for (const uri of images) {
+        if (uri.startsWith('http')) {
+          uploadedImages.push(uri);
+          continue;
+        }
+
+        if (isProductImagesConfigured()) {
+          const publicUrl = await uploadProductImage(uri, producer.id, productId);
+          uploadedImages.push(publicUrl);
+        } else {
+          // Si Supabase n'est pas configuré, on garde l'URI locale (temporaire)
+          uploadedImages.push(uri);
+        }
       }
+
+      return uploadedImages.slice(0, 3);
     } catch (error: any) {
       console.error('[MaBoutique] Upload error:', error);
-      Alert.alert('Erreur upload', error?.message || 'Impossible d\'uploader l\'image');
-      return null;
+      Alert.alert('Erreur upload', error?.message || 'Impossible d\'uploader les images');
+      return images.slice(0, 3);
     } finally {
       setUploadingImage(false);
     }
@@ -636,12 +721,23 @@ export default function MaBoutiqueScreen() {
     // Générer un ID temporaire pour l'upload si c'est un nouveau produit
     const tempProductId = editingProduct?.id || `new-${Date.now()}`;
 
-    // Upload l'image si une nouvelle a été sélectionnée
-    let imageUrl = formData.image;
-    if (selectedImageUri) {
-      const uploadedUrl = await uploadImageAndGetUrl(tempProductId);
-      if (uploadedUrl) {
-        imageUrl = uploadedUrl;
+    // Upload des images si nécessaire
+    const uploadedImages = await uploadImagesAndGetUrls(tempProductId, formData.images);
+    const mainImageUrl = uploadedImages[0] || null;
+
+    // Upload analyse labo si nécessaire
+    let labAnalysisUrl = formData.lab_analysis_url || null;
+    if (labAnalysisUrl && !(labAnalysisUrl.startsWith('http://') || labAnalysisUrl.startsWith('https://'))) {
+      if (isLabAnalysesConfigured()) {
+        try {
+          setUploadingLabAnalysis(true);
+          labAnalysisUrl = await uploadLabAnalysis(labAnalysisUrl, producer.id, tempProductId);
+        } catch (error: any) {
+          console.error('[MaBoutique] Lab analysis upload error:', error);
+          Alert.alert('Erreur upload', error?.message || 'Impossible d\'uploader l\'analyse de laboratoire');
+        } finally {
+          setUploadingLabAnalysis(false);
+        }
       }
     }
 
@@ -670,6 +766,7 @@ export default function MaBoutiqueScreen() {
       : [];
 
     // Données du produit à envoyer à Supabase
+    const parsedTvaRate = Number.parseFloat(formData.tva_rate);
     const productData = {
       producer_id: producer.id,
       name: formData.name.trim(),
@@ -679,17 +776,17 @@ export default function MaBoutiqueScreen() {
       price_public: parseFloat(formData.price_public),
       price_pro: formData.price_pro ? parseFloat(formData.price_pro) : null,
       weight: formData.weight || null,
-      image: imageUrl || null,
-      images: null,
+      image: mainImageUrl,
+      images: uploadedImages.length > 0 ? uploadedImages : null,
       description: formData.description || null,
       stock: formData.stock ? parseInt(formData.stock, 10) : null,
-      tva_rate: parseFloat(formData.tva_rate) || 20,
+      tva_rate: Number.isNaN(parsedTvaRate) ? 20 : parsedTvaRate,
       is_on_promo: false,
       promo_percent: null,
       visible_for_clients: formData.visible_for_clients,
       visible_for_pros: formData.visible_for_pros,
       status: formData.status,
-      lab_analysis_url: formData.lab_analysis_url || null,
+      lab_analysis_url: labAnalysisUrl,
       disponible_vente_directe: formData.disponible_vente_directe,
       price_tiers: parsedPriceTiers.length > 0 ? parsedPriceTiers : null,
       price_pro_tiers: parsedPriceProTiers.length > 0 ? parsedPriceProTiers : null,
@@ -739,6 +836,9 @@ export default function MaBoutiqueScreen() {
   // Render d'un produit dans la liste
   const renderProductCard = (product: ProducerProductDB, index: number) => {
     const statusConfig = STATUS_OPTIONS.find((s) => s.value === product.status);
+    const mainImage = product.images && product.images.length > 0
+      ? product.images[0]
+      : product.image;
 
     return (
       <Animated.View
@@ -758,9 +858,9 @@ export default function MaBoutiqueScreen() {
           <View className="flex-row">
             {/* Image */}
             <View className="w-24 h-24">
-              {product.image ? (
+              {mainImage ? (
                 <Image
-                  source={{ uri: product.image }}
+                  source={{ uri: mainImage }}
                   className="w-full h-full"
                   resizeMode="cover"
                 />
@@ -1060,6 +1160,52 @@ export default function MaBoutiqueScreen() {
                     keyboardType="decimal-pad"
                     value={formData.price_pro}
                     onChangeText={(text) => setFormData((f) => ({ ...f, price_pro: text }))}
+                  />
+                </View>
+              </View>
+
+              {/* TVA */}
+              <View className="mb-4 p-4 rounded-xl" style={{ backgroundColor: `${COLORS.text.white}05`, borderWidth: 1.5, borderColor: `${COLORS.primary.gold}25` }}>
+                <View className="flex-row items-center justify-between">
+                  <View className="flex-1">
+                    <Text style={{ color: COLORS.text.lightGray }} className="font-medium">
+                      TVA (%)
+                    </Text>
+                    <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+                      Activez “Sans TVA” si le producteur n’est pas assujetti
+                    </Text>
+                  </View>
+                  <View className="flex-row items-center">
+                    <Text style={{ color: COLORS.text.muted }} className="text-xs mr-2">
+                      Sans TVA
+                    </Text>
+                    <Switch
+                      value={isNoTva}
+                      onValueChange={(v) => {
+                        setFormData((f) => ({
+                          ...f,
+                          tva_rate: v ? '0' : (f.tva_rate && f.tva_rate !== '0' ? f.tva_rate : '20'),
+                        }));
+                      }}
+                      trackColor={{ false: COLORS.text.muted, true: `${COLORS.accent.teal}80` }}
+                      thumbColor={isNoTva ? COLORS.accent.teal : COLORS.text.lightGray}
+                    />
+                  </View>
+                </View>
+
+                <View className="mt-3">
+                  <RNTextInput
+                    className="px-4 py-3 rounded-xl"
+                    style={{
+                      backgroundColor: isNoTva ? `${COLORS.text.white}05` : `${COLORS.text.white}10`,
+                      color: isNoTva ? COLORS.text.muted : COLORS.text.cream,
+                    }}
+                    placeholder="20"
+                    placeholderTextColor={COLORS.text.muted}
+                    keyboardType="decimal-pad"
+                    value={formData.tva_rate}
+                    editable={!isNoTva}
+                    onChangeText={(text) => setFormData((f) => ({ ...f, tva_rate: text }))}
                   />
                 </View>
               </View>
@@ -1439,71 +1585,66 @@ export default function MaBoutiqueScreen() {
                 )}
               </View>
 
-              {/* Image du produit */}
+              {/* Photos du produit */}
               <View className="mb-4">
-                <Text style={{ color: COLORS.text.lightGray }} className="font-medium mb-2">
-                  Image du produit
-                </Text>
+                <View className="flex-row items-center justify-between mb-2">
+                  <Text style={{ color: COLORS.text.lightGray }} className="font-medium">
+                    Photos du produit
+                  </Text>
+                  <Text style={{ color: COLORS.text.muted }} className="text-xs">
+                    {formData.images.length}/3
+                  </Text>
+                </View>
 
-                {/* Aperçu de l'image */}
-                <View className="flex-row items-center mb-3">
-                  {/* Image preview - hauteur fixe pour éviter les problèmes de scroll sur Android */}
-                  <View
-                    style={{
-                      width: 96,
-                      height: 96,
-                      borderRadius: 12,
-                      overflow: 'hidden',
-                      marginRight: 16,
-                      backgroundColor: `${COLORS.text.white}10`,
-                      borderWidth: 2,
-                      borderColor: `${COLORS.primary.gold}30`,
-                    }}
-                  >
-                    {selectedImageUri || formData.image ? (
-                      <Image
-                        source={{ uri: selectedImageUri || formData.image }}
-                        style={{ width: 96, height: 96 }}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                        <Leaf size={32} color={COLORS.text.muted} />
-                      </View>
-                    )}
-                    {uploadingImage && (
-                      <View
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          bottom: 0,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          backgroundColor: 'rgba(0,0,0,0.6)',
-                        }}
-                      >
-                        <ActivityIndicator size="small" color={COLORS.primary.gold} />
-                      </View>
-                    )}
-                  </View>
-
-                  {/* Bouton supprimer */}
-                  {(selectedImageUri || formData.image) && (
-                    <Pressable
-                      onPress={() => {
-                        setSelectedImageUri(null);
-                        setFormData((f) => ({ ...f, image: '' }));
+                {/* Vignettes */}
+                <View className="flex-row flex-wrap mb-3">
+                  {formData.images.map((uri, index) => (
+                    <View
+                      key={`${uri}-${index}`}
+                      className="mr-3 mb-3 rounded-xl overflow-hidden"
+                      style={{
+                        width: 96,
+                        height: 96,
+                        borderWidth: 2,
+                        borderColor: `${COLORS.primary.gold}30`,
                       }}
-                      className="flex-row items-center px-3 py-2 rounded-xl"
-                      style={{ backgroundColor: `${COLORS.accent.red}20` }}
                     >
-                      <Trash2 size={16} color={COLORS.accent.red} />
-                      <Text style={{ color: COLORS.accent.red }} className="font-medium ml-2">
-                        Supprimer
+                      <Image source={{ uri }} style={{ width: '100%', height: '100%' }} />
+                      <Pressable
+                        onPress={() => removeImageFromForm(index)}
+                        className="absolute top-1 right-1 p-1.5 rounded-full"
+                        style={{ backgroundColor: 'rgba(239, 68, 68, 0.9)' }}
+                      >
+                        <Trash2 size={14} color="#fff" />
+                      </Pressable>
+                      {index === 0 && (
+                        <View
+                          className="absolute bottom-0 left-0 right-0 py-1"
+                          style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+                        >
+                          <Text className="text-white text-xs text-center">Principale</Text>
+                        </View>
+                      )}
+                    </View>
+                  ))}
+
+                  {formData.images.length < 3 && (
+                    <View
+                      className="items-center justify-center rounded-xl"
+                      style={{
+                        width: 96,
+                        height: 96,
+                        borderWidth: 2,
+                        borderColor: `${COLORS.primary.gold}30`,
+                        borderStyle: 'dashed',
+                        backgroundColor: `${COLORS.background.charcoal}50`,
+                      }}
+                    >
+                      <ImagePlus size={22} color={COLORS.text.muted} />
+                      <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+                        Ajouter
                       </Text>
-                    </Pressable>
+                    </View>
                   )}
                 </View>
 
@@ -1536,17 +1677,26 @@ export default function MaBoutiqueScreen() {
                   </Pressable>
                 </View>
 
-                {selectedImageUri && (
+                {uploadingImage && (
                   <View
                     className="flex-row items-center mt-2 p-2 rounded-lg"
                     style={{ backgroundColor: `${COLORS.accent.teal}15` }}
                   >
-                    <Check size={14} color={COLORS.accent.teal} />
+                    <ActivityIndicator size="small" color={COLORS.accent.teal} />
                     <Text style={{ color: COLORS.accent.teal }} className="text-xs ml-2">
-                      Nouvelle image sélectionnée
+                      Upload des photos en cours...
                     </Text>
                   </View>
                 )}
+
+                <View
+                  className="mt-3 p-3 rounded-lg"
+                  style={{ backgroundColor: `${COLORS.background.charcoal}50` }}
+                >
+                  <Text style={{ color: COLORS.text.muted }} className="text-xs text-center">
+                    Ajoutez jusqu’à 3 photos par produit. La première sera utilisée comme image principale.
+                  </Text>
+                </View>
               </View>
 
               {/* Description */}
@@ -1572,10 +1722,35 @@ export default function MaBoutiqueScreen() {
               {/* Analyse de laboratoire */}
               <LabAnalysisUploader
                 value={formData.lab_analysis_url || null}
-                onUpload={(uri, fileName, mimeType) => {
-                  // Pour l'instant, on stocke l'URI local
-                  // TODO: Upload vers Supabase Storage
-                  setFormData((f) => ({ ...f, lab_analysis_url: uri }));
+                uploading={uploadingLabAnalysis}
+                onUpload={async (uri, fileName, mimeType) => {
+                  if (!producer) {
+                    setFormData((f) => ({ ...f, lab_analysis_url: uri }));
+                    return;
+                  }
+
+                  try {
+                    setUploadingLabAnalysis(true);
+                    if (isLabAnalysesConfigured()) {
+                      const tempProductId = editingProduct?.id || `new-${Date.now()}`;
+                      const publicUrl = await uploadLabAnalysis(
+                        uri,
+                        producer.id,
+                        tempProductId,
+                        fileName,
+                        mimeType
+                      );
+                      setFormData((f) => ({ ...f, lab_analysis_url: publicUrl }));
+                    } else {
+                      setFormData((f) => ({ ...f, lab_analysis_url: uri }));
+                    }
+                  } catch (error: any) {
+                    console.error('[MaBoutique] Lab analysis upload error:', error);
+                    Alert.alert('Erreur upload', error?.message || 'Impossible d\'uploader l\'analyse de laboratoire');
+                    setFormData((f) => ({ ...f, lab_analysis_url: uri }));
+                  } finally {
+                    setUploadingLabAnalysis(false);
+                  }
                 }}
                 onRemove={() => {
                   setFormData((f) => ({ ...f, lab_analysis_url: '' }));
@@ -2348,7 +2523,11 @@ export default function MaBoutiqueScreen() {
           )}
           {activeTab === 'orders' && (
             <Pressable
-              onPress={loadOrdersFromSupabase}
+              onPress={() => {
+                setOrdersPage(0);
+                setOrdersHasMore(true);
+                loadOrdersFromSupabase(true);
+              }}
               className="px-4 py-2.5 rounded-xl flex-row items-center"
               style={{ backgroundColor: `${COLORS.accent.teal}20` }}
             >
@@ -2569,7 +2748,11 @@ export default function MaBoutiqueScreen() {
           refreshControl={
             <RefreshControl
               refreshing={ordersLoading}
-              onRefresh={loadOrdersFromSupabase}
+              onRefresh={() => {
+                setOrdersPage(0);
+                setOrdersHasMore(true);
+                loadOrdersFromSupabase(true);
+              }}
               tintColor={COLORS.primary.gold}
             />
           }
@@ -2585,7 +2768,24 @@ export default function MaBoutiqueScreen() {
               </Text>
             </View>
           ) : (
-            producerOrders.map((order, index) => renderOrderCard(order, index))
+            <>
+              {producerOrders.map((order, index) => renderOrderCard(order, index))}
+
+              {ordersHasMore && (
+                <View className="items-center my-6">
+                  <Pressable
+                    onPress={onLoadMoreOrders}
+                    disabled={ordersLoadingMore}
+                    className="px-4 py-2 rounded-full"
+                    style={{ backgroundColor: `${COLORS.text.white}10` }}
+                  >
+                    <Text style={{ color: COLORS.text.lightGray }}>
+                      {ordersLoadingMore ? 'Chargement...' : 'Charger plus'}
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
+            </>
           )}
         </ScrollView>
       )}
@@ -2599,7 +2799,11 @@ export default function MaBoutiqueScreen() {
           refreshControl={
             <RefreshControl
               refreshing={directSalesLoading}
-              onRefresh={loadDirectSalesOrders}
+              onRefresh={() => {
+                setDirectSalesPage(0);
+                setDirectSalesHasMore(true);
+                loadDirectSalesOrders(true);
+              }}
               tintColor={COLORS.accent.hemp}
             />
           }
@@ -2622,14 +2826,31 @@ export default function MaBoutiqueScreen() {
               </Text>
             </View>
           ) : (
-            directSalesOrders.map((order, index) => (
-              <DirectSalesOrderCard
-                key={order.id}
-                order={order}
-                index={index}
-                onPress={() => setSelectedDirectOrder(order)}
-              />
-            ))
+            <>
+              {directSalesOrders.map((order, index) => (
+                <DirectSalesOrderCard
+                  key={order.id}
+                  order={order}
+                  index={index}
+                  onPress={() => setSelectedDirectOrder(order)}
+                />
+              ))}
+
+              {directSalesHasMore && (
+                <View className="items-center my-6">
+                  <Pressable
+                    onPress={onLoadMoreDirectSales}
+                    disabled={directSalesLoadingMore}
+                    className="px-4 py-2 rounded-full"
+                    style={{ backgroundColor: `${COLORS.text.white}10` }}
+                  >
+                    <Text style={{ color: COLORS.text.lightGray }}>
+                      {directSalesLoadingMore ? 'Chargement...' : 'Charger plus'}
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
+            </>
           )}
         </ScrollView>
       )}

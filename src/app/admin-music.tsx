@@ -301,24 +301,18 @@ export default function AdminMusicScreen() {
 
     setIsSaving(true);
     try {
-      console.log('[AdminMusic] Starting add track for:', selectedAudioName);
-
       let addedToSupabase = false;
 
       if (isConfigured) {
         try {
           // Try to upload to Supabase
-          console.log('[AdminMusic] Uploading to Supabase...');
           const audioUrl = await uploadAudioFile(selectedAudioUri, selectedAudioName || 'track.mp3');
-          console.log('[AdminMusic] Audio uploaded:', audioUrl);
 
           let coverUrl = formCoverUrl;
           if (selectedCoverUri) {
             coverUrl = await uploadCoverImage(selectedCoverUri, `cover_${Date.now()}.jpg`);
-            console.log('[AdminMusic] Cover uploaded:', coverUrl);
           }
 
-          console.log('[AdminMusic] Adding to database...');
           await addMusicTrack({
             title: formTitle.trim(),
             artist: formArtist.trim() || 'Les Chanvriers Bretons',
@@ -328,18 +322,15 @@ export default function AdminMusicScreen() {
             position: tracks.length,
           });
 
-          console.log('[AdminMusic] Track added to Supabase successfully');
           await loadTracks();
           addedToSupabase = true;
         } catch (supabaseErr: any) {
-          console.log('[AdminMusic] Supabase upload failed, adding locally:', supabaseErr?.message);
           // Continue to add locally if Supabase fails
         }
       }
 
       if (!addedToSupabase) {
         // Add locally (without Supabase or if Supabase failed)
-        console.log('[AdminMusic] Adding track locally...');
         const newTrack: EditableTrack = {
           id: `local-${Date.now()}`,
           title: formTitle.trim(),
@@ -351,7 +342,6 @@ export default function AdminMusicScreen() {
           isLocal: true,
         };
         setTracks(prev => [...prev, newTrack]);
-        console.log('[AdminMusic] Track added locally:', newTrack.title);
       }
 
       setAddModalVisible(false);

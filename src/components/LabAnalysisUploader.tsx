@@ -95,8 +95,6 @@ function PdfViewer({ uri }: { uri: string }) {
             encoding: FileSystem.EncodingType.Base64,
           });
         } catch (copyError) {
-          console.log('[PdfViewer] Copy failed, trying with original URI:', copyError);
-
           // Essayer avec l'URI originale
           try {
             await FileSystem.copyAsync({
@@ -107,15 +105,12 @@ function PdfViewer({ uri }: { uri: string }) {
               encoding: FileSystem.EncodingType.Base64,
             });
           } catch (secondError) {
-            console.log('[PdfViewer] Second copy attempt failed:', secondError);
-
             // Dernier recours: essayer de lire directement
             try {
               base64Data = await FileSystem.readAsStringAsync(uri, {
                 encoding: FileSystem.EncodingType.Base64,
               });
             } catch (readError) {
-              console.log('[PdfViewer] Direct read failed:', readError);
               throw new Error('Fichier non accessible. Veuillez réessayer de sélectionner le document.');
             }
           }
@@ -340,7 +335,6 @@ export function LabAnalysisUploader({
 
       if (!result.canceled && result.assets.length > 0) {
         const file = result.assets[0];
-        console.log('[LabAnalysis] File selected:', file.uri);
 
         // Sur Android, lire immédiatement le fichier en base64 et le sauvegarder
         // car le fichier temporaire du DocumentPicker peut expirer
@@ -357,22 +351,16 @@ export function LabAnalysisUploader({
           await FileSystem.writeAsStringAsync(destUri, base64Content, {
             encoding: FileSystem.EncodingType.Base64,
           });
-
-          console.log('[LabAnalysis] File saved to:', destUri);
           onUpload(destUri, file.name, file.mimeType || 'application/pdf');
         } catch (readWriteError) {
-          console.log('[LabAnalysis] Read/Write failed, trying copy:', readWriteError);
-
           // Fallback: essayer la copie directe
           try {
             await FileSystem.copyAsync({
               from: file.uri,
               to: destUri,
             });
-            console.log('[LabAnalysis] Copy succeeded to:', destUri);
             onUpload(destUri, file.name, file.mimeType || 'application/pdf');
           } catch (copyError) {
-            console.log('[LabAnalysis] Copy also failed:', copyError);
             // Dernier recours: utiliser l'URI originale (peut ne pas fonctionner plus tard)
             onUpload(file.uri, file.name, file.mimeType || 'application/pdf');
             Alert.alert(

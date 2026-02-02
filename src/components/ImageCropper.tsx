@@ -92,7 +92,7 @@ export const ImageCropper = ({
           savedTranslateY.value = 0;
         },
         (error) => {
-          console.log('Error getting image size:', error);
+          console.warn('Error getting image size:', error);
           // Set default size
           setImageSize({ width: 1, height: 1 });
           setImageLoaded(true);
@@ -205,8 +205,6 @@ export const ImageCropper = ({
         height: Math.round(Math.max(1, cropHeight)),
       };
 
-      console.log('Crop params:', validCrop, 'Image size:', imageSize);
-
       // Apply the crop
       const result = await ImageManipulator.manipulateAsync(
         imageUri,
@@ -216,7 +214,7 @@ export const ImageCropper = ({
 
       onCrop(result.uri);
     } catch (error) {
-      console.log('Error cropping image:', error);
+      console.warn('Error cropping image:', error);
       // If crop fails, return original image
       onCrop(imageUri);
     } finally {

@@ -136,7 +136,6 @@ async function fetchWithTimeout(
 export async function fetchMyProducer(): Promise<ProducerDB | null> {
   const session = await getValidSession();
   if (!session?.user?.id) {
-    console.log('[fetchMyProducer] No authenticated user');
     return null;
   }
 
@@ -229,11 +228,14 @@ export async function createProduct(product: ProductInsert): Promise<ProducerPro
     };
 
     const response = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/products`,
+      `${SUPABASE_URL}/functions/v1/products-mutations`,
       {
         method: 'POST',
         headers,
-        body: JSON.stringify(sanitizedProduct),
+        body: JSON.stringify({
+          action: 'create',
+          product: sanitizedProduct,
+        }),
       }
     );
 
@@ -276,39 +278,7 @@ export async function updateProduct(
   }
 
   try {
-    // Récupérer le producteur de l'utilisateur connecté
-    const myProducer = await fetchMyProducer();
-    if (!myProducer) {
-      console.warn('[updateProduct] User is not linked to any producer');
-      return null;
-    }
-
-    // Récupérer le produit pour vérifier sa propriété
     const headers = await getValidAuthHeaders();
-    const getResponse = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/products?id=eq.${encodeURIComponent(productId)}&select=producer_id`,
-      {
-        method: 'GET',
-        headers,
-      }
-    );
-
-    if (!getResponse.ok) {
-      console.warn('[updateProduct] Error fetching product:', getResponse.status);
-      return null;
-    }
-
-    const products = await getResponse.json();
-    if (!products || products.length === 0) {
-      console.warn('[updateProduct] Product not found:', productId);
-      return null;
-    }
-
-    // Vérifier que le produit appartient au producteur connecté
-    if (products[0].producer_id !== myProducer.id) {
-      console.warn('[updateProduct] Unauthorized: Product belongs to different producer');
-      return null;
-    }
 
     // Sanitize les champs texte si présents
     const sanitizedUpdates: Record<string, unknown> = { ...validation.data };
@@ -317,11 +287,15 @@ export async function updateProduct(
 
     // Le produit appartient au bon producteur, effectuer la mise à jour
     const response = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/products?id=eq.${encodeURIComponent(productId)}`,
+      `${SUPABASE_URL}/functions/v1/products-mutations`,
       {
-        method: 'PATCH',
+        method: 'POST',
         headers,
-        body: JSON.stringify(sanitizedUpdates),
+        body: JSON.stringify({
+          action: 'update',
+          productId,
+          updates: sanitizedUpdates,
+        }),
       }
     );
 
@@ -354,46 +328,18 @@ export async function deleteProduct(productId: string): Promise<boolean> {
   }
 
   try {
-    // Récupérer le producteur de l'utilisateur connecté
-    const myProducer = await fetchMyProducer();
-    if (!myProducer) {
-      console.warn('[deleteProduct] User is not linked to any producer');
-      return false;
-    }
-
-    // Récupérer le produit pour vérifier sa propriété
     const headers = await getValidAuthHeaders();
-    const getResponse = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/products?id=eq.${encodeURIComponent(productId)}&select=producer_id`,
-      {
-        method: 'GET',
-        headers,
-      }
-    );
-
-    if (!getResponse.ok) {
-      console.warn('[deleteProduct] Error fetching product:', getResponse.status);
-      return false;
-    }
-
-    const products = await getResponse.json();
-    if (!products || products.length === 0) {
-      console.warn('[deleteProduct] Product not found:', productId);
-      return false;
-    }
-
-    // Vérifier que le produit appartient au producteur connecté
-    if (products[0].producer_id !== myProducer.id) {
-      console.warn('[deleteProduct] Unauthorized: Product belongs to different producer');
-      return false;
-    }
 
     // Le produit appartient au bon producteur, effectuer la suppression
     const response = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/products?id=eq.${encodeURIComponent(productId)}`,
+      `${SUPABASE_URL}/functions/v1/products-mutations`,
       {
-        method: 'DELETE',
+        method: 'POST',
         headers,
+        body: JSON.stringify({
+          action: 'delete',
+          productId,
+        }),
       }
     );
 
@@ -516,7 +462,6 @@ export async function decrementProductStockInSupabase(
 
     const products = await getResponse.json();
     if (!products || products.length === 0) {
-      console.log('[decrementProductStockInSupabase] Product not found:', productId);
       return false;
     }
 
@@ -524,7 +469,6 @@ export async function decrementProductStockInSupabase(
 
     // Si le stock est null (illimité), on ne fait rien
     if (currentStock === null) {
-      console.log('[decrementProductStockInSupabase] Stock is unlimited for product:', productId);
       return true;
     }
 
@@ -545,7 +489,6 @@ export async function decrementProductStockInSupabase(
       return false;
     }
 
-    console.log(`[decrementProductStockInSupabase] Stock updated: ${productId}, ${currentStock} -> ${newStock}`);
     return true;
   } catch (error) {
     console.warn('[decrementProductStockInSupabase] Error:', toUserError(error, 'decrementProductStockInSupabase'));

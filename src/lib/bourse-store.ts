@@ -8,6 +8,7 @@ import {
   ProductMarketState,
   ProOrder,
   BourseStats,
+  BourseFilters,
   fetchBourseProducts,
   fetchProductMarketState,
   fetchMyProOrders,
@@ -22,15 +23,19 @@ import {
 interface BourseStore {
   // État
   marketStates: ProductMarketState[];
+  nextCursor?: string;
+  filters: BourseFilters;
   myOrders: ProOrder[];
   allOrders: ProOrder[];
   stats: BourseStats | null;
   selectedProductId: string | null;
   isLoading: boolean;
+  isLoadingMore: boolean;
   error: string | null;
 
   // Actions - Marché
   loadMarketData: () => Promise<void>;
+  loadMoreMarketData: () => Promise<void>;
   refreshMarketData: () => Promise<void>;
   selectProduct: (productId: string | null) => void;
   getMarketState: (productId: string) => ProductMarketState | undefined;
@@ -52,11 +57,14 @@ interface BourseStore {
 
 const initialState = {
   marketStates: [],
+  nextCursor: undefined,
+  filters: { limit: 50 } as BourseFilters,
   myOrders: [],
   allOrders: [],
   stats: null,
   selectedProductId: null,
   isLoading: false,
+  isLoadingMore: false,
   error: null,
 };
 
@@ -68,8 +76,8 @@ export const useBourseStore = create<BourseStore>((set, get) => ({
   loadMarketData: async () => {
     set({ isLoading: true, error: null });
     try {
-      const marketStates = await fetchBourseProducts();
-      set({ marketStates, isLoading: false });
+      const { data, nextCursor } = await fetchBourseProducts(get().filters);
+      set({ marketStates: data, nextCursor, isLoading: false });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur chargement données';
       set({ error: message, isLoading: false });
@@ -77,11 +85,35 @@ export const useBourseStore = create<BourseStore>((set, get) => ({
     }
   },
 
+  loadMoreMarketData: async () => {
+    const { nextCursor, isLoadingMore, filters, marketStates } = get();
+    if (!nextCursor || isLoadingMore) return;
+
+    set({ isLoadingMore: true });
+    try {
+      const { data, nextCursor: newCursor } = await fetchBourseProducts({
+        ...filters,
+        cursor: nextCursor,
+      });
+      set({
+        marketStates: [...marketStates, ...data],
+        nextCursor: newCursor,
+        isLoadingMore: false,
+      });
+    } catch (error) {
+      console.warn('[BourseStore] loadMoreMarketData error:', error);
+      set({ isLoadingMore: false });
+    }
+  },
+
   refreshMarketData: async () => {
     // Rafraîchissement silencieux sans spinner
     try {
-      const marketStates = await fetchBourseProducts();
-      set({ marketStates });
+      const { data, nextCursor } = await fetchBourseProducts({
+        ...get().filters,
+        cursor: undefined,
+      });
+      set({ marketStates: data, nextCursor });
     } catch (error) {
       console.warn('[BourseStore] refreshMarketData error:', error);
     }

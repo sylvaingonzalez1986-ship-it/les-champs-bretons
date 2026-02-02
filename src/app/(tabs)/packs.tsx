@@ -90,7 +90,6 @@ export default function PacksScreen() {
       if (isSupabaseSyncConfigured()) {
         try {
           await deletePackFromSupabase(packToDelete);
-          console.log('[Packs] Pack supprimé de Supabase:', packToDelete);
         } catch (error) {
           console.error('[Packs] Erreur suppression Supabase:', error);
         }

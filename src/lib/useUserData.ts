@@ -49,8 +49,6 @@ export function useUserDataSync() {
       return;
     }
 
-    console.log('[UserData] Syncing from Supabase');
-
     try {
       const data = await fetchAllUserData();
 
@@ -158,7 +156,6 @@ export function useUserDataSync() {
         }));
       }
 
-      console.log('[UserData] Sync completed');
     } catch (error) {
       console.error('[UserData] Sync error:', error);
     }
@@ -172,7 +169,6 @@ export function useUserDataSync() {
     if (currentUserId !== lastUserIdRef.current) {
       // Si déconnexion, reset les stores
       if (!currentUserId && lastUserIdRef.current) {
-        console.log('[UserData] User logged out, resetting stores');
         subscriptionResetStore();
         collectionResetStore();
         referralResetStore();
@@ -181,7 +177,6 @@ export function useUserDataSync() {
 
       // Si connexion, sync depuis Supabase
       if (currentUserId && isAuthenticated) {
-        console.log('[UserData] User changed, syncing from Supabase');
         hasSyncedRef.current = false;
         syncFromSupabase().then(() => {
           hasSyncedRef.current = true;

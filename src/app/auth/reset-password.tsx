@@ -34,14 +34,12 @@ export default function ResetPasswordScreen() {
       try {
         // D'abord essayer les query params de expo-router
         if (params.access_token && params.type === 'recovery') {
-          console.log('[ResetPassword] Token found in query params');
           setAccessToken(params.access_token);
           return;
         }
 
         // Sinon, essayer de récupérer l'URL complète et parser le fragment
         const url = await Linking.getInitialURL();
-        console.log('[ResetPassword] Initial URL:', url);
 
         if (url) {
           // Supabase peut envoyer les tokens dans le fragment (#) ou query (?)
@@ -69,14 +67,12 @@ export default function ResetPasswordScreen() {
           }
 
           if (tokenFromUrl && typeFromUrl === 'recovery') {
-            console.log('[ResetPassword] Token found in URL fragment/query');
             setAccessToken(tokenFromUrl);
             return;
           }
         }
 
         // Aucun token trouvé
-        console.log('[ResetPassword] No token found');
         setIsValidToken(false);
         setError('Lien de réinitialisation invalide. Veuillez demander un nouveau lien.');
       } catch (err) {
@@ -94,7 +90,6 @@ export default function ResetPasswordScreen() {
     if (!accessToken) return;
 
     const verifyToken = async () => {
-      console.log('[ResetPassword] Verifying token...');
       try {
         const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
           method: 'GET',
@@ -107,7 +102,6 @@ export default function ResetPasswordScreen() {
 
         if (response.ok) {
           setIsValidToken(true);
-          console.log('[ResetPassword] Token is valid');
         } else {
           console.warn('[ResetPassword] Token validation failed:', response.status);
           setIsValidToken(false);
@@ -171,7 +165,6 @@ export default function ResetPasswordScreen() {
         return;
       }
 
-      console.log('[ResetPassword] Password updated successfully');
       setIsSuccess(true);
     } catch (err) {
       console.warn('[ResetPassword] Error:', err);

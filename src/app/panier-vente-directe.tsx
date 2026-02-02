@@ -6,6 +6,7 @@ import {
   Image,
   TextInput,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,6 +23,7 @@ export default function PanierVenteDirecte() {
   const cart = useDirectSalesCart((s) => s);
   const [loading, setLoading] = useState(true);
   const [validating, setValidating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (session?.user.id && session?.access_token) {
@@ -30,26 +32,43 @@ export default function PanierVenteDirecte() {
   }, [session?.user.id]);
 
   const handleValidateOrder = async () => {
-    if (!session?.user.id || !session?.access_token) return;
+    if (!session?.user.id || !session?.access_token) {
+      setError('Veuillez vous connecter pour valider votre commande');
+      return;
+    }
 
     setValidating(true);
+    setError(null);
+
     try {
       const result = await cart.createOrders(session.user.id, session.access_token);
 
-      if (result.success) {
+      if (result.success && result.orderIds && result.orderIds.length > 0) {
         // Navigate to confirmation screen with order IDs
         router.push({
           pathname: '/commande-confirmation',
           params: {
-            orderIds: result.orderIds?.join(',') || '',
+            orderIds: result.orderIds.join(','),
           },
         });
       } else {
-        console.error('Order creation failed:', result.error);
-        // You could show an error toast here
+        const errorMessage = result.error || 'Une erreur est survenue lors de la création de la commande';
+        setError(errorMessage);
+        Alert.alert(
+          'Erreur de commande',
+          errorMessage,
+          [{ text: 'OK', style: 'default' }]
+        );
       }
     } catch (error) {
       console.error('Error validating order:', error);
+      const errorMessage = 'Impossible de valider la commande. Vérifiez votre connexion internet.';
+      setError(errorMessage);
+      Alert.alert(
+        'Erreur',
+        errorMessage,
+        [{ text: 'OK', style: 'default' }]
+      );
     } finally {
       setValidating(false);
     }
@@ -114,6 +133,22 @@ export default function PanierVenteDirecte() {
             </Text>
           </View>
         </View>
+
+        {/* Message d'erreur */}
+        {error && (
+          <View 
+            className="mx-4 mb-4 p-4 rounded-xl flex-row items-center"
+            style={{ backgroundColor: `${COLORS.accent.red}20`, borderWidth: 1, borderColor: COLORS.accent.red }}
+          >
+            <AlertCircle size={20} color={COLORS.accent.red} />
+            <Text className="ml-3 flex-1" style={{ color: COLORS.accent.red }}>
+              {error}
+            </Text>
+            <Pressable onPress={() => setError(null)}>
+              <Text style={{ color: COLORS.accent.red, fontWeight: 'bold' }}>✕</Text>
+            </Pressable>
+          </View>
+        )}
 
         {/* Panier vide */}
         {producerIds.length === 0 ? (
@@ -263,11 +298,18 @@ export default function PanierVenteDirecte() {
               <>
                 <ShoppingCart size={20} color={COLORS.text.white} />
                 <Text className="ml-2 font-bold text-lg" style={{ color: COLORS.text.white }}>
-                  Valider la commande
+                  Commander
                 </Text>
               </>
             )}
           </Pressable>
+
+          {/* Info paiement */}
+          {isMinimumMet && (
+            <Text className="text-center text-xs mt-3" style={{ color: COLORS.text.lightGray }}>
+              💳 Vous recevrez un lien de paiement par email après validation
+            </Text>
+          )}
 
           {!isMinimumMet && (
             <Text className="text-center text-sm mt-3" style={{ color: COLORS.accent.red }}>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View,
-  ScrollView,
+  FlatList,
   Pressable,
   Image,
   RefreshControl,
@@ -19,6 +19,7 @@ import { useAuth } from '@/lib/useAuth';
 import { PriceTier } from '@/lib/producers';
 import LocalMarketOrderModal from '@/components/LocalMarketOrderModal';
 import * as Haptics from 'expo-haptics';
+import { optimizeImageUrl } from '@/lib/image-utils';
 
 interface DirectSalesProduct {
   id: string;
@@ -32,6 +33,7 @@ interface DirectSalesProduct {
   thc_percent?: number;
   disponible_vente_directe: boolean;
   price_tiers?: PriceTier[];
+  producer?: ProducerInfo;
 }
 
 interface ProducerInfo {
@@ -51,18 +53,29 @@ export default function MarcheCatalogue() {
   const [producer, setProducer] = useState<ProducerInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(0);
+
+  const PAGE_SIZE = 20;
 
   // Modal state
   const [orderModalVisible, setOrderModalVisible] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<DirectSalesProduct | null>(null);
 
-  const loadProducts = async () => {
+  const loadProducts = async (reset = false) => {
     if (!producerId) return;
 
     try {
+      if (!reset) {
+        setIsLoadingMore(true);
+      }
+      const nextPage = reset ? 0 : page;
+      const offset = nextPage * PAGE_SIZE;
+
       // Récupérer les produits du producteur avec disponible_vente_directe = true et price_tiers
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/products?select=id,name,price_public,price_pro,description,image,stock,cbd_percent,thc_percent,disponible_vente_directe,price_tiers&producer_id=eq.${producerId}&disponible_vente_directe=eq.true&status=eq.published&order=name.asc`,
+        `${SUPABASE_URL}/rest/v1/products?select=id,name,price_public,price_pro,description,image,stock,cbd_percent,thc_percent,disponible_vente_directe,price_tiers,producer:producers(id,name,city,region,adresse_retrait,horaires_retrait,instructions_retrait)&producer_id=eq.${producerId}&disponible_vente_directe=eq.true&status=eq.published&order=name.asc&limit=${PAGE_SIZE}&offset=${offset}`,
         {
           method: 'GET',
           headers: {
@@ -75,47 +88,47 @@ export default function MarcheCatalogue() {
 
       if (response.ok) {
         const data = await response.json();
-        setProducts(data || []);
+        const next = Array.isArray(data) ? data : [];
+        setProducts((prev) => (reset ? next : [...prev, ...next]));
+        setHasMore(next.length === PAGE_SIZE);
+        setPage((prev) => (reset ? 1 : prev + 1));
+
+        if (reset && next[0]?.producer) {
+          setProducer(next[0].producer);
+        }
       } else {
-        console.log('[MarcheCatalogue] Error loading products:', response.status);
-        setProducts([]);
-      }
-
-      // Charger aussi les infos du producteur
-      const producerResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/producers?select=id,name,city,region,adresse_retrait,horaires_retrait,instructions_retrait&id=eq.${producerId}`,
-        {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          },
+        if (reset) {
+          setProducts([]);
         }
-      );
-
-      if (producerResponse.ok) {
-        const producerData = await producerResponse.json();
-        if (producerData?.[0]) {
-          setProducer(producerData[0]);
-        }
+        setHasMore(false);
       }
     } catch (error) {
-      console.log('[MarcheCatalogue] Error:', error);
-      setProducts([]);
+      if (reset) {
+        setProducts([]);
+      }
     } finally {
       setLoading(false);
+      setIsLoadingMore(false);
     }
   };
 
   useEffect(() => {
-    loadProducts();
+    setPage(0);
+    setHasMore(true);
+    loadProducts(true);
   }, [producerId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadProducts();
+    setPage(0);
+    setHasMore(true);
+    await loadProducts(true);
     setRefreshing(false);
+  };
+
+  const onLoadMore = async () => {
+    if (isLoadingMore || !hasMore) return;
+    await loadProducts(false);
   };
 
   // Handler pour ouvrir le modal de commande directe
@@ -154,51 +167,71 @@ export default function MarcheCatalogue() {
       end={{ x: 1, y: 1 }}
       style={{ flex: 1 }}
     >
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 40 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary.gold} />}
-      >
-        {/* Header avec bouton retour */}
-        <View style={{ paddingTop: insets.top + 16 }} className="px-4 mb-6 flex-row items-center">
-          <Pressable
-            onPress={() => router.back()}
-            className="p-2 rounded-lg mr-3"
-            style={{ backgroundColor: `${COLORS.text.white}10` }}
-          >
-            <ArrowLeft size={24} color={COLORS.text.cream} />
-          </Pressable>
-          <View className="flex-1">
-            <Text className="text-3xl font-bold" style={{ color: COLORS.text.cream }}>
-              Marché local
-            </Text>
-            <Text className="text-sm" style={{ color: COLORS.text.lightGray }}>
-              {producer?.name || 'Vente directe'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Liste des produits */}
-        {products.length === 0 ? (
-          <View className="flex-1 items-center justify-center px-4 py-12">
-            <ShoppingCart size={48} color={COLORS.text.muted} strokeWidth={1.5} />
-            <Text className="text-center mt-4" style={{ color: COLORS.text.lightGray }}>
-              Aucun produit disponible en vente directe pour le moment.
-            </Text>
-          </View>
-        ) : (
+      <FlatList
+        data={products}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
           <View className="px-4">
-            {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                producerId={producerId || ''}
-                onDirectOrder={() => handleDirectOrder(product)}
-              />
-            ))}
+            <ProductCard
+              product={item}
+              producerId={producerId || ''}
+              onDirectOrder={() => handleDirectOrder(item)}
+            />
           </View>
         )}
-      </ScrollView>
+        contentContainerStyle={{ paddingBottom: 40 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary.gold} />}
+        ListHeaderComponent={
+          <View>
+            {/* Header avec bouton retour */}
+            <View style={{ paddingTop: insets.top + 16 }} className="px-4 mb-6 flex-row items-center">
+              <Pressable
+                onPress={() => router.back()}
+                className="p-2 rounded-lg mr-3"
+                style={{ backgroundColor: `${COLORS.text.white}10` }}
+              >
+                <ArrowLeft size={24} color={COLORS.text.cream} />
+              </Pressable>
+              <View className="flex-1">
+                <Text className="text-3xl font-bold" style={{ color: COLORS.text.cream }}>
+                  Marché local
+                </Text>
+                <Text className="text-sm" style={{ color: COLORS.text.lightGray }}>
+                  {producer?.name || 'Vente directe'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        }
+        ListEmptyComponent={
+          !loading ? (
+            <View className="flex-1 items-center justify-center px-4 py-12">
+              <ShoppingCart size={48} color={COLORS.text.muted} strokeWidth={1.5} />
+              <Text className="text-center mt-4" style={{ color: COLORS.text.lightGray }}>
+                Aucun produit disponible en vente directe pour le moment.
+              </Text>
+            </View>
+          ) : null
+        }
+        ListFooterComponent={
+          hasMore ? (
+            <View className="items-center my-6">
+              <Pressable
+                onPress={onLoadMore}
+                disabled={isLoadingMore}
+                className="px-4 py-2 rounded-full"
+                style={{ backgroundColor: `${COLORS.text.white}10` }}
+              >
+                <Text style={{ color: COLORS.text.lightGray }}>
+                  {isLoadingMore ? 'Chargement...' : 'Charger plus'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View className="h-2" />
+          )
+        }
+      />
 
       {/* Modal de commande directe */}
       {selectedProduct && producer && (
@@ -226,9 +259,7 @@ export default function MarcheCatalogue() {
             horaires_retrait: producer.horaires_retrait,
             instructions_retrait: producer.instructions_retrait,
           }}
-          onOrderSuccess={(code) => {
-            console.log('[MarcheCatalogue] Order success, code:', code);
-          }}
+          onOrderSuccess={() => {}}
         />
       )}
     </LinearGradient>
@@ -288,7 +319,7 @@ function ProductCard({ product, producerId, onDirectOrder }: ProductCardProps) {
       {/* Image */}
       {product.image && (
         <Image
-          source={{ uri: product.image }}
+          source={{ uri: optimizeImageUrl(product.image, 800) }}
           className="w-full h-48 bg-gray-800"
         />
       )}

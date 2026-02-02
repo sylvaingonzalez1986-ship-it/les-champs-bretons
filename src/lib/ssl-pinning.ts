@@ -51,9 +51,6 @@ export async function secureFetch(
     };
 
     // Log en mode dev pour les requetes Supabase
-    if (__DEV__ && isSupabaseRequest) {
-      console.log('[SecureFetch] Requete Supabase:', url.split('?')[0]);
-    }
 
     const response = await fetch(url, fetchOptions);
 
@@ -103,7 +100,6 @@ export async function secureFetchDev(
   options: RequestInit = {}
 ): Promise<Response> {
   if (__DEV__) {
-    console.log('[SecureFetch] Mode DEV - utilise fetch standard');
     return fetch(url, options);
   }
   return secureFetch(url, options);

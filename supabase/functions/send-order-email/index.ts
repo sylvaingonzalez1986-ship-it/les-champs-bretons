@@ -1,18 +1,180 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
+import { createClient, SupabaseClient, User } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
+import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Max-Age': '86400',
+};
+
+const RATE_LIMIT_PRESETS = {
+  ORDERS: {
+    limit: 10,
+    windowMs: 60 * 1000,
+    identifier: 'orders',
+  },
+} as const;
+
+interface RateLimitConfig {
+  limit: number;
+  windowMs: number;
+  identifier: string;
+}
+
+interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  resetAt: number;
+  retryAfterSeconds?: number;
+}
+
+const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(userId: string, config: RateLimitConfig): RateLimitResult {
+  const now = Date.now();
+  const key = `${config.identifier}:${userId}`;
+  const entry = rateLimitStore.get(key);
+
+  if (!entry || now > entry.resetAt) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + config.windowMs });
+    return { allowed: true, remaining: config.limit - 1, resetAt: now + config.windowMs };
+  }
+
+  if (entry.count >= config.limit) {
+    return {
+      allowed: false,
+      remaining: 0,
+      resetAt: entry.resetAt,
+      retryAfterSeconds: Math.ceil((entry.resetAt - now) / 1000),
+    };
+  }
+
+  entry.count += 1;
+  return { allowed: true, remaining: config.limit - entry.count, resetAt: entry.resetAt };
+}
+
+function createRateLimitResponse(
+  result: RateLimitResult,
+  config: RateLimitConfig
+): Response {
+  return new Response(
+    JSON.stringify({
+      error: 'RATE_LIMIT_EXCEEDED',
+      message: `Rate limit exceeded. Maximum ${config.limit} requests per ${Math.ceil(config.windowMs / 1000)} seconds.`,
+      retryAfter: result.retryAfterSeconds,
+      resetAt: new Date(result.resetAt).toISOString(),
+    }),
+    {
+      status: 429,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    }
+  );
+}
+
+const uuidSchema = z.string().uuid('Invalid UUID format');
+
+const orderEmailRequestSchema = z.object({
+  commandeId: uuidSchema,
+  producerId: uuidSchema,
+  userId: uuidSchema,
+});
+
+type OrderEmailRequestInput = z.infer<typeof orderEmailRequestSchema>;
+
+interface ValidatedRequest<T> {
+  user: User;
+  data: T;
+  supabase: SupabaseClient;
+}
+
+function createValidatedHandler<T>(
+  config: { schema: z.ZodSchema<T>; rateLimit: RateLimitConfig; functionName: string },
+  handler: (validated: ValidatedRequest<T>) => Promise<Response>
+): (req: Request) => Promise<Response> {
+  const { schema, rateLimit, functionName } = config;
+
+  return async (req: Request): Promise<Response> => {
+    if (req.method === 'OPTIONS') {
+      return new Response('ok', { headers: corsHeaders });
+    }
+
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: authHeader } } }
+    );
+
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
+      return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const userId = userData.user.id;
+    const rateLimitResult = checkRateLimit(userId, rateLimit);
+    if (!rateLimitResult.allowed) {
+      return createRateLimitResponse(rateLimitResult, rateLimit);
+    }
+
+    let body: unknown = {};
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ error: 'PARSE_ERROR' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const validation = schema.safeParse(body);
+    if (!validation.success) {
+      return new Response(JSON.stringify({
+        error: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: validation.error.errors.map(err => ({
+          path: err.path.join('.'),
+          message: err.message,
+        })),
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    try {
+      return await handler({
+        user: userData.user,
+        data: validation.data,
+        supabase,
+      });
+    } catch (error) {
+      console.error(`[${functionName}] Handler error:`, error);
+      return new Response(JSON.stringify({ error: 'INTERNAL_ERROR' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+  };
+}
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
-const COMPANY_EMAIL = 'leschanvriersunis@gmail.com';
+const COMPANY_EMAIL = 'leschanvriersbretons@gmail.com';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-
-interface OrderEmailRequest {
-  commandeId: string;
-  producerId: string;
-  userId: string;
-}
 
 interface OrderData {
   id: string;
@@ -45,6 +207,18 @@ interface ProducerData {
   id: string;
   name: string;
   email: string | null;
+  profile_id?: string | null;
+
+}
+
+async function getUserRole(userId: string): Promise<string> {
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+
+  return profile?.role ?? 'user';
 }
 
 interface UserProfileData {
@@ -294,23 +468,26 @@ function generateCustomerEmailHTML(
   `;
 }
 
-serve(async (req: Request) => {
-  // Vérifier la méthode
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+const handler = createValidatedHandler<OrderEmailRequestInput>(
+  {
+    schema: orderEmailRequestSchema,
+    rateLimit: RATE_LIMIT_PRESETS.ORDERS,
+    functionName: 'send-order-email',
+  },
+  async ({ user, data }) => {
+    const { commandeId, producerId, userId } = data;
 
-  try {
-    const body = await req.json();
-    const { commandeId, producerId, userId } = body as OrderEmailRequest;
+    const role = await getUserRole(user.id);
+    const isAdmin = role === 'admin';
+    const isProducerRole = role === 'producer';
 
-    if (!commandeId || !producerId || !userId) {
+    if (!isAdmin && !isProducerRole && userId !== user.id) {
       return new Response(
-        JSON.stringify({ error: 'Missing required parameters' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'FORBIDDEN', message: 'User mismatch' }),
+        {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
       );
     }
 
@@ -322,10 +499,16 @@ serve(async (req: Request) => {
       .single();
 
     if (orderError || !orderData) {
-      console.error('Order not found:', orderError);
       return new Response(JSON.stringify({ error: 'Order not found' }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (orderData.user_id !== userId || orderData.producer_id !== producerId) {
+      return new Response(JSON.stringify({ error: 'FORBIDDEN', message: 'Order mismatch' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -336,10 +519,9 @@ serve(async (req: Request) => {
       .eq('commande_id', commandeId);
 
     if (linesError) {
-      console.error('Order lines error:', linesError);
       return new Response(
         JSON.stringify({ error: 'Failed to fetch order lines' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
@@ -362,15 +544,24 @@ serve(async (req: Request) => {
     // Récupérer les infos du producteur
     const { data: producerData, error: producerError } = await supabase
       .from('producers')
-      .select('id, name, email')
+      .select('id, name, email, profile_id')
       .eq('id', producerId)
       .single();
 
     if (producerError || !producerData) {
-      console.error('Producer not found:', producerError);
       return new Response(JSON.stringify({ error: 'Producer not found' }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const isProducer = producerData.profile_id && producerData.profile_id === user.id;
+    const isCustomer = orderData.user_id === user.id;
+
+    if (!isAdmin && !isCustomer && !isProducer) {
+      return new Response(JSON.stringify({ error: 'FORBIDDEN', message: 'Not allowed to trigger this email' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -382,10 +573,9 @@ serve(async (req: Request) => {
       .single();
 
     if (userError || !userProfile) {
-      console.error('User profile not found:', userError);
       return new Response(
         JSON.stringify({ error: 'User profile not found' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
@@ -416,20 +606,12 @@ serve(async (req: Request) => {
       [COMPANY_EMAIL]
     );
 
-    if (!producerEmailSent) {
-      console.warn('Failed to send producer email');
-    }
-
     // Envoyer l'email de confirmation au client
     const customerEmailSent = await sendEmail(
       customerEmail,
       `Confirmation de votre commande #${commandeId.slice(0, 8)}`,
       customerEmailHTML
     );
-
-    if (!customerEmailSent) {
-      console.warn('Failed to send customer email');
-    }
 
     return new Response(
       JSON.stringify({
@@ -440,14 +622,10 @@ serve(async (req: Request) => {
       }),
       {
         status: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     );
-  } catch (error) {
-    console.error('Function error:', error);
-    return new Response(
-      JSON.stringify({ error: 'Internal server error', details: String(error) }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
   }
-});
+);
+
+serve(handler);

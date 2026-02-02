@@ -313,7 +313,6 @@ export const AddPackModal = ({ visible, onClose, editingPack }: AddPackModalProp
       if (isSupabaseSyncConfigured()) {
         try {
           await syncPackToSupabase(packData);
-          console.log('[AddPackModal] Pack synced to Supabase');
         } catch (error) {
           console.error('[AddPackModal] Failed to sync to Supabase:', error);
         }
@@ -919,7 +918,6 @@ export const AddPackModal = ({ visible, onClose, editingPack }: AddPackModalProp
               {/* Add from producers button */}
               <Pressable
                 onPress={() => {
-                  console.log('Opening product picker, producers with products:', producersWithProducts.length);
                   setShowProductPicker(true);
                 }}
                 className="flex-row items-center justify-center py-3 rounded-xl mb-3"

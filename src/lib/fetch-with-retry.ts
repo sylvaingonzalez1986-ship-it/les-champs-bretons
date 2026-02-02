@@ -92,7 +92,6 @@ export async function fetchWithRetry(
         // Si erreur serveur (5xx), on peut retenter
         if (response.status >= 500 && attempt < maxRetries) {
           lastError = new Error(`Server error: ${response.status}`);
-          console.log(`[FetchRetry] Erreur serveur ${response.status}, tentative ${attempt}/${maxRetries}`);
           onRetry?.(attempt, lastError);
           await new Promise((resolve) => setTimeout(resolve, getBackoffDelay(attempt, backoffMs)));
           continue;
@@ -116,19 +115,16 @@ export async function fetchWithRetry(
         err.message?.includes('Network');
 
       if (isAbortError) {
-        console.log(`[FetchRetry] Timeout après ${timeout}ms, tentative ${attempt}/${maxRetries}`);
         lastError = new NetworkError(ERROR_MESSAGES.TIMEOUT, {
           isTimeout: true,
           attempts: attempt,
         });
       } else if (isNetworkError) {
-        console.log(`[FetchRetry] Erreur réseau, tentative ${attempt}/${maxRetries}`);
         lastError = new NetworkError(ERROR_MESSAGES.OFFLINE, {
           isOffline: true,
           attempts: attempt,
         });
       } else {
-        console.log(`[FetchRetry] Erreur inconnue: ${err.message}, tentative ${attempt}/${maxRetries}`);
         lastError = err;
       }
 
@@ -136,7 +132,6 @@ export async function fetchWithRetry(
       if (attempt < maxRetries) {
         onRetry?.(attempt, lastError);
         const delay = getBackoffDelay(attempt, backoffMs);
-        console.log(`[FetchRetry] Attente ${delay}ms avant nouvelle tentative...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }

@@ -718,9 +718,6 @@ export default function ShopScreen() {
   const { isAdmin, isProducer, isPro, isProApproved, canAccessProPricing } = usePermissions();
   const { profile } = useAuth();
 
-  // Debug: log pricing access
-  console.log('[Shop] canAccessProPricing:', canAccessProPricing, 'isPro:', isPro, 'isProApproved:', isProApproved, 'role:', profile?.role);
-
   // Sample request state
   const [showSampleModal, setShowSampleModal] = useState(false);
   const [sampleRequestSent, setSampleRequestSent] = useState(false);
@@ -807,13 +804,11 @@ export default function ShopScreen() {
     };
 
     updateProductInProducer(producer.id, updatedProduct);
-    console.log('[Shop] Product images updated:', productId, images.length, 'images');
   };
 
   // Handle sample request
   const handleSampleRequest = async () => {
     if (!producer?.email) {
-      console.log('[Shop] No email for producer');
       return;
     }
 
@@ -854,7 +849,6 @@ export default function ShopScreen() {
         setSampleRequestSent(true);
         setShowSampleModal(false);
       } else {
-        console.log('[Shop] Cannot open mailto URL');
       }
     } catch (error) {
       console.error('[Shop] Error opening mail client:', error);

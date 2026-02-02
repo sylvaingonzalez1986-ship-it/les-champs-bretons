@@ -52,7 +52,6 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state: NetInfoState) => {
       const online = state.isConnected === true && state.isInternetReachable !== false;
-      console.log('[Network] État connexion:', online ? 'En ligne' : 'Hors ligne');
 
       if (online && !isOnline) {
         // On vient de retrouver la connexion
@@ -96,7 +95,6 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
       const cached = await AsyncStorage.getItem(key);
       if (cached) {
         const parsed = JSON.parse(cached);
-        console.log(`[Cache] Données récupérées pour ${key}:`, Array.isArray(parsed) ? `${parsed.length} items` : 'objet');
         return parsed as T;
       }
       return null;
@@ -110,7 +108,6 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
   const setCachedData = useCallback(async <T,>(key: string, data: T): Promise<void> => {
     try {
       await AsyncStorage.setItem(key, JSON.stringify(data));
-      console.log(`[Cache] Données sauvegardées pour ${key}`);
     } catch (error) {
       console.warn(`[Cache] Erreur écriture ${key}:`, error);
     }
@@ -121,12 +118,10 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
     try {
       if (key) {
         await AsyncStorage.removeItem(key);
-        console.log(`[Cache] Cache vidé pour ${key}`);
       } else {
         // Vider tout le cache
         const keys = Object.values(CACHE_KEYS);
         await AsyncStorage.multiRemove(keys);
-        console.log('[Cache] Tout le cache vidé');
       }
     } catch (error) {
       console.warn('[Cache] Erreur vidage cache:', error);
@@ -139,7 +134,6 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
       const pending = await getCachedData<PendingOrder[]>(CACHE_KEYS.PENDING_ORDERS) || [];
       pending.push(order);
       await setCachedData(CACHE_KEYS.PENDING_ORDERS, pending);
-      console.log(`[PendingOrders] Commande ${order.id} ajoutée à la file d'attente`);
     } catch (error) {
       console.warn('[PendingOrders] Erreur ajout commande:', error);
     }
@@ -156,7 +150,6 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
       const pending = await getPendingOrders();
       const updated = pending.filter((o) => o.id !== orderId);
       await setCachedData(CACHE_KEYS.PENDING_ORDERS, updated);
-      console.log(`[PendingOrders] Commande ${orderId} retirée de la file`);
     } catch (error) {
       console.warn('[PendingOrders] Erreur suppression commande:', error);
     }
@@ -165,7 +158,6 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
   // Synchroniser les commandes en attente
   const syncPendingOrders = useCallback(async (): Promise<void> => {
     if (syncInProgress.current) {
-      console.log('[PendingOrders] Sync déjà en cours');
       return;
     }
 
@@ -173,11 +165,8 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
     try {
       const pending = await getPendingOrders();
       if (pending.length === 0) {
-        console.log('[PendingOrders] Aucune commande en attente');
         return;
       }
-
-      console.log(`[PendingOrders] ${pending.length} commande(s) en attente à synchroniser`);
 
       // Note: L'envoi réel sera géré par le composant qui utilise ce contexte
       // car il a accès aux fonctions Supabase spécifiques
@@ -244,7 +233,6 @@ export function useWriteAction<T extends (...args: Parameters<T>) => ReturnType<
   const execute = useCallback(
     ((...args: Parameters<T>) => {
       if (isOffline) {
-        console.log('[Offline] Action bloquée:', options?.offlineMessage || 'Mode hors ligne');
         return undefined as ReturnType<T>;
       }
       return action(...args);

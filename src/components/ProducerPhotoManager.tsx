@@ -98,7 +98,6 @@ export function ProducerPhotoManager({
         if (isSupabaseSyncConfigured() && producerId && producerId !== 'new-producer') {
           try {
             await updateProducerInSupabase(producerId, { image: uploadedUrl });
-            console.log('[ProducerPhotoManager] Image synchronisée avec Supabase');
           } catch (syncError) {
             console.warn('[ProducerPhotoManager] Erreur sync Supabase (image sauvée localement):', syncError);
             // L'image est quand même sauvée localement, on continue

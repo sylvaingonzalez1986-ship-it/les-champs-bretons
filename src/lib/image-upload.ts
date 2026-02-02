@@ -4,6 +4,7 @@
 
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system';
+import * as Crypto from 'expo-crypto';
 import { isSupabaseConfigured, getSupabaseConfig } from './env-validation';
 
 // Storage bucket name - must be created in Supabase dashboard
@@ -20,6 +21,14 @@ const RETRY_DELAY_BASE = 2000; // 2 seconds
 
 // Track if bucket has been verified
 let bucketVerified = false;
+
+/**
+ * Generate a secure UUID for filenames (prevents enumeration attacks)
+ * Uses expo-crypto for cryptographically secure random generation
+ */
+function generateSecureUUID(): string {
+  return Crypto.randomUUID();
+}
 
 // Upload state for UI feedback
 export type UploadStatus = 'idle' | 'compressing' | 'validating' | 'uploading' | 'retrying' | 'success' | 'error';
@@ -105,7 +114,6 @@ async function ensureBucketExists(): Promise<boolean> {
     }
 
     // Bucket doesn't exist - try to create it
-    console.log('Bucket not found, attempting to create...');
     const createResponse = await fetch(
       `${url}/storage/v1/bucket`,
       {
@@ -126,7 +134,6 @@ async function ensureBucketExists(): Promise<boolean> {
     );
 
     if (createResponse.ok) {
-      console.log('Bucket created successfully');
       bucketVerified = true;
       return true;
     }
@@ -140,7 +147,6 @@ async function ensureBucketExists(): Promise<boolean> {
     }
 
     const errorText = await createResponse.text();
-    console.log('Bucket check info:', errorText);
     return false;
   } catch (error) {
     // Network error doesn't mean bucket doesn't exist - try anyway
@@ -189,17 +195,23 @@ async function validateFileOnServer(
     );
 
     if (!response.ok) {
-      // Si la fonction RPC n'existe pas, continuer sans validation serveur
-      console.warn('[Upload] Server validation not available, proceeding with client validation');
-      return { valid: true, status: 'accepted', reason: null, max_size_mb: 10 };
+      return {
+        valid: false,
+        status: 'rejected',
+        reason: 'Validation serveur indisponible. Veuillez réessayer plus tard.',
+        max_size_mb: 10,
+      };
     }
 
     const result = await response.json();
     return result as ValidationResult;
   } catch (error) {
-    // En cas d'erreur, continuer avec la validation côté client uniquement
-    console.warn('[Upload] Server validation failed, using client validation only:', error);
-    return { valid: true, status: 'accepted', reason: null, max_size_mb: 10 };
+    return {
+      valid: false,
+      status: 'rejected',
+      reason: 'Validation serveur indisponible. Veuillez réessayer plus tard.',
+      max_size_mb: 10,
+    };
   }
 }
 
@@ -311,7 +323,6 @@ export async function uploadImageToSupabase(
   folder: 'products' | 'packs' | 'promos' | 'producers' | 'general' = 'general'
 ): Promise<string | null> {
   if (!isSupabaseConfigured()) {
-    console.log('Supabase Storage non configuré');
     notifyProgress({ status: 'error', message: ERROR_MESSAGES.NOT_CONFIGURED });
     return null;
   }
@@ -332,23 +343,18 @@ export async function uploadImageToSupabase(
     }
 
     // Compress image first to reduce size and upload time
-    console.log('Compressing image...');
     const compressedUri = await compressImage(localUri);
-    console.log('Image compressed');
 
-    // Generate unique filename
-    const timestamp = Date.now();
-    const randomStr = Math.random().toString(36).substring(2, 8);
-    const filename = `${folder}/${timestamp}-${randomStr}.jpg`;
+    // Generate secure UUID filename (prevents enumeration attacks)
+    // Using crypto-safe random generation instead of predictable timestamp
+    const uuid = generateSecureUUID();
+    const filename = `${folder}/${uuid}.jpg`;
 
     // Read the compressed file and convert to blob
-    console.log('Reading file...');
     const response = await fetch(compressedUri);
     const blob = await response.blob();
-    console.log('File read, size:', blob.size, 'bytes');
 
     // Upload to Supabase Storage with retry
-    console.log('Uploading to Supabase Storage...');
     notifyProgress({ status: 'uploading', message: 'Envoi de l\'image...' });
 
     let lastError: Error | null = null;
@@ -365,7 +371,6 @@ export async function uploadImageToSupabase(
             attempt: attempt + 1,
             maxAttempts: MAX_UPLOAD_RETRIES,
           });
-          console.log(`[Upload] Tentative ${attempt + 1}/${MAX_UPLOAD_RETRIES}...`);
         }
 
         const uploadResponse = await attemptUpload(blob, filename, controller.signal);
@@ -374,7 +379,6 @@ export async function uploadImageToSupabase(
         if (uploadResponse.ok) {
           // Return the public URL
           const publicUrl = `${url}/storage/v1/object/public/${STORAGE_BUCKET}/${filename}`;
-          console.log('Upload successful:', publicUrl);
           notifyProgress({ status: 'success', message: 'Image envoyée avec succès' });
           return publicUrl;
         }
@@ -407,7 +411,6 @@ export async function uploadImageToSupabase(
       // Wait before retrying
       if (attempt < MAX_UPLOAD_RETRIES - 1) {
         const delay = getRetryDelay(attempt);
-        console.log(`[Upload] Attente de ${Math.round(delay / 1000)}s avant nouvelle tentative...`);
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }

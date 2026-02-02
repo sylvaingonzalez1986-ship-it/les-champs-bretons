@@ -30,12 +30,22 @@ export default function MesCommandesMarcheLocal() {
 
   const [refreshing, setRefreshing] = React.useState(false);
   const [cancellingId, setCancellingId] = React.useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = React.useState(false);
+  const [hasMore, setHasMore] = React.useState(true);
+  const [page, setPage] = React.useState(0);
+  const PAGE_SIZE = 20;
 
   // Charger les commandes au focus
   useFocusEffect(
     useCallback(() => {
       if (session?.user?.id && session?.access_token) {
-        loadOrders(session.user.id, session.access_token);
+        setPage(0);
+        setHasMore(true);
+        loadOrders(session.user.id, session.access_token, { limit: PAGE_SIZE, offset: 0, append: false })
+          .then((data) => {
+            setHasMore(data.length === PAGE_SIZE);
+            setPage(1);
+          });
       }
     }, [session?.user?.id, session?.access_token])
   );
@@ -43,8 +53,26 @@ export default function MesCommandesMarcheLocal() {
   const onRefresh = async () => {
     if (!session?.user?.id || !session?.access_token) return;
     setRefreshing(true);
-    await loadOrders(session.user.id, session.access_token);
+    setPage(0);
+    setHasMore(true);
+    const data = await loadOrders(session.user.id, session.access_token, { limit: PAGE_SIZE, offset: 0, append: false });
+    setHasMore(data.length === PAGE_SIZE);
+    setPage(1);
     setRefreshing(false);
+  };
+
+  const onLoadMore = async () => {
+    if (!session?.user?.id || !session?.access_token || isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    const offset = page * PAGE_SIZE;
+    const data = await loadOrders(session.user.id, session.access_token, {
+      limit: PAGE_SIZE,
+      offset,
+      append: true,
+    });
+    setHasMore(data.length === PAGE_SIZE);
+    setPage((prev) => prev + 1);
+    setIsLoadingMore(false);
   };
 
   const handleCancelOrder = async (orderId: string) => {
@@ -181,6 +209,21 @@ export default function MesCommandesMarcheLocal() {
             cancellingId={cancellingId}
             collapsed
           />
+        )}
+
+        {hasMore && (
+          <View className="items-center my-6">
+            <Pressable
+              onPress={onLoadMore}
+              disabled={isLoadingMore}
+              className="px-4 py-2 rounded-full"
+              style={{ backgroundColor: `${COLORS.text.white}10` }}
+            >
+              <Text style={{ color: COLORS.text.lightGray }}>
+                {isLoadingMore ? 'Chargement...' : 'Charger plus'}
+              </Text>
+            </Pressable>
+          </View>
         )}
       </ScrollView>
     </LinearGradient>

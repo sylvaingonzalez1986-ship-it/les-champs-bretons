@@ -315,7 +315,6 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
     try {
       // Try MailComposer first
       const isAvailable = await MailComposer.isAvailableAsync();
-      console.log('[Cart] MailComposer available:', isAvailable);
 
       if (isAvailable) {
         const result = await MailComposer.composeAsync({
@@ -324,8 +323,6 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
           subject: emailSubject,
           body: emailBody,
         });
-
-        console.log('[Cart] MailComposer result:', result.status);
 
         // Check if the email was sent
         if (result.status === MailComposer.MailComposerStatus.SENT) {
@@ -342,12 +339,10 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
         // UNDETERMINED status (common on Android) - treat as success since mail app was opened
         // On Android, we can't know for sure if the email was sent, so we assume success
         // if the user didn't explicitly cancel
-        console.log('[Cart] MailComposer status UNDETERMINED - treating as success on Android');
         return { success: true, cancelled: false, undetermined: true };
       }
 
       // Fallback to mailto link
-      console.log('[Cart] MailComposer not available, using mailto fallback');
       const recipientsStr = recipients.join(',');
       let mailtoUrl = `mailto:${recipientsStr}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
       if (ccRecipients && ccRecipients.length > 0) {
@@ -367,7 +362,6 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
       );
       return { success: false, cancelled: false, noMailApp: true };
     } catch (error) {
-      console.log('[Cart] Error sending email:', error);
       return { success: false, cancelled: false, error: true };
     }
   };
@@ -428,7 +422,6 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
     if (syncToSupabase && isSupabaseSyncConfigured()) {
       try {
         await syncOrderToSupabase(newOrder);
-        console.log('[Cart] Commande synchronisée à Supabase:', orderId);
       } catch (error) {
         console.error('Erreur sync commande Supabase:', error);
         // NOUVEAU: Ajouter à la file d'attente pour resync ultérieure
@@ -536,10 +529,8 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
         // Pour les clients (non pro), afficher le récapitulatif avec tickets
         if (!isPro && ticketsEarned > 0) {
           // Stocker les données de commande pour le récapitulatif
-          console.log('[Cart] Setting currentOrderData for recap screen');
           setCurrentOrderData(orderData);
           // Afficher directement le récapitulatif
-          console.log('[Cart] Showing RecapScreen');
           setShowRecapScreen(true);
         } else {
           // Pour les pros ou si pas de tickets, afficher la confirmation classique
