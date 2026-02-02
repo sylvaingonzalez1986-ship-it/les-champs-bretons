@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, ScrollView, Pressable, Modal, Image, Switch, ActivityIndicator } from 'react-native';
+import { View, ScrollView, Pressable, Modal, Image, Switch, ActivityIndicator, Platform } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, Check, ChevronDown, ImagePlus, Camera, Sparkles, Leaf, Trash2, Plus, Package, Percent, Video as VideoIcon, MapPin, Store, Truck, Layers, TrendingUp } from 'lucide-react-native';
@@ -251,18 +251,30 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
     if (formData.images.length >= MAX_IMAGES) return;
 
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') return;
+    if (status !== 'granted' && status !== 'limited') return;
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: Platform.OS === 'ios' ? 0 : MAX_IMAGES - formData.images.length,
       allowsEditing: false,
       quality: 0.9,
+      orderedSelection: true,
     });
 
-    if (!result.canceled && result.assets[0]) {
-      // Open cropper for product image (square)
-      setImageToCrop(result.assets[0].uri);
-      setShowCropper(true);
+    if (!result.canceled && result.assets.length > 0) {
+      if (result.assets.length === 1) {
+        // Open cropper for product image (square)
+        setImageToCrop(result.assets[0].uri);
+        setShowCropper(true);
+      } else {
+        // Add multiple images directly (without crop)
+        const uris = result.assets.map((asset) => asset.uri);
+        setFormData((prev) => ({
+          ...prev,
+          images: [...prev.images, ...uris].slice(0, MAX_IMAGES),
+        }));
+      }
     }
   };
 
@@ -294,7 +306,7 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
 
   const pickVideo = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') return;
+    if (status !== 'granted' && status !== 'limited') return;
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['videos'],

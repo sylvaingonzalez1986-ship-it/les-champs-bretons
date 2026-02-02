@@ -580,7 +580,7 @@ export default function MaBoutiqueScreen() {
   // Demander permission galerie
   const requestMediaLibraryPermission = async (): Promise<boolean> => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
+    if (status !== 'granted' && status !== 'limited') {
       Alert.alert(
         'Permission requise',
         'Veuillez autoriser l\'accès à la galerie pour sélectionner des photos.',
@@ -654,9 +654,10 @@ export default function MaBoutiqueScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
-        selectionLimit: 3 - formData.images.length,
+        selectionLimit: Platform.OS === 'ios' ? 0 : 3 - formData.images.length,
         allowsEditing: false,
         quality: 0.8,
+        orderedSelection: true,
       });
 
       if (!result.canceled && result.assets.length > 0) {
