@@ -9,8 +9,6 @@ const corsHeaders = {
   'Access-Control-Max-Age': '86400',
 };
 
-const EMAIL_WEBHOOK_SECRET = Deno.env.get('EMAIL_WEBHOOK_SECRET') || '';
-
 const RATE_LIMIT_PRESETS = {
   ORDERS: {
     limit: 10,
@@ -75,70 +73,6 @@ function createRateLimitResponse(
   );
 }
 
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}
-
-async function computeSignature(secret: string, payload: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const signature = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    new TextEncoder().encode(payload)
-  );
-  const bytes = new Uint8Array(signature);
-  let binary = '';
-  bytes.forEach((b) => (binary += String.fromCharCode(b)));
-  return btoa(binary);
-}
-
-async function verifyOptionalWebhookSignature(req: Request, rawBody: string): Promise<Response | null> {
-  if (!EMAIL_WEBHOOK_SECRET) return null;
-
-  const signature = req.headers.get('X-Webhook-Signature');
-  const timestamp = req.headers.get('X-Webhook-Timestamp');
-  if (!signature || !timestamp) return null;
-
-  const timestampMs = Number(timestamp) * 1000;
-  if (!Number.isFinite(timestampMs)) {
-    return new Response(JSON.stringify({ error: 'INVALID_SIGNATURE' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  const now = Date.now();
-  if (Math.abs(now - timestampMs) > 5 * 60 * 1000) {
-    return new Response(JSON.stringify({ error: 'SIGNATURE_EXPIRED' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  const payload = `${timestamp}.${rawBody}`;
-  const expected = await computeSignature(EMAIL_WEBHOOK_SECRET, payload);
-
-  if (!timingSafeEqual(signature, expected)) {
-    return new Response(JSON.stringify({ error: 'INVALID_SIGNATURE' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  return null;
-}
-
 const uuidSchema = z.string().uuid('Invalid UUID format');
 
 const orderEmailRequestSchema = z.object({
@@ -194,24 +128,9 @@ function createValidatedHandler<T>(
       return createRateLimitResponse(rateLimitResult, rateLimit);
     }
 
-    let rawBody = '';
-    try {
-      rawBody = await req.text();
-    } catch {
-      return new Response(JSON.stringify({ error: 'PARSE_ERROR' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const signatureError = await verifyOptionalWebhookSignature(req, rawBody);
-    if (signatureError) {
-      return signatureError;
-    }
-
     let body: unknown = {};
     try {
-      body = rawBody ? JSON.parse(rawBody) : {};
+      body = await req.json();
     } catch {
       return new Response(JSON.stringify({ error: 'PARSE_ERROR' }), {
         status: 400,

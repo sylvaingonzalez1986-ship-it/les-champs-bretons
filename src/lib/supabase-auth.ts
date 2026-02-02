@@ -193,108 +193,23 @@ export interface UserProfile {
   birth_date: string | null;
   email: string | null;
   phone: string | null;
-  address: string | null;
-  postal_code: string | null;
   city: string | null;
-  company_name: string | null;
-  business_name: string | null;
-  siret: string | null;
-  tva_number: string | null;
-  user_code: string | null;
-  is_adult: boolean | null;
-  age_verified_at: string | null;
-  // Direct farm sales fields
-  vente_directe_ferme?: boolean | null;
-  adresse_retrait?: string | null;
-  horaires_retrait?: string | null;
-  instructions_retrait?: string | null;
-  created_at: string;
-  updated_at: string;
-}
+      const response = await authFetch(`${SUPABASE_URL}/functions/v1/update-profile`, {
+        method: 'POST',
+        headers: getAuthHeaders(currentSession.access_token),
+        body: JSON.stringify({ updates }),
+      });
 
-export interface AuthError {
-  message: string;
-  status?: number;
-}
+      const data = await response.json().catch(() => null);
 
-// Helpers pour les headers
-const getPublicHeaders = () => ({
-  'apikey': SUPABASE_ANON_KEY,
-  'Content-Type': 'application/json',
-});
-
-const getAuthHeaders = (accessToken: string) => ({
-  'apikey': SUPABASE_ANON_KEY,
-  'Authorization': `Bearer ${accessToken}`,
-  'Content-Type': 'application/json',
-});
-
-// Stockage de la session
-let currentSession: AuthSession | null = null;
-
-/**
- * Charger la session depuis le stockage sécurisé
- */
-export async function loadStoredSession(): Promise<AuthSession | null> {
-  try {
-    // Récupérer les tokens depuis le stockage sécurisé (avec fallback)
-    const accessToken = await secureGet(SECURE_ACCESS_TOKEN_KEY);
-    const refreshToken = await secureGet(SECURE_REFRESH_TOKEN_KEY);
-
-    // Récupérer les données de session depuis AsyncStorage (metadata non-sensible)
-    const stored = await AsyncStorage.getItem(AUTH_SESSION_KEY);
-    if (stored && accessToken && refreshToken) {
-      const session = JSON.parse(stored) as AuthSession;
-
-      // Restaurer les tokens depuis SecureStore
-      session.access_token = accessToken;
-      session.refresh_token = refreshToken;
-
-      // Vérifier si la session n'est pas expirée
-      if (session.expires_at * 1000 > Date.now()) {
-        currentSession = session;
-        return session;
-      } else {
-        // Session expirée, essayer de rafraîchir
-        const refreshed = await refreshSession(refreshToken);
-        return refreshed;
+      if (!response.ok) {
+        return {
+          profile: null,
+          error: { message: data?.message || 'Erreur mise à jour profil', status: response.status },
+        };
       }
-    }
-    return null;
-  } catch (error) {
-    console.warn('[Auth] Error loading session:', error);
-    return null;
-  }
-}
 
-/**
- * Sauvegarder la session
- * - Tokens sensibles -> SecureStore (chiffré natif) avec fallback AsyncStorage sur web
- */
-async function saveSession(session: AuthSession): Promise<void> {
-  try {
-    currentSession = session;
-
-    // Stocker les tokens sensibles avec wrapper sécurisé (fallback automatique)
-    await secureSet(SECURE_ACCESS_TOKEN_KEY, session.access_token);
-    await secureSet(SECURE_REFRESH_TOKEN_KEY, session.refresh_token);
-
-    // Stocker les métadonnées (non-sensibles) dans AsyncStorage
-    const sessionMetadata = {
-      ...session,
-      access_token: '***SECURE***', // Placeholder
-      refresh_token: '***SECURE***', // Placeholder
-    };
-    await AsyncStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(sessionMetadata));
-  } catch (error) {
-    console.warn('[Auth] Error saving session:', error);
-    // Clear any partial data
-    await clearSession();
-    throw new Error('Unable to save session securely. Please try again.');
-  }
-}
-
-/**
+      return { profile: data?.profile ?? null, error: null };
  * Supprimer la session
  */
 async function clearSession(): Promise<void> {

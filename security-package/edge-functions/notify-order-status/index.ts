@@ -2,59 +2,12 @@ import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
 import { createClient, SupabaseClient, User } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 
-// Allowed origins for CSRF protection
-const ALLOWED_ORIGINS = [
-  'https://leschanvriersbretons.fr',
-  'https://www.leschanvriersbretons.fr',
-  'http://localhost:8081', // Expo dev
-  'http://localhost:19006', // Expo web
-];
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Max-Age': '86400',
 };
-
-const EMAIL_WEBHOOK_SECRET = Deno.env.get('EMAIL_WEBHOOK_SECRET') || '';
-
-// HTML escaping to prevent XSS in email templates
-function escapeHtml(text: string | null | undefined): string {
-  if (!text) return '';
-  const map: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#x27;',
-    '/': '&#x2F;',
-  };
-  return text.replace(/[&<>"'/]/g, (char) => map[char]);
-}
-
-// Validate request origin for CSRF protection
-function validateOrigin(req: Request): boolean {
-  const origin = req.headers.get('Origin');
-  // Allow requests without Origin header (mobile apps, server-to-server)
-  if (!origin) return true;
-  return ALLOWED_ORIGINS.includes(origin);
-}
-
-// Structured security event logging for SIEM integration
-function logSecurityEvent(
-  eventType: string,
-  userId: string | null,
-  details: Record<string, unknown>
-): void {
-  console.log(JSON.stringify({
-    timestamp: new Date().toISOString(),
-    eventType,
-    userId,
-    service: 'notify-order-status',
-    ...details,
-  }));
-}
 
 const RATE_LIMIT_PRESETS = {
   ORDERS: {
@@ -120,70 +73,6 @@ function createRateLimitResponse(
   );
 }
 
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}
-
-async function computeSignature(secret: string, payload: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const signature = await crypto.subtle.sign(
-    'HMAC',
-    key,
-    new TextEncoder().encode(payload)
-  );
-  const bytes = new Uint8Array(signature);
-  let binary = '';
-  bytes.forEach((b) => (binary += String.fromCharCode(b)));
-  return btoa(binary);
-}
-
-async function verifyOptionalWebhookSignature(req: Request, rawBody: string): Promise<Response | null> {
-  if (!EMAIL_WEBHOOK_SECRET) return null;
-
-  const signature = req.headers.get('X-Webhook-Signature');
-  const timestamp = req.headers.get('X-Webhook-Timestamp');
-  if (!signature || !timestamp) return null;
-
-  const timestampMs = Number(timestamp) * 1000;
-  if (!Number.isFinite(timestampMs)) {
-    return new Response(JSON.stringify({ error: 'INVALID_SIGNATURE' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  const now = Date.now();
-  if (Math.abs(now - timestampMs) > 5 * 60 * 1000) {
-    return new Response(JSON.stringify({ error: 'SIGNATURE_EXPIRED' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  const payload = `${timestamp}.${rawBody}`;
-  const expected = await computeSignature(EMAIL_WEBHOOK_SECRET, payload);
-
-  if (!timingSafeEqual(signature, expected)) {
-    return new Response(JSON.stringify({ error: 'INVALID_SIGNATURE' }), {
-      status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
-  }
-
-  return null;
-}
-
 const uuidSchema = z.string().uuid('Invalid UUID format');
 
 const notifyOrderStatusSchema = z.object({
@@ -212,18 +101,6 @@ function createValidatedHandler<T>(
       return new Response('ok', { headers: corsHeaders });
     }
 
-    // CSRF Protection: Validate origin
-    if (!validateOrigin(req)) {
-      logSecurityEvent('INVALID_ORIGIN', null, {
-        origin: req.headers.get('Origin'),
-        userAgent: req.headers.get('User-Agent'),
-      });
-      return new Response(JSON.stringify({ error: 'FORBIDDEN', message: 'Invalid origin' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
@@ -240,10 +117,6 @@ function createValidatedHandler<T>(
 
     const { data: userData, error: userError } = await supabase.auth.getUser();
     if (userError || !userData.user) {
-      logSecurityEvent('AUTH_FAILURE', null, {
-        error: userError?.message,
-        userAgent: req.headers.get('User-Agent'),
-      });
       return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -253,31 +126,12 @@ function createValidatedHandler<T>(
     const userId = userData.user.id;
     const rateLimitResult = checkRateLimit(userId, rateLimit);
     if (!rateLimitResult.allowed) {
-      logSecurityEvent('RATE_LIMIT_EXCEEDED', userId, {
-        identifier: rateLimit.identifier,
-        resetAt: new Date(rateLimitResult.resetAt).toISOString(),
-      });
       return createRateLimitResponse(rateLimitResult, rateLimit);
-    }
-
-    let rawBody = '';
-    try {
-      rawBody = await req.text();
-    } catch {
-      return new Response(JSON.stringify({ error: 'PARSE_ERROR' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const signatureError = await verifyOptionalWebhookSignature(req, rawBody);
-    if (signatureError) {
-      return signatureError;
     }
 
     let body: unknown = {};
     try {
-      body = rawBody ? JSON.parse(rawBody) : {};
+      body = await req.json();
     } catch {
       return new Response(JSON.stringify({ error: 'PARSE_ERROR' }), {
         status: 400,
@@ -390,130 +244,90 @@ async function getUserRole(userId: string): Promise<string> {
   return profile?.role ?? 'user';
 }
 
-// Generate status update email HTML with XSS protection
+// Generate status update email HTML
 function generateStatusUpdateEmailHTML(
-  orderId: string,
-  status: string,
+  orderNumber: string,
+  newStatus: string,
   producerName: string,
   customerName: string,
-  address: string | null,
-  schedule: string | null,
+  address: string,
+  hours: string,
   instructions: string | null
 ): string {
-  const statusLabel = STATUS_LABELS[status] || status;
-  const statusDesc = STATUS_DESCRIPTIONS[status] || '';
+  const statusLabel = STATUS_LABELS[newStatus] || newStatus;
+  const statusDescription = STATUS_DESCRIPTIONS[newStatus] || '';
 
-  // Get status-specific styling
-  const getStatusColor = (s: string): string => {
-    switch (s) {
-      case 'confirmee': return '#2d6a4f';
-      case 'prete': return '#1976d2';
-      case 'recuperee': return '#388e3c';
-      case 'annulee': return '#d32f2f';
-      default: return '#666666';
-    }
-  };
-
-  const statusColor = getStatusColor(status);
+  const statusColor = {
+    en_attente: '#f59e0b',
+    confirmee: '#3b82f6',
+    prete: '#8b5cf6',
+    recuperee: '#22c55e',
+    annulee: '#ef4444',
+  }[newStatus] || '#6b7280';
 
   return `
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mise à jour de commande</title>
-</head>
-<body style="margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; background-color: #f5f5f5;">
-  <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-    <div style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden;">
-      <!-- Header -->
-      <div style="background-color: #2d6a4f; padding: 24px; text-align: center;">
-        <h1 style="margin: 0; color: #ffffff; font-size: 24px;">Les Chanvriers Bretons</h1>
-      </div>
-      
-      <!-- Content -->
-      <div style="padding: 32px;">
-        <p style="margin: 0 0 16px; font-size: 16px;">Bonjour <strong>${escapeHtml(customerName)}</strong>,</p>
-        
-        <div style="background-color: #f8f9fa; border-left: 4px solid ${statusColor}; padding: 16px; margin: 24px 0; border-radius: 0 4px 4px 0;">
-          <h2 style="margin: 0 0 8px; font-size: 18px; color: #333;">Commande #${escapeHtml(orderId)}</h2>
-          <p style="margin: 0; font-size: 16px;">
-            <strong>Statut :</strong> 
-            <span style="color: ${statusColor}; font-weight: bold;">${escapeHtml(statusLabel)}</span>
-          </p>
-        </div>
-        
-        <p style="margin: 16px 0; font-size: 15px; color: #555;">${escapeHtml(statusDesc)}</p>
-        
-        ${address || schedule || instructions ? `
-        <div style="background-color: #e8f5e9; padding: 20px; border-radius: 6px; margin: 24px 0;">
-          <h3 style="margin: 0 0 16px; font-size: 16px; color: #2d6a4f;">📍 Informations de retrait</h3>
-          <table style="width: 100%; border-collapse: collapse;">
-            <tr>
-              <td style="padding: 8px 0; vertical-align: top; width: 100px; color: #666;">Producteur</td>
-              <td style="padding: 8px 0; font-weight: 500;">${escapeHtml(producerName)}</td>
-            </tr>
-            ${address ? `
-            <tr>
-              <td style="padding: 8px 0; vertical-align: top; color: #666;">Adresse</td>
-              <td style="padding: 8px 0;">${escapeHtml(address)}</td>
-            </tr>` : ''}
-            ${schedule ? `
-            <tr>
-              <td style="padding: 8px 0; vertical-align: top; color: #666;">Horaires</td>
-              <td style="padding: 8px 0;">${escapeHtml(schedule)}</td>
-            </tr>` : ''}
-            ${instructions ? `
-            <tr>
-              <td style="padding: 8px 0; vertical-align: top; color: #666;">Instructions</td>
-              <td style="padding: 8px 0;">${escapeHtml(instructions)}</td>
-            </tr>` : ''}
-          </table>
-        </div>` : ''}
-        
-        <p style="margin: 32px 0 0; font-size: 14px; color: #888;">
-          Merci de votre confiance,<br>
-          <strong style="color: #2d6a4f;">L'équipe Les Chanvriers Bretons</strong>
-        </p>
-      </div>
-      
-      <!-- Footer -->
-      <div style="background-color: #f8f9fa; padding: 16px; text-align: center; border-top: 1px solid #eee;">
-        <p style="margin: 0; font-size: 12px; color: #999;">
-          Cet email a été envoyé automatiquement. Pour toute question, contactez directement le producteur.
-        </p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`;
-}
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8">
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background-color: #2d5016; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+          .status-badge { display: inline-block; padding: 8px 16px; border-radius: 20px; font-weight: bold; color: white; }
+          .section { margin-bottom: 20px; }
+          .section-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #2d5016; }
+          .info-box { background-color: #f9f9f9; padding: 15px; border-left: 4px solid #2d5016; margin: 10px 0; }
+          .footer { text-align: center; color: #999; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Mise à jour de votre commande</h1>
+            <p>Commande #${orderNumber}</p>
+          </div>
 
-// Audit logging for compliance (SOC 2, GDPR)
-async function logAuditEvent(
-  supabaseClient: SupabaseClient,
-  eventType: string,
-  userId: string,
-  resourceType: string,
-  resourceId: string,
-  metadata: Record<string, unknown>
-): Promise<void> {
-  try {
-    await supabaseClient
-      .from('audit_logs')
-      .insert({
-        event_type: eventType,
-        user_id: userId,
-        resource_type: resourceType,
-        resource_id: resourceId,
-        metadata,
-        created_at: new Date().toISOString(),
-      });
-  } catch (error) {
-    // Don't fail the request if audit logging fails, but log the error
-    console.error('Audit logging failed:', error);
-  }
+          <div class="section">
+            <p>Bonjour ${customerName},</p>
+            <p>Le statut de votre commande chez <strong>${producerName}</strong> a été mis à jour.</p>
+          </div>
+
+          <div class="section" style="text-align: center;">
+            <div class="status-badge" style="background-color: ${statusColor};">
+              ${statusLabel}
+            </div>
+            <p style="margin-top: 15px;">${statusDescription}</p>
+          </div>
+
+          ${newStatus === 'prete' || newStatus === 'confirmee' ? `
+          <div class="section">
+            <div class="section-title">Informations de retrait</div>
+            <div class="info-box">
+              <p><strong>Producteur:</strong> ${producerName}</p>
+              <p><strong>Adresse:</strong> ${address}</p>
+              <p><strong>Horaires:</strong> ${hours}</p>
+              ${instructions ? `<p><strong>Instructions:</strong> ${instructions}</p>` : ''}
+            </div>
+          </div>
+          ` : ''}
+
+          ${newStatus === 'annulee' ? `
+          <div class="section">
+            <div class="info-box" style="border-left-color: #ef4444;">
+              <p>Si vous avez des questions concernant cette annulation, n'hésitez pas à contacter directement le producteur.</p>
+            </div>
+          </div>
+          ` : ''}
+
+          <div class="footer">
+            <p>Merci d'utiliser le Marché Local des Chanvriers Unis!</p>
+            <p>Cet email a été généré automatiquement.</p>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
 }
 
 const handler = createValidatedHandler<NotifyOrderStatusInput>(
@@ -527,11 +341,6 @@ const handler = createValidatedHandler<NotifyOrderStatusInput>(
 
     const role = await getUserRole(user.id);
     if (role !== 'producer' && role !== 'admin') {
-      logSecurityEvent('AUTHORIZATION_FAILURE', user.id, {
-        requiredRole: 'producer or admin',
-        actualRole: role,
-        action: 'notify-order-status',
-      });
       return new Response(JSON.stringify({ error: 'FORBIDDEN', message: 'Producer or admin role required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -616,37 +425,11 @@ const handler = createValidatedHandler<NotifyOrderStatusInput>(
     );
 
     if (!emailSent) {
-      logSecurityEvent('EMAIL_SEND_FAILURE', user.id, {
-        commandeId,
-        customerEmail: customerEmail.replace(/(.{2}).*(@.*)/, '$1***$2'), // Mask email
-      });
       return new Response(JSON.stringify({ error: 'Failed to send email' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-
-    // Audit logging for compliance (SOC 2, GDPR)
-    await logAuditEvent(
-      supabase,
-      'ORDER_STATUS_NOTIFICATION_SENT',
-      user.id,
-      'commandes_vente_directe',
-      commandeId,
-      {
-        newStatus,
-        previousStatus: orderData.statut,
-        producerId,
-        customerId: userId,
-        notifiedAt: new Date().toISOString(),
-      }
-    );
-
-    logSecurityEvent('ORDER_NOTIFICATION_SUCCESS', user.id, {
-      commandeId,
-      newStatus,
-      producerId,
-    });
 
     return new Response(
       JSON.stringify({ success: true, message: 'Notification sent successfully' }),

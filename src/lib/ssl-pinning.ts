@@ -21,6 +21,7 @@ if (__DEV__) {
 
 // Configuration timeout par defaut
 const DEFAULT_TIMEOUT = 15000; // 15 secondes
+const STRICT_SUPABASE_CHECK = !__DEV__ && Platform.OS !== 'web';
 
 /**
  * Fetch securise avec validation et timeout
@@ -37,6 +38,10 @@ export async function secureFetch(
   url: string,
   options: RequestInit = {}
 ): Promise<Response> {
+  if (!url.startsWith('https://')) {
+    throw new Error('Connexion non sécurisée bloquée.');
+  }
+
   const isSupabaseRequest = url.includes('.supabase.co');
 
   // Creer un AbortController pour le timeout
@@ -60,11 +65,17 @@ export async function secureFetch(
       const serverHeader = response.headers.get('server');
       const supabaseHeaders = response.headers.get('x-envoy-upstream-service-time');
 
+      const looksLikeSupabase = Boolean(supabaseHeaders) || Boolean(serverHeader);
+
       // Log warning si les headers Supabase sont manquants (possible MITM)
       if (__DEV__ && !supabaseHeaders && response.ok) {
         console.warn(
           '[SecureFetch] Warning: Headers Supabase manquants - verifier la connexion'
         );
+      }
+
+      if (STRICT_SUPABASE_CHECK && response.ok && !looksLikeSupabase) {
+        throw new Error('Connexion Supabase non sécurisée détectée.');
       }
     }
 
