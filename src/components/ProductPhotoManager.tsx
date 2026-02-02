@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { View, Modal, Pressable, Image, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Modal, Pressable, Image, Alert, ActivityIndicator, ScrollView, Platform } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Camera, ImagePlus, X, Trash2, Check } from 'lucide-react-native';
@@ -50,7 +50,7 @@ export const ProductPhotoManager = ({
   // Request media library permission
   const requestMediaLibraryPermission = async (): Promise<boolean> => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
+    if (status !== 'granted' && status !== 'limited') {
       Alert.alert(
         'Permission requise',
         'Veuillez autoriser l\'accès à la galerie pour sélectionner des photos.',
@@ -99,7 +99,7 @@ export const ProductPhotoManager = ({
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsMultipleSelection: true,
-        selectionLimit: remainingSlots,
+        selectionLimit: Platform.OS === 'ios' ? 0 : remainingSlots,
         quality: 0.8,
         orderedSelection: true, // iOS 15+ : garde l'ordre de sélection
       });
