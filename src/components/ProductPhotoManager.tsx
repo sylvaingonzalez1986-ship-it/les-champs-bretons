@@ -4,10 +4,10 @@
  */
 
 import React, { useState } from 'react';
-import { View, Modal, Pressable, Image, Alert, ActivityIndicator, ScrollView, Platform } from 'react-native';
+import { View, Modal, Pressable, Image, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Camera, ImagePlus, X, Trash2, Check, Plus } from 'lucide-react-native';
+import { Camera, ImagePlus, X, Trash2, Check } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { COLORS } from '@/lib/colors';
 import { uploadProductImage, deleteProductImage, isProductImagesConfigured } from '@/lib/supabase-product-images';
@@ -83,50 +83,29 @@ export const ProductPhotoManager = ({
     }
   };
 
-  // Pick from gallery - single image (works on both iOS and Android)
-  const pickSingleFromGallery = async () => {
-    const hasPermission = await requestMediaLibraryPermission();
-    if (!hasPermission) return;
-
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsMultipleSelection: false,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        await uploadImage(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error('[ProductPhotoManager] Gallery error:', error);
-      Alert.alert('Erreur', 'Impossible d\'ouvrir la galerie');
-    }
-  };
-
-  // Pick multiple from gallery (Android only, fallback to single on iOS)
+  // Pick from gallery - multiple selection (iOS 14+ et Android)
   const pickFromGallery = async () => {
     const hasPermission = await requestMediaLibraryPermission();
     if (!hasPermission) return;
 
-    // Sur iOS, la sélection multiple ne fonctionne pas bien
-    // On propose de sélectionner une photo à la fois
-    if (Platform.OS === 'ios') {
-      await pickSingleFromGallery();
+    const remainingSlots = 3 - images.length;
+    if (remainingSlots <= 0) {
+      Alert.alert('Limite atteinte', 'Vous avez déjà 3 photos.');
       return;
     }
 
     try {
+      // Configuration pour sélection multiple sur iOS et Android
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsMultipleSelection: true,
-        selectionLimit: 3 - images.length, // Max 3 images total
+        selectionLimit: remainingSlots,
         quality: 0.8,
+        orderedSelection: true, // iOS 15+ : garde l'ordre de sélection
       });
 
       if (!result.canceled && result.assets.length > 0) {
+        // Upload toutes les images sélectionnées
         for (const asset of result.assets) {
           await uploadImage(asset.uri);
         }
@@ -354,33 +333,12 @@ export const ProductPhotoManager = ({
             </Pressable>
           </View>
 
-          {/* iOS: bouton pour ajouter une autre photo rapidement */}
-          {Platform.OS === 'ios' && images.length > 0 && images.length < 3 && (
-            <Pressable
-              onPress={pickSingleFromGallery}
-              disabled={isUploading}
-              className="flex-row items-center justify-center py-3 rounded-xl mt-3 active:opacity-80"
-              style={{
-                backgroundColor: `${COLORS.accent.hemp}20`,
-                borderWidth: 1,
-                borderColor: COLORS.accent.hemp,
-                borderStyle: 'dashed',
-                opacity: isUploading ? 0.5 : 1,
-              }}
-            >
-              <Plus size={18} color={COLORS.accent.hemp} />
-              <Text style={{ color: COLORS.accent.hemp }} className="font-medium ml-2">
-                Ajouter une autre photo ({3 - images.length} restante{3 - images.length > 1 ? 's' : ''})
-              </Text>
-            </Pressable>
-          )}
-
           {/* Help text */}
           <View className="mt-6 p-4 rounded-xl" style={{ backgroundColor: `${COLORS.background.charcoal}50` }}>
             <Text style={{ color: COLORS.text.muted }} className="text-sm text-center">
               Ajoutez jusqu'à 3 photos par produit.{'\n'}
-              La première photo sera utilisée comme image principale.
-              {Platform.OS === 'ios' && '\n\nSur iOS, sélectionnez une photo à la fois.'}
+              La première photo sera utilisée comme image principale.{'\n'}
+              Vous pouvez sélectionner plusieurs photos à la fois.
             </Text>
           </View>
         </ScrollView>
