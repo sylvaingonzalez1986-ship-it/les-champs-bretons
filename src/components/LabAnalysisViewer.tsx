@@ -27,6 +27,8 @@ import {
   ZoomOut,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
+import { getSupabaseConfig } from '@/lib/env-validation';
+import { getSession } from '@/lib/supabase-auth';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -304,13 +306,83 @@ interface LabAnalysisViewerProps {
 export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerProps) {
   const insets = useSafeAreaInsets();
   const [showViewer, setShowViewer] = useState(false);
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [isResolving, setIsResolving] = useState(false);
 
   // Zoom pour la visualisation d'image
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
 
+  const displayUrl = resolvedUrl ?? url;
+
   // Déterminer si c'est un PDF ou une image
-  const isPdf = url?.toLowerCase().endsWith('.pdf') || url?.includes('application/pdf');
+  const isPdf = displayUrl?.toLowerCase().endsWith('.pdf') || displayUrl?.includes('application/pdf');
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const resolveSignedUrl = async () => {
+      setResolveError(null);
+
+      if (!url) {
+        setResolvedUrl(null);
+        return;
+      }
+
+      const isRemote = url.startsWith('http://') || url.startsWith('https://');
+      const isLocal = url.startsWith('file://') || url.startsWith('/data/') || url.includes('/cache/');
+      if (isRemote || isLocal) {
+        setResolvedUrl(url);
+        return;
+      }
+
+      const session = getSession();
+      if (!session?.access_token) {
+        setResolveError('Connexion requise pour accéder à l’analyse.');
+        setResolvedUrl(null);
+        return;
+      }
+
+      try {
+        setIsResolving(true);
+        const { url: supabaseUrl, anonKey } = getSupabaseConfig();
+        const response = await fetch(`${supabaseUrl}/functions/v1/lab-analyses-url`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': anonKey,
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ path: url }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Impossible de générer l\'URL sécurisée');
+        }
+
+        const data = await response.json();
+        if (isMounted) {
+          setResolvedUrl(data?.url || null);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setResolveError(error instanceof Error ? error.message : 'Erreur de chargement');
+          setResolvedUrl(null);
+        }
+      } finally {
+        if (isMounted) {
+          setIsResolving(false);
+        }
+      }
+    };
+
+    resolveSignedUrl();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [url]);
 
   // Ouvrir le visualiseur
   const openViewer = () => {
@@ -325,13 +397,13 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
     try {
       // Sur le web, utiliser l'API Web Share ou ouvrir dans un nouvel onglet
       if (Platform.OS === 'web') {
-        if (url.startsWith('http://') || url.startsWith('https://')) {
+        if (displayUrl?.startsWith('http://') || displayUrl?.startsWith('https://')) {
           // Essayer l'API Web Share si disponible
           if (typeof navigator !== 'undefined' && navigator.share) {
             try {
               await navigator.share({
                 title: 'Analyse de laboratoire',
-                url: url,
+                url: displayUrl,
               });
               return;
             } catch (shareError) {
@@ -339,19 +411,23 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
             }
           }
           // Ouvrir dans un nouvel onglet
-          window.open(url, '_blank');
+          window.open(displayUrl, '_blank');
         }
         return;
       }
 
-      const isRemoteUrl = url.startsWith('http://') || url.startsWith('https://');
+      if (!displayUrl) {
+        throw new Error(resolveError || 'Analyse indisponible');
+      }
+
+      const isRemoteUrl = displayUrl.startsWith('http://') || displayUrl.startsWith('https://');
 
       if (isRemoteUrl) {
-        const extension = isPdf ? '.pdf' : (url.match(/\.(jpg|jpeg|png|gif|webp)/i)?.[0] || '.jpg');
+        const extension = isPdf ? '.pdf' : (displayUrl.match(/\.(jpg|jpeg|png|gif|webp)/i)?.[0] || '.jpg');
         const cleanFileName = `analyse_labo_${Date.now()}${extension}`;
         const localUri = `${FileSystem.cacheDirectory}${cleanFileName}`;
 
-        const downloadResult = await FileSystem.downloadAsync(url, localUri);
+        const downloadResult = await FileSystem.downloadAsync(displayUrl, localUri);
 
         if (downloadResult.status === 200) {
           const canShare = await Sharing.isAvailableAsync();
@@ -363,19 +439,19 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
             });
           } else {
             await Share.share({
-              message: `Analyse de laboratoire: ${url}`,
+              message: `Analyse de laboratoire: ${displayUrl}`,
             });
           }
         } else {
           throw new Error('Échec du téléchargement');
         }
-      } else if (url.startsWith('file://') || url.startsWith('/data/') || url.includes('/cache/')) {
+      } else if (displayUrl.startsWith('file://') || displayUrl.startsWith('/data/') || displayUrl.includes('/cache/')) {
         // Pour les fichiers locaux ou dans le cache
         const extension = isPdf ? '.pdf' : '.jpg';
         const fileName = `analyse_labo_${Date.now()}${extension}`;
         const destinationUri = `${FileSystem.cacheDirectory}${fileName}`;
 
-        const sourceUri = url.startsWith('file://') ? url : `file://${url}`;
+        const sourceUri = displayUrl.startsWith('file://') ? displayUrl : `file://${displayUrl}`;
 
         // Vérifier si le fichier source existe
         try {
@@ -383,7 +459,7 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
           if (!fileInfo.exists) {
             // Fichier n'existe pas, partager juste l'URL
             await Share.share({
-              message: `Analyse de laboratoire: ${url}`,
+              message: `Analyse de laboratoire: ${displayUrl}`,
             });
             return;
           }
@@ -400,19 +476,19 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
           });
         } catch (copyError) {
           await Share.share({
-            message: `Analyse de laboratoire: ${url}`,
+            message: `Analyse de laboratoire: ${displayUrl}`,
           });
         }
       } else {
         await Share.share({
-          message: `Analyse de laboratoire: ${url}`,
+          message: `Analyse de laboratoire: ${displayUrl}`,
         });
       }
     } catch (error) {
       console.error('[LabAnalysisViewer] Error sharing:', error);
       try {
         await Share.share({
-          message: `Analyse de laboratoire: ${url}`,
+          message: `Analyse de laboratoire: ${displayUrl ?? url}`,
         });
       } catch {
         Alert.alert('Erreur', 'Impossible de partager le document');
@@ -500,10 +576,23 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
           </View>
 
           {/* Contenu */}
-          {isPdf ? (
+          {isResolving && !displayUrl ? (
+            <View className="flex-1 items-center justify-center">
+              <ActivityIndicator size="large" color={COLORS.primary.gold} />
+              <Text style={{ color: COLORS.text.cream }} className="mt-4">
+                Chargement de l'analyse...
+              </Text>
+            </View>
+          ) : resolveError && !displayUrl ? (
+            <View className="flex-1 items-center justify-center px-6">
+              <Text style={{ color: COLORS.text.cream }} className="text-lg font-bold text-center">
+                {resolveError}
+              </Text>
+            </View>
+          ) : isPdf ? (
             // Afficher le PDF directement
             <View className="flex-1">
-              <PdfViewer uri={url} />
+              <PdfViewer uri={displayUrl} />
               {/* Bouton partager en bas */}
               <View
                 className="absolute bottom-0 left-0 right-0 flex-row items-center justify-center py-4"
@@ -530,7 +619,7 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
               <GestureDetector gesture={pinchGesture}>
                 <View className="flex-1 items-center justify-center">
                   <Animated.Image
-                    source={{ uri: url }}
+                    source={{ uri: displayUrl }}
                     style={[
                       {
                         width: SCREEN_WIDTH - 32,

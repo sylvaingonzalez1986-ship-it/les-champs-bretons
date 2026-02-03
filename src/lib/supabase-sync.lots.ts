@@ -139,10 +139,15 @@ export async function addLotToSupabase(lot: Lot): Promise<SupabaseLot> {
     throw new Error('Supabase non configuré');
   }
 
-  const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/lots`, {
+  const headers = await getAuthenticatedHeaders();
+  const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/lots-mutations`, {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify(lotToSupabase(lot)),
+    headers,
+    body: JSON.stringify({
+      action: 'create',
+      lot,
+      items: lot.items,
+    }),
   });
 
   if (!response.ok) {
@@ -150,14 +155,7 @@ export async function addLotToSupabase(lot: Lot): Promise<SupabaseLot> {
   }
 
   const data = await response.json();
-  const savedLot = Array.isArray(data) ? data[0] : data;
-
-  // Add lot items
-  for (const item of lot.items) {
-    await addLotItemToSupabase(item, lot.id);
-  }
-
-  return savedLot;
+  return data?.lot ?? data;
 }
 
 // Add lot item to Supabase
@@ -166,10 +164,15 @@ export async function addLotItemToSupabase(item: LotItem, lotId: string): Promis
     throw new Error('Supabase non configuré');
   }
 
-  const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/lot_items`, {
+  const headers = await getAuthenticatedHeaders();
+  const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/lots-mutations`, {
     method: 'POST',
-    headers: getHeaders(),
-    body: JSON.stringify(lotItemToSupabase(item, lotId)),
+    headers,
+    body: JSON.stringify({
+      action: 'addItem',
+      lotId,
+      item,
+    }),
   });
 
   if (!response.ok) {
@@ -177,7 +180,7 @@ export async function addLotItemToSupabase(item: LotItem, lotId: string): Promis
   }
 
   const data = await response.json();
-  return Array.isArray(data) ? data[0] : data;
+  return data?.item ?? data;
 }
 
 // Update lot in Supabase
@@ -186,23 +189,15 @@ export async function updateLotInSupabase(id: string, lot: Partial<Lot>): Promis
     throw new Error('Supabase non configuré');
   }
 
-  const updates: Record<string, unknown> = {};
-  if (lot.name !== undefined) updates.name = lot.name;
-  if (lot.description !== undefined) updates.description = lot.description;
-  if (lot.rarity !== undefined) updates.rarity = lot.rarity;
-  if (lot.image !== undefined) updates.image = lot.image;
-  if (lot.value !== undefined) updates.value = lot.value;
-  if (lot.active !== undefined) updates.active = lot.active;
-  if (lot.lotType !== undefined) updates.lot_type = lot.lotType;
-  if (lot.discountPercent !== undefined) updates.discount_percent = lot.discountPercent;
-  if (lot.discountAmount !== undefined) updates.discount_amount = lot.discountAmount;
-  if (lot.minOrderAmount !== undefined) updates.min_order_amount = lot.minOrderAmount;
-  updates.updated_at = new Date().toISOString();
-
-  const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/lots?id=eq.${id}`, {
-    method: 'PATCH',
-    headers: getHeaders(),
-    body: JSON.stringify(updates),
+  const headers = await getAuthenticatedHeaders();
+  const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/lots-mutations`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      action: 'update',
+      lotId: id,
+      updates: lot,
+    }),
   });
 
   if (!response.ok) {
@@ -216,16 +211,14 @@ export async function deleteLotFromSupabase(id: string): Promise<void> {
     throw new Error('Supabase non configuré');
   }
 
-  // First delete all lot items
-  await supabaseFetch(`${SUPABASE_URL}/rest/v1/lot_items?lot_id=eq.${id}`, {
-    method: 'DELETE',
-    headers: getHeaders(),
-  });
-
-  // Then delete the lot
-  const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/lots?id=eq.${id}`, {
-    method: 'DELETE',
-    headers: getHeaders(),
+  const headers = await getAuthenticatedHeaders();
+  const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/lots-mutations`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      action: 'delete',
+      lotId: id,
+    }),
   });
 
   if (!response.ok) {

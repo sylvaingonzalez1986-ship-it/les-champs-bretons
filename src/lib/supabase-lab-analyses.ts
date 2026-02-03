@@ -56,7 +56,7 @@ function generateId(): string {
  * @param productId - ID of the product (can be temporary)
  * @param fileName - Optional original file name
  * @param mimeType - Optional mime type
- * @returns Public URL of the uploaded file
+ * @returns Storage path of the uploaded file (bucket/path)
  */
 export async function uploadLabAnalysis(
   fileUri: string,
@@ -107,5 +107,5 @@ export async function uploadLabAnalysis(
     throw new Error('Erreur upload analyse laboratoire');
   }
 
-  return `${SUPABASE_URL}/storage/v1/object/public/${LAB_ANALYSES_BUCKET}/${finalName}`;
+  return `${LAB_ANALYSES_BUCKET}/${finalName}`;
 }

@@ -126,38 +126,15 @@ export async function upsertUserSubscription(
     if (!session?.user?.id) return;
 
     const headers = await getAuthenticatedHeaders();
-
-    // Essayer d'abord une mise à jour
-    const updateResponse = await supabaseFetch(
-      `${SUPABASE_URL}/rest/v1/user_subscriptions?user_id=eq.${session.user.id}`,
-      {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({
-          subscription_tier: tier,
-          tickets,
-          last_ticket_refresh: lastRefresh,
-          updated_at: new Date().toISOString(),
-        }),
-      }
-    );
-
-    // Si aucune ligne mise à jour, insérer
-    if (updateResponse.ok) {
-      const result = await updateResponse.json();
-      if (result.length === 0) {
-        await supabaseFetch(`${SUPABASE_URL}/rest/v1/user_subscriptions`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            user_id: session.user.id,
-            subscription_tier: tier,
-            tickets,
-            last_ticket_refresh: lastRefresh,
-          }),
-        });
-      }
-    }
+    await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-subscriptions-mutations`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        subscriptionTier: tier,
+        tickets,
+        lastTicketRefresh: lastRefresh,
+      }),
+    });
   } catch (error) {
     console.warn('[UserSync] Erreur upsert subscription:', error);
   }
@@ -490,32 +467,19 @@ export async function incrementUserSpins(): Promise<number> {
     const session = await getValidSession();
     if (!session?.user?.id) return 0;
 
-    const current = await fetchUserStats();
-    const newSpins = (current?.total_spins || 0) + 1;
-
     const headers = await getAuthenticatedHeaders();
+    const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-stats-mutations`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'incrementSpins',
+      }),
+    });
 
-    if (current) {
-      await supabaseFetch(`${SUPABASE_URL}/rest/v1/user_stats?user_id=eq.${session.user.id}`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({
-          total_spins: newSpins,
-          updated_at: new Date().toISOString(),
-        }),
-      });
-    } else {
-      await supabaseFetch(`${SUPABASE_URL}/rest/v1/user_stats`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          user_id: session.user.id,
-          total_spins: newSpins,
-        }),
-      });
-    }
+    if (!response.ok) return 0;
 
-    return newSpins;
+    const data = await response.json();
+    return data?.totalSpins ?? 0;
   } catch (error) {
     console.warn('[UserSync] Erreur increment spins:', error);
     return 0;

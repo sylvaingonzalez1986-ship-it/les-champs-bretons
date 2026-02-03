@@ -18,7 +18,6 @@ import {
   Briefcase,
   Store,
   Music,
-  TrendingUp,
   Globe,
   MessageCircle,
   Warehouse,
@@ -72,7 +71,7 @@ function useTabVisibility() {
 
   // Helper to check tab visibility
   const shouldShowTab = useMemo(() => {
-    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'farming' | 'tirage' | 'profile' | 'music' | 'bourse' | 'regions' | 'ma-boutique' | 'chat-producteurs' | 'marche-local') => {
+    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'farming' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'chat-producteurs' | 'marche-local') => {
       // Admin sees everything
       if (isAdmin) return true;
       // Use role-based configuration
@@ -258,18 +257,7 @@ export default function TabLayout() {
         }}
       />
 
-      <Tabs.Screen
-        name="bourse"
-        options={{
-          title: 'Bourse',
-          href: shouldShowTab('bourse') ? '/(tabs)/bourse' : null,
-          tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon focused={focused} focusColor={COLORS.accent.hemp}>
-              <TrendingUp size={size} color={focused ? COLORS.accent.hemp : color} strokeWidth={focused ? 2.5 : 2} />
-            </TabIcon>
-          ),
-        }}
-      />
+      {/* BOURSE SUPPRIMÉE - Feature retirée pour simplifier l'app */}
 
       <Tabs.Screen
         name="regions"
