@@ -2235,7 +2235,7 @@ export const useInventoryStore = create<InventoryStore>()(
 );
 
 // Tab Visibility Store - for controlling which tabs are visible per role
-export type TabId = 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'farming' | 'tirage' | 'profile' | 'music' | 'bourse' | 'regions' | 'ma-boutique' | 'chat-producteurs' | 'marche-local';
+export type TabId = 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'chat-producteurs' | 'marche-local';
 
 // Role-based visibility
 export type TabRole = 'client' | 'pro' | 'producer';
@@ -2267,13 +2267,11 @@ const DEFAULT_TABS: TabConfig[] = [
   { id: 'music', name: 'Musique', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
   { id: 'packs', name: 'Packs', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
   { id: 'promo', name: 'Promo', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
-  { id: 'bourse', name: 'Bourse', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
   { id: 'regions', name: 'Régions', visible: true, roleVisibility: { client: false, pro: true, producer: false } },
   { id: 'produits', name: 'Produits', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
   { id: 'ma-boutique', name: 'Ma Boutique', visible: true, roleVisibility: { client: false, pro: false, producer: true } },
   { id: 'chat-producteurs', name: 'Agora', visible: true, roleVisibility: { client: false, pro: true, producer: true } },
   { id: 'cart', name: 'Panier', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
-  { id: 'farming', name: 'Farm', visible: true, roleVisibility: { client: true, pro: false, producer: false } },
   { id: 'tirage', name: 'Tirage', visible: true, roleVisibility: { client: true, pro: false, producer: false } },
   { id: 'profile', name: 'Profil', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
   { id: 'marche-local', name: 'Marché Local', visible: true, roleVisibility: { client: true, pro: true, producer: true } },

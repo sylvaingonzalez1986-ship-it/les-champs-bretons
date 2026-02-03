@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, ScrollView, Pressable, Modal, Image, Switch, ActivityIndicator, Platform } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { X, Check, ChevronDown, ImagePlus, Camera, Sparkles, Leaf, Trash2, Plus, Package, Percent, Video as VideoIcon, MapPin, Store, Truck, Layers, TrendingUp } from 'lucide-react-native';
+import { X, Check, ChevronDown, ImagePlus, Camera, Sparkles, Leaf, Trash2, Plus, Package, Percent, Video as VideoIcon, MapPin, Store, Truck, Layers } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ProducerProduct, PRODUCT_TYPE_LABELS, DeliveryType, DELIVERY_TYPE_LABELS, PriceTier } from '@/lib/producers';
@@ -59,9 +59,6 @@ interface FormData {
   // Tarification par paliers - Pros
   enablePriceProTiers: boolean;
   priceProTiers: PriceTierForm[];
-  // Bourse des produits
-  availableOnBourse: boolean;
-  bourseBasePrice: string;
 }
 
 const initialFormData: FormData = {
@@ -94,9 +91,6 @@ const initialFormData: FormData = {
   // Tarification par paliers - Pros
   enablePriceProTiers: false,
   priceProTiers: [],
-  // Bourse des produits
-  availableOnBourse: false,
-  bourseBasePrice: '',
 };
 
 export const AddProductModal = ({ visible, producerId, producerName, onClose, editingProduct }: AddProductModalProps) => {
@@ -160,9 +154,6 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
         // Tarification par paliers - Pros
         enablePriceProTiers: (editingProduct.priceProTiers?.length ?? 0) > 0,
         priceProTiers: existingProTiers,
-        // Bourse des produits
-        availableOnBourse: editingProduct.availableOnBourse ?? false,
-        bourseBasePrice: editingProduct.bourseBasePrice?.toString() ?? '',
       });
     } else if (visible) {
       setFormData(initialFormData);
@@ -414,11 +405,6 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
         priceTiers: parsedPriceTiers.length > 0 ? parsedPriceTiers : undefined,
         // Price tiers - Pros
         priceProTiers: parsedPriceProTiers.length > 0 ? parsedPriceProTiers : undefined,
-        // Bourse des produits
-        availableOnBourse: formData.availableOnBourse,
-        bourseBasePrice: formData.availableOnBourse && formData.bourseBasePrice.trim()
-          ? parseFloat(formData.bourseBasePrice)
-          : undefined,
       };
 
       if (editingProduct) {
@@ -1383,67 +1369,6 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
                 <Text style={{ color: COLORS.text.muted }} className="text-xs">
                   Sélectionnez une option de livraison pour ce produit
                 </Text>
-              )}
-            </View>
-
-            {/* Bourse des produits */}
-            <View
-              className="mb-4 p-4 rounded-xl"
-              style={{
-                backgroundColor: formData.availableOnBourse ? `${COLORS.primary.gold}15` : `${COLORS.text.white}05`,
-                borderWidth: 1.5,
-                borderColor: formData.availableOnBourse ? `${COLORS.primary.gold}50` : `${COLORS.primary.gold}25`,
-              }}
-            >
-              <View className="flex-row items-center justify-between">
-                <View className="flex-row items-center flex-1">
-                  <TrendingUp size={16} color={formData.availableOnBourse ? COLORS.primary.gold : COLORS.text.muted} />
-                  <View className="ml-2 flex-1">
-                    <Text
-                      style={{ color: formData.availableOnBourse ? COLORS.primary.gold : COLORS.text.lightGray }}
-                      className="text-sm font-bold"
-                    >
-                      Mettre en bourse
-                    </Text>
-                    <Text style={{ color: COLORS.text.muted }} className="text-xs">
-                      Rendre ce produit disponible sur la bourse pro
-                    </Text>
-                  </View>
-                </View>
-                <Switch
-                  value={formData.availableOnBourse}
-                  onValueChange={(v) => updateForm('availableOnBourse', v)}
-                  trackColor={{ false: COLORS.text.muted, true: `${COLORS.primary.gold}80` }}
-                  thumbColor={formData.availableOnBourse ? COLORS.primary.gold : COLORS.text.lightGray}
-                />
-              </View>
-
-              {formData.availableOnBourse && (
-                <View className="mt-4">
-                  <Text style={{ color: COLORS.primary.gold }} className="text-sm font-bold mb-2">
-                    Prix de base bourse (€) - optionnel
-                  </Text>
-                  <Text style={{ color: COLORS.text.muted }} className="text-xs mb-2">
-                    Laissez vide pour utiliser le prix pro ou le prix standard
-                  </Text>
-                  <TextInput
-                    value={formData.bourseBasePrice}
-                    onChangeText={(v) => updateForm('bourseBasePrice', v)}
-                    placeholder={formData.pricePro || formData.price || "Prix de référence"}
-                    placeholderTextColor={COLORS.text.muted}
-                    keyboardType="decimal-pad"
-                    className="rounded-xl px-4 py-3.5"
-                    style={{
-                      backgroundColor: COLORS.background.charcoal,
-                      borderWidth: 1.5,
-                      borderColor: `${COLORS.primary.gold}40`,
-                      color: COLORS.text.cream,
-                    }}
-                  />
-                  <Text style={{ color: COLORS.text.muted }} className="text-xs mt-2">
-                    Le prix sur la bourse variera selon l'offre et la demande autour de ce prix de base.
-                  </Text>
-                </View>
               )}
             </View>
 

@@ -95,9 +95,6 @@ export interface ProducerProduct {
   delivery_type?: 'flat' | 'min_order'; // Type de livraison: prix fixe ou montant minimum
   delivery_flat_price?: number; // Prix fixe de livraison (si delivery_type = 'flat')
   delivery_min_order_amount?: number; // Montant minimum de commande pour livraison (si delivery_type = 'min_order')
-  // Bourse des produits
-  availableOnBourse?: boolean; // Disponible sur la bourse pro (défaut: false)
-  bourseBasePrice?: number; // Prix de base pour la bourse (si différent du prix pro)
 }
 
 // Type pour les options de livraison

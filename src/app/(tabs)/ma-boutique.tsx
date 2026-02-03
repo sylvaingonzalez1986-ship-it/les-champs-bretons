@@ -45,7 +45,6 @@ import {
   Mail,
   RefreshCw,
   Layers,
-  TrendingUp,
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
@@ -62,7 +61,7 @@ import {
   ProducerDB,
   ProductInsert,
 } from '@/lib/supabase-producer';
-import { uploadProductImage, isProductImagesConfigured } from '@/lib/supabase-product-images';
+import { uploadProductImage, isProductImagesConfigured, getSignedProductImageUrl } from '@/lib/supabase-product-images';
 import { uploadLabAnalysis, isLabAnalysesConfigured } from '@/lib/supabase-lab-analyses';
 import { LabAnalysisUploader } from '@/components/LabAnalysisUploader';
 import { useOrdersStore, Order, OrderStatus, ORDER_STATUS_CONFIG } from '@/lib/store';
@@ -103,9 +102,6 @@ interface ProductFormData {
   // Tarification par paliers - Pros
   enablePriceProTiers: boolean;
   priceProTiers: PriceTierForm[];
-  // Bourse des produits
-  availableOnBourse: boolean;
-  bourseBasePrice: string;
 }
 
 const initialFormData: ProductFormData = {
@@ -132,9 +128,6 @@ const initialFormData: ProductFormData = {
   // Tarification par paliers - Pros
   enablePriceProTiers: false,
   priceProTiers: [],
-  // Bourse des produits
-  availableOnBourse: false,
-  bourseBasePrice: '',
 };
 
 const PRODUCT_TYPES = ['fleur', 'huile', 'resine', 'infusion'] as const;
@@ -157,6 +150,7 @@ export default function MaBoutiqueScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [producer, setProducer] = useState<ProducerDB | null>(null);
   const [products, setProducts] = useState<ProducerProductDB[]>([]);
+  const [resolvedProductImages, setResolvedProductImages] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
 
   // Orders state
@@ -221,6 +215,46 @@ export default function MaBoutiqueScreen() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const resolveProductImages = async () => {
+      if (products.length === 0) {
+        setResolvedProductImages({});
+        return;
+      }
+
+      const entries = await Promise.all(
+        products.map(async (product) => {
+          const mainImage = product.images && product.images.length > 0
+            ? product.images[0]
+            : product.image;
+
+          if (!mainImage) {
+            return [product.id, ''] as const;
+          }
+
+          const signed = await getSignedProductImageUrl(mainImage);
+          return [product.id, signed || mainImage] as const;
+        })
+      );
+
+      if (!isMounted) return;
+
+      const next: Record<string, string> = {};
+      for (const [id, url] of entries) {
+        if (url) next[id] = url;
+      }
+      setResolvedProductImages(next);
+    };
+
+    resolveProductImages();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [products]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -470,9 +504,6 @@ export default function MaBoutiqueScreen() {
       // Tarification par paliers - Pros
       enablePriceProTiers: existingProTiers.length > 0,
       priceProTiers: existingProTiers,
-      // Bourse des produits
-      availableOnBourse: (product as any).available_on_bourse ?? false,
-      bourseBasePrice: (product as any).bourse_base_price?.toString() || '',
     });
     setError(null);
     setShowProductModal(true);
@@ -791,10 +822,6 @@ export default function MaBoutiqueScreen() {
       disponible_vente_directe: formData.disponible_vente_directe,
       price_tiers: parsedPriceTiers.length > 0 ? parsedPriceTiers : null,
       price_pro_tiers: parsedPriceProTiers.length > 0 ? parsedPriceProTiers : null,
-      available_on_bourse: formData.availableOnBourse,
-      bourse_base_price: formData.availableOnBourse && formData.bourseBasePrice.trim()
-        ? parseFloat(formData.bourseBasePrice)
-        : null,
     };
 
     try {
@@ -840,6 +867,7 @@ export default function MaBoutiqueScreen() {
     const mainImage = product.images && product.images.length > 0
       ? product.images[0]
       : product.image;
+    const displayImage = resolvedProductImages[product.id] || mainImage;
 
     return (
       <Animated.View
@@ -859,9 +887,9 @@ export default function MaBoutiqueScreen() {
           <View className="flex-row">
             {/* Image */}
             <View className="w-24 h-24">
-              {mainImage ? (
+              {displayImage ? (
                 <Image
-                  source={{ uri: mainImage }}
+                  source={{ uri: displayImage }}
                   className="w-full h-full"
                   resizeMode="cover"
                 />
@@ -1855,74 +1883,6 @@ export default function MaBoutiqueScreen() {
                     trackColor={{ false: COLORS.text.muted, true: COLORS.accent.hemp }}
                     thumbColor={COLORS.text.white}
                   />
-                </View>
-              </View>
-
-              {/* Mettre en bourse */}
-              <View className="mb-6">
-                <Text style={{ color: COLORS.text.lightGray }} className="font-medium mb-3">
-                  Bourse des produits
-                </Text>
-                <View
-                  className="p-4 rounded-xl"
-                  style={{
-                    backgroundColor: formData.availableOnBourse ? `${COLORS.primary.gold}15` : `${COLORS.text.white}05`,
-                    borderWidth: 1.5,
-                    borderColor: formData.availableOnBourse ? `${COLORS.primary.gold}50` : `${COLORS.primary.gold}25`,
-                  }}
-                >
-                  <View className="flex-row items-center justify-between">
-                    <View className="flex-row items-center flex-1">
-                      <TrendingUp size={18} color={formData.availableOnBourse ? COLORS.primary.gold : COLORS.text.muted} />
-                      <View className="ml-2 flex-1">
-                        <Text
-                          style={{ color: formData.availableOnBourse ? COLORS.primary.gold : COLORS.text.cream }}
-                          className="font-medium"
-                        >
-                          Mettre en bourse
-                        </Text>
-                        <Text style={{ color: COLORS.text.muted }} className="text-xs">
-                          Rendre disponible sur la bourse pro
-                        </Text>
-                      </View>
-                    </View>
-                    <Switch
-                      value={formData.availableOnBourse}
-                      onValueChange={(value) =>
-                        setFormData((f) => ({ ...f, availableOnBourse: value }))
-                      }
-                      trackColor={{ false: COLORS.text.muted, true: `${COLORS.primary.gold}80` }}
-                      thumbColor={formData.availableOnBourse ? COLORS.primary.gold : COLORS.text.white}
-                    />
-                  </View>
-
-                  {formData.availableOnBourse && (
-                    <View className="mt-4">
-                      <Text style={{ color: COLORS.primary.gold }} className="text-sm font-medium mb-2">
-                        Prix de base bourse (€) - optionnel
-                      </Text>
-                      <Text style={{ color: COLORS.text.muted }} className="text-xs mb-2">
-                        Laissez vide pour utiliser le prix pro
-                      </Text>
-                      <RNTextInput
-                        value={formData.bourseBasePrice}
-                        onChangeText={(v) => setFormData((f) => ({ ...f, bourseBasePrice: v }))}
-                        placeholder={formData.price_pro || formData.price_public || "Prix de référence"}
-                        placeholderTextColor={COLORS.text.muted}
-                        keyboardType="decimal-pad"
-                        className="rounded-xl px-4 py-3"
-                        style={{
-                          backgroundColor: COLORS.background.charcoal,
-                          borderWidth: 1.5,
-                          borderColor: `${COLORS.primary.gold}40`,
-                          color: COLORS.text.cream,
-                        }}
-                      />
-                      <Text style={{ color: COLORS.text.muted }} className="text-xs mt-2">
-                        Le prix variera selon l'offre et la demande.
-                      </Text>
-                    </View>
-                  )}
                 </View>
               </View>
 
