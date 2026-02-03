@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Camera, ImagePlus, X, Trash2, Check } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { COLORS } from '@/lib/colors';
-import { uploadProductImage, deleteProductImage, isProductImagesConfigured } from '@/lib/supabase-product-images';
+import { uploadProductImage, deleteProductImage, isProductImagesConfigured, getSignedProductImageUrl } from '@/lib/supabase-product-images';
 import { ProducerProduct } from '@/lib/producers';
 
 interface ProductPhotoManagerProps {
@@ -30,8 +30,32 @@ export const ProductPhotoManager = ({
 }: ProductPhotoManagerProps) => {
   const insets = useSafeAreaInsets();
   const [images, setImages] = useState<string[]>(product.images || [product.image].filter(Boolean));
+  const [displayImages, setDisplayImages] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
+
+  React.useEffect(() => {
+    let isMounted = true;
+
+    const resolveImages = async () => {
+      if (images.length === 0) {
+        setDisplayImages([]);
+        return;
+      }
+
+      const signed = await Promise.all(images.map((image) => getSignedProductImageUrl(image)));
+      if (isMounted) {
+        const next = signed.map((url, idx) => url || images[idx]).filter(Boolean);
+        setDisplayImages(next);
+      }
+    };
+
+    resolveImages();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [images]);
 
   // Request camera permission
   const requestCameraPermission = async (): Promise<boolean> => {
@@ -50,7 +74,7 @@ export const ProductPhotoManager = ({
   // Request media library permission
   const requestMediaLibraryPermission = async (): Promise<boolean> => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted' && status !== 'limited') {
+    if (status !== ImagePicker.PermissionStatus.GRANTED) {
       Alert.alert(
         'Permission requise',
         'Veuillez autoriser l\'accès à la galerie pour sélectionner des photos.',
@@ -68,7 +92,7 @@ export const ProductPhotoManager = ({
 
     try {
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -234,7 +258,7 @@ export const ProductPhotoManager = ({
                   borderColor: `${COLORS.primary.gold}30`,
                 }}
               >
-                <Image source={{ uri }} style={{ width: '100%', height: '100%' }} />
+                <Image source={{ uri: displayImages[index] || uri }} style={{ width: '100%', height: '100%' }} />
                 <Pressable
                   onPress={() => removeImage(index)}
                   className="absolute top-1 right-1 p-1.5 rounded-full"

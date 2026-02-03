@@ -3,7 +3,7 @@
  * Affiche les infos du produit avec tarifs dégressifs selon le rôle (client/pro)
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Modal,
@@ -38,6 +38,7 @@ import {
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { COLORS } from '@/lib/colors';
+import { getSignedProductImageUrl } from '@/lib/supabase-product-images';
 import {
   Producer,
   ProducerProduct,
@@ -105,7 +106,32 @@ export function ShopProductDetailModal({
 
   // Images
   const images = product.images?.length ? product.images : product.image ? [product.image] : [];
-  const hasMultipleImages = images.length > 1;
+  const [resolvedImages, setResolvedImages] = useState<string[]>(images);
+  const displayImages = resolvedImages.length > 0 ? resolvedImages : images;
+  const hasMultipleImages = displayImages.length > 1;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const resolveImages = async () => {
+      if (images.length === 0) {
+        setResolvedImages([]);
+        return;
+      }
+
+      const signed = await Promise.all(images.map((image) => getSignedProductImageUrl(image)));
+      if (isMounted) {
+        const next = signed.map((url, idx) => url || images[idx]).filter(Boolean);
+        setResolvedImages(next);
+      }
+    };
+
+    resolveImages();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [images]);
 
   // Calculs avec le prix final
   const totalPrice = finalUnitPrice * quantity;
@@ -127,11 +153,11 @@ export function ShopProductDetailModal({
 
   // Navigation images
   const nextImage = () => {
-    setCurrentImageIndex((prev) => (prev + 1) % images.length);
+    setCurrentImageIndex((prev) => (prev + 1) % displayImages.length);
   };
 
   const prevImage = () => {
-    setCurrentImageIndex((prev) => (prev - 1 + images.length) % images.length);
+    setCurrentImageIndex((prev) => (prev - 1 + displayImages.length) % displayImages.length);
   };
 
   // Reset state quand on ferme
@@ -164,10 +190,10 @@ export function ShopProductDetailModal({
               style={{ flex: 1 }}
               allowsFullscreenVideo
             />
-          ) : images.length > 0 ? (
+                ) : displayImages.length > 0 ? (
             <>
-              <Image
-                source={{ uri: images[currentImageIndex] }}
+                  <Image
+                    source={{ uri: displayImages[currentImageIndex] }}
                 style={{ width: '100%', height: '100%' }}
                 resizeMode="cover"
               />
@@ -189,8 +215,8 @@ export function ShopProductDetailModal({
                     <ChevronRight size={24} color="#fff" />
                   </Pressable>
                   {/* Indicateurs */}
-                  <View className="absolute bottom-4 left-0 right-0 flex-row justify-center">
-                    {images.map((_, index) => (
+                      <View className="absolute bottom-4 left-0 right-0 flex-row justify-center">
+                        {displayImages.map((_, index) => (
                       <View
                         key={index}
                         className="w-2 h-2 rounded-full mx-1"

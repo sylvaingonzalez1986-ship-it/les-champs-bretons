@@ -82,15 +82,14 @@ serve(async (req) => {
     return jsonResponse({ error: 'CONFIG_ERROR' }, 500, corsHeaders);
   }
 
-  const serviceClient = createClient(supabaseUrl, serviceKey);
-
   const normalized = normalizePath(parsed.data.path);
   const [bucket, ...rest] = normalized.split('/');
   const filePath = rest.join('/');
-  if (!bucket || !filePath) {
+  if (bucket !== 'product-images' || !filePath) {
     return jsonResponse({ error: 'INVALID_PATH' }, 400, corsHeaders);
   }
 
+  const serviceClient = createClient(supabaseUrl, serviceKey);
   const expiresIn = parsed.data.expiresIn ?? 3600;
   const { data: signed, error: signError } = await serviceClient
     .storage

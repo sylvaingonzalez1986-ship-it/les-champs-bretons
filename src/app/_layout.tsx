@@ -3,7 +3,7 @@
  * Version simplifiée pour debug
  */
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -106,6 +106,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, isInitialized, profile, session } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const rootNavState = useRootNavigationState();
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   const navigationDone = useRef<string | null>(null);
 
@@ -122,6 +123,9 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
   // Navigation logic - with deduplication
   useEffect(() => {
+    if (!rootNavState?.key) return;
+    if (!rootNavState?.routes?.length) return;
+    if (!segments || segments.length === 0) return;
     if (!isInitialized || (isLoading && !loadingTimeout)) return;
 
     const inAuthGroup = segments[0] === 'auth';
@@ -129,38 +133,31 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     const inProPendingPage = segments[0] === 'pro-pending';
     const inTabs = segments[0] === '(tabs)';
 
+    let targetRoute: string | null = null;
+
     // Skip navigation if user is on reset-password page (deep link from email)
     const currentPath = segments.join('/');
     if (currentPath.includes('reset-password') || currentPath.includes('email-confirmed')) {
       return;
     }
 
-    // Build target route based on state
-    let targetRoute: string | null = null;
-
-    if (!isAuthenticated) {
-      if (!inAuthGroup) {
-        targetRoute = '/auth/login';
+    const isAdultVerified = profile?.is_adult === true;
+    if (!isAdultVerified) {
+      if (!inAgeVerification && !inAuthGroup) {
+        targetRoute = '/age-verification';
       }
     } else {
-      const isAdultVerified = profile?.is_adult === true;
-      if (!isAdultVerified) {
-        if (!inAgeVerification && !inAuthGroup) {
-          targetRoute = '/age-verification';
-        }
-      } else {
-        const isPro = profile?.role === 'pro';
-        const proStatus = (profile as any)?.pro_status;
-        const isProPending = isPro && (proStatus === 'pending' || proStatus === null);
-        const isProRejected = isPro && proStatus === 'rejected';
+      const isPro = profile?.role === 'pro';
+      const proStatus = (profile as any)?.pro_status;
+      const isProPending = isPro && (proStatus === 'pending' || proStatus === null);
+      const isProRejected = isPro && proStatus === 'rejected';
 
-        if (isProPending || isProRejected) {
-          if (!inProPendingPage && !inAuthGroup) {
-            targetRoute = '/pro-pending';
-          }
-        } else if (inAuthGroup || inAgeVerification || inProPendingPage) {
-          targetRoute = '/(tabs)/map';
+      if (isProPending || isProRejected) {
+        if (!inProPendingPage && !inAuthGroup) {
+          targetRoute = '/pro-pending';
         }
+      } else if (inAuthGroup || inAgeVerification || inProPendingPage) {
+        targetRoute = '/(tabs)/map';
       }
     }
 
@@ -178,6 +175,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     profile?.role,
     (profile as any)?.pro_status,
     segments,
+    router,
+    rootNavState?.key,
   ]);
 
   // Reset navigation tracking when auth state changes

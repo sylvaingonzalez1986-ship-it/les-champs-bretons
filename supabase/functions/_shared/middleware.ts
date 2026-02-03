@@ -21,7 +21,7 @@ import {
   RATE_LIMIT_PRESETS,
   logSecurityEvent,
 } from './rate-limit.ts';
-import { corsHeaders } from './cors.ts';
+import { corsHeaders, getCorsHeaders } from './cors.ts';
 
 // =============================================================================
 // TYPES
@@ -93,12 +93,13 @@ export function createValidatedHandler<T>(
     const startTime = Date.now();
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
     const userAgent = req.headers.get('user-agent') || 'unknown';
+    const responseCorsHeaders = getCorsHeaders(req);
 
     // -------------------------------------------------------------------------
     // Handle CORS preflight
     // -------------------------------------------------------------------------
     if (req.method === 'OPTIONS') {
-      return new Response('ok', { headers: corsHeaders });
+      return new Response('ok', { headers: responseCorsHeaders });
     }
 
     // -------------------------------------------------------------------------
@@ -127,7 +128,7 @@ export function createValidatedHandler<T>(
           }),
           {
             status: 401,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
           }
         );
       }
@@ -159,7 +160,7 @@ export function createValidatedHandler<T>(
           }),
           {
             status: 401,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
           }
         );
       }
@@ -178,7 +179,7 @@ export function createValidatedHandler<T>(
     // -------------------------------------------------------------------------
     // 2. RATE LIMITING
     // -------------------------------------------------------------------------
-    const rateLimitResult = checkRateLimit(userId, rateLimit);
+    const rateLimitResult = await checkRateLimit(userId, rateLimit);
 
     if (!rateLimitResult.allowed) {
       logSecurityEvent({
@@ -191,7 +192,7 @@ export function createValidatedHandler<T>(
         reason: `Exceeded ${rateLimit.limit} requests per window`,
       });
 
-      return createRateLimitResponse(rateLimitResult, rateLimit, corsHeaders);
+      return createRateLimitResponse(rateLimitResult, rateLimit, responseCorsHeaders);
     }
 
     // -------------------------------------------------------------------------
@@ -231,7 +232,7 @@ export function createValidatedHandler<T>(
         }),
         {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
         }
       );
     }
@@ -252,7 +253,7 @@ export function createValidatedHandler<T>(
         reason: validationResult.error?.details.map(d => d.message).join(', '),
       });
 
-      return createValidationErrorResponse(validationResult.error!, corsHeaders);
+      return createValidationErrorResponse(validationResult.error!, responseCorsHeaders);
     }
 
     // -------------------------------------------------------------------------
@@ -272,7 +273,16 @@ export function createValidatedHandler<T>(
 
       console.log(`[${functionName}] ${userId} - ${req.method} - ${response.status} (${duration}ms)`);
 
-      return response;
+      const mergedHeaders = new Headers(response.headers);
+      for (const [key, value] of Object.entries(responseCorsHeaders)) {
+        mergedHeaders.set(key, value);
+      }
+
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: mergedHeaders,
+      });
 
     } catch (handlerError) {
       const errorMessage = handlerError instanceof Error ? handlerError.message : 'Unknown error';
@@ -296,7 +306,7 @@ export function createValidatedHandler<T>(
         }),
         {
           status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
         }
       );
     }

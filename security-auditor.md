@@ -12,6 +12,25 @@ Date: 2026-02-03
 - Overall risk: **High**
 - Key risks: client-side writes to sensitive tables, public storage for lab analyses, weak rate limiting.
 
+## Applied Fixes (Code)
+- Moved subscription mutations to Edge Function
+	- [supabase/functions/user-subscriptions-mutations/index.ts](supabase/functions/user-subscriptions-mutations/index.ts)
+	- [src/lib/supabase-sync.user.ts](src/lib/supabase-sync.user.ts#L117-L158)
+- Moved user stats increment to Edge Function
+	- [supabase/functions/user-stats-mutations/index.ts](supabase/functions/user-stats-mutations/index.ts)
+	- [src/lib/supabase-sync.user.ts](src/lib/supabase-sync.user.ts#L470-L520)
+- Secured pro order creation via Edge Function
+	- [supabase/functions/pro-orders-mutations/index.ts](supabase/functions/pro-orders-mutations/index.ts)
+	- [src/lib/supabase-bourse.ts](src/lib/supabase-bourse.ts#L520-L576)
+- Secured lots CRUD via Edge Function (admin only)
+	- [supabase/functions/lots-mutations/index.ts](supabase/functions/lots-mutations/index.ts)
+	- [src/lib/supabase-sync.lots.ts](src/lib/supabase-sync.lots.ts#L133-L227)
+- Lab analyses now store storage path + signed URL resolution
+	- [supabase/functions/lab-analyses-url/index.ts](supabase/functions/lab-analyses-url/index.ts)
+	- [src/lib/supabase-lab-analyses.ts](src/lib/supabase-lab-analyses.ts#L1-L114)
+	- [src/components/LabAnalysisViewer.tsx](src/components/LabAnalysisViewer.tsx#L300-L540)
+	- [src/components/LabAnalysisUploader.tsx](src/components/LabAnalysisUploader.tsx#L311-L700)
+
 ## Findings (by severity)
 
 ### 1) HIGH — Sensitive client-side writes (subscriptions/tickets)
@@ -90,6 +109,15 @@ Date: 2026-02-03
 - [ ] Use private storage for lab analyses + signed URLs
 - [ ] Replace in-memory rate limit with shared store
 - [ ] Add audit logs for critical changes (orders, roles, tickets)
+
+## Remaining Manual Steps
+- Make the `lab-analyses` bucket **private** in Supabase Storage.
+- Add/verify RLS policies to **deny direct writes** for non-admins on:
+	- `user_subscriptions`, `user_stats`, `lots`, `lot_items`, `pro_orders`
+- Consider a shared rate-limit store (KV/Redis) for edge functions.
+
+## RLS Migration Added
+- [database/migrations/rls_lockdown_non_admin_writes_2026_02_03.sql](database/migrations/rls_lockdown_non_admin_writes_2026_02_03.sql)
 
 ## Suggested Headers/CSP (web builds)
 - Strict-Transport-Security

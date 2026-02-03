@@ -44,6 +44,11 @@ interface RateLimitEntry {
 // Note: In production with multiple instances, use Redis or Supabase
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const RATE_LIMIT_TABLE = Deno.env.get('RATE_LIMIT_TABLE') ?? 'rate_limits';
+const PERSISTENT_RATE_LIMIT_ENABLED = Deno.env.get('RATE_LIMIT_PERSISTENT') === 'true';
+
 // Cleanup old entries periodically (every 5 minutes)
 const CLEANUP_INTERVAL = 5 * 60 * 1000;
 let lastCleanup = Date.now();
@@ -58,6 +63,59 @@ function cleanupExpiredEntries(): void {
     }
   }
   lastCleanup = now;
+}
+
+function canUsePersistentStore(): boolean {
+  return PERSISTENT_RATE_LIMIT_ENABLED && Boolean(SUPABASE_URL && SERVICE_ROLE_KEY);
+}
+
+function getServiceHeaders(): Record<string, string> {
+  return {
+    'apikey': SERVICE_ROLE_KEY,
+    'Authorization': `Bearer ${SERVICE_ROLE_KEY}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function fetchPersistentEntry(key: string): Promise<RateLimitEntry | null> {
+  const url = `${SUPABASE_URL}/rest/v1/${RATE_LIMIT_TABLE}?select=key,count,reset_at,blocked,last_attempt&key=eq.${encodeURIComponent(key)}&limit=1`;
+  const response = await fetch(url, { headers: getServiceHeaders() });
+  if (!response.ok) {
+    return null;
+  }
+  const data = await response.json();
+  if (!Array.isArray(data) || data.length === 0) {
+    return null;
+  }
+
+  const entry = data[0];
+  return {
+    count: Number(entry.count ?? 0),
+    resetAt: new Date(entry.reset_at).getTime(),
+    blocked: Boolean(entry.blocked),
+    lastAttempt: new Date(entry.last_attempt ?? entry.reset_at).getTime(),
+  };
+}
+
+async function upsertPersistentEntry(key: string, entry: RateLimitEntry): Promise<void> {
+  const url = `${SUPABASE_URL}/rest/v1/${RATE_LIMIT_TABLE}?on_conflict=key`;
+  const payload = {
+    key,
+    count: entry.count,
+    reset_at: new Date(entry.resetAt).toISOString(),
+    blocked: entry.blocked,
+    last_attempt: new Date(entry.lastAttempt).toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      ...getServiceHeaders(),
+      'Prefer': 'resolution=merge-duplicates,return=representation',
+    },
+    body: JSON.stringify(payload),
+  });
 }
 
 // =============================================================================
@@ -114,53 +172,130 @@ export const RATE_LIMIT_PRESETS = {
  * @param config - Rate limit configuration
  * @returns Rate limit result
  */
-export function checkRateLimit(
+export async function checkRateLimit(
   userId: string,
   config: RateLimitConfig
-): RateLimitResult {
+): Promise<RateLimitResult> {
   cleanupExpiredEntries();
 
   const now = Date.now();
   const key = `${config.identifier}:${userId}`;
-  const entry = rateLimitStore.get(key);
 
-  // No existing entry or window expired
-  if (!entry || now > entry.resetAt) {
-    rateLimitStore.set(key, {
-      count: 1,
-      resetAt: now + config.windowMs,
-      blocked: false,
-      lastAttempt: now,
-    });
+  if (!canUsePersistentStore()) {
+    const entry = rateLimitStore.get(key);
+
+    if (!entry || now > entry.resetAt) {
+      rateLimitStore.set(key, {
+        count: 1,
+        resetAt: now + config.windowMs,
+        blocked: false,
+        lastAttempt: now,
+      });
+      return {
+        allowed: true,
+        remaining: config.limit - 1,
+        resetAt: now + config.windowMs,
+      };
+    }
+
+    entry.lastAttempt = now;
+
+    if (entry.count >= config.limit) {
+      entry.blocked = true;
+      const retryAfterSeconds = Math.ceil((entry.resetAt - now) / 1000);
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAt: entry.resetAt,
+        retryAfterSeconds,
+      };
+    }
+
+    entry.count++;
     return {
       allowed: true,
-      remaining: config.limit - 1,
-      resetAt: now + config.windowMs,
-    };
-  }
-
-  // Update last attempt
-  entry.lastAttempt = now;
-
-  // Check if limit exceeded
-  if (entry.count >= config.limit) {
-    entry.blocked = true;
-    const retryAfterSeconds = Math.ceil((entry.resetAt - now) / 1000);
-    return {
-      allowed: false,
-      remaining: 0,
+      remaining: config.limit - entry.count,
       resetAt: entry.resetAt,
-      retryAfterSeconds,
     };
   }
 
-  // Increment counter
-  entry.count++;
-  return {
-    allowed: true,
-    remaining: config.limit - entry.count,
-    resetAt: entry.resetAt,
-  };
+  try {
+    const entry = await fetchPersistentEntry(key);
+
+    if (!entry || now > entry.resetAt) {
+      const newEntry: RateLimitEntry = {
+        count: 1,
+        resetAt: now + config.windowMs,
+        blocked: false,
+        lastAttempt: now,
+      };
+      await upsertPersistentEntry(key, newEntry);
+      return {
+        allowed: true,
+        remaining: config.limit - 1,
+        resetAt: newEntry.resetAt,
+      };
+    }
+
+    entry.lastAttempt = now;
+
+    if (entry.count >= config.limit) {
+      entry.blocked = true;
+      await upsertPersistentEntry(key, entry);
+      const retryAfterSeconds = Math.ceil((entry.resetAt - now) / 1000);
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAt: entry.resetAt,
+        retryAfterSeconds,
+      };
+    }
+
+    entry.count++;
+    await upsertPersistentEntry(key, entry);
+    return {
+      allowed: true,
+      remaining: config.limit - entry.count,
+      resetAt: entry.resetAt,
+    };
+  } catch (error) {
+    console.warn('[RateLimit] Persistent store error, falling back to memory:', error);
+    rateLimitStore.delete(key);
+    const fallbackEntry = rateLimitStore.get(key);
+
+    if (!fallbackEntry || now > fallbackEntry.resetAt) {
+      rateLimitStore.set(key, {
+        count: 1,
+        resetAt: now + config.windowMs,
+        blocked: false,
+        lastAttempt: now,
+      });
+      return {
+        allowed: true,
+        remaining: config.limit - 1,
+        resetAt: now + config.windowMs,
+      };
+    }
+
+    fallbackEntry.lastAttempt = now;
+    if (fallbackEntry.count >= config.limit) {
+      fallbackEntry.blocked = true;
+      const retryAfterSeconds = Math.ceil((fallbackEntry.resetAt - now) / 1000);
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAt: fallbackEntry.resetAt,
+        retryAfterSeconds,
+      };
+    }
+
+    fallbackEntry.count++;
+    return {
+      allowed: true,
+      remaining: config.limit - fallbackEntry.count,
+      resetAt: fallbackEntry.resetAt,
+    };
+  }
 }
 
 /**

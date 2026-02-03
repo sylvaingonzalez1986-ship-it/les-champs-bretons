@@ -3,6 +3,9 @@
  * Handles product image uploads for producers
  */
 
+import { getSupabaseConfig } from './env-validation';
+import { getSession } from './supabase-auth';
+
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
@@ -149,6 +152,56 @@ export async function deleteProductImage(imageUrl: string): Promise<void> {
 
   if (!response.ok) {
     console.warn('[ProductImages] Delete error');
+  }
+}
+
+function isProductImagesUrl(url: string): boolean {
+  return url.includes('/storage/v1/object/public/product-images/')
+    || url.includes('/storage/v1/object/product-images/')
+    || url.includes('/storage/v1/object/sign/product-images/')
+    || url.startsWith('product-images/');
+}
+
+export async function getSignedProductImageUrl(path: string, expiresIn = 3600): Promise<string> {
+  if (!path) return '';
+
+  const isRemote = path.startsWith('http://') || path.startsWith('https://');
+  const isLocal = path.startsWith('file://') || path.startsWith('/data/') || path.includes('/cache/');
+  if (isLocal) return path;
+
+  if (!isProductImagesUrl(path)) {
+    return path;
+  }
+
+  if (path.includes('/storage/v1/object/sign/') || path.includes('token=')) {
+    return path;
+  }
+
+  const session = getSession();
+  if (!session?.access_token) {
+    return path;
+  }
+
+  try {
+    const { url, anonKey } = getSupabaseConfig();
+    const response = await fetch(`${url}/functions/v1/product-images-url`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': anonKey,
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ path, expiresIn }),
+    });
+
+    if (!response.ok) {
+      return path;
+    }
+
+    const data = await response.json();
+    return data?.url || path;
+  } catch {
+    return path;
   }
 }
 

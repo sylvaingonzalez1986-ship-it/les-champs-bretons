@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   ScrollView,
@@ -26,6 +26,9 @@ import { LabAnalysisViewer } from '@/components/LabAnalysisViewer';
 import { CultureTypeIcons } from '@/components/CultureTypeIcons';
 import { CacheStatusBanner } from '@/components/CacheStatusBanner';
 import { ShopProductDetailModal } from '@/components/ShopProductDetailModal';
+import { updateProductInSupabase } from '@/lib/supabase-sync.catalog';
+import { isSupabaseSyncConfigured } from '@/lib/supabase-sync';
+import { getSignedProductImageUrl } from '@/lib/supabase-product-images';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -270,9 +273,40 @@ const ProductCard = ({
   };
 
   // Get all images (use images array if available, otherwise fallback to single image)
-  const productImages = product.images && product.images.length > 0
-    ? product.images
-    : [product.image];
+  const productImages = React.useMemo(
+    () => (product.images && product.images.length > 0
+      ? product.images
+      : [product.image].filter(Boolean)),
+    [product.images, product.image]
+  );
+
+  const [resolvedProductImages, setResolvedProductImages] = useState<string[]>(productImages);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const resolveImages = async () => {
+      if (productImages.length === 0) {
+        setResolvedProductImages([]);
+        return;
+      }
+
+      const signed = await Promise.all(
+        productImages.map(async (image) => getSignedProductImageUrl(image))
+      );
+
+      if (isMounted) {
+        const next = signed.map((url, idx) => url || productImages[idx]).filter(Boolean);
+        setResolvedProductImages(next);
+      }
+    };
+
+    resolveImages();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [productImages]);
 
   const openImageViewer = (index: number) => {
     setViewerInitialIndex(index);
@@ -289,7 +323,7 @@ const ProductCard = ({
     <>
       <ImageViewerModal
         visible={showImageViewer}
-        images={productImages}
+        images={resolvedProductImages.length > 0 ? resolvedProductImages : productImages}
         initialIndex={viewerInitialIndex}
         onClose={() => setShowImageViewer(false)}
       />
@@ -341,7 +375,7 @@ const ProductCard = ({
               className="m-3 rounded-xl overflow-hidden"
               style={{ borderWidth: 2, borderColor: isOnPromo ? '#EF444450' : `${COLORS.primary.gold}30` }}
             >
-            {productImages.length > 1 ? (
+            {resolvedProductImages.length > 1 ? (
               <View>
                 <ScrollView
                   horizontal
@@ -353,7 +387,7 @@ const ProductCard = ({
                   }}
                   style={{ width: 96, height: 96 }}
                 >
-                  {productImages.map((uri, imgIndex) => (
+                  {(resolvedProductImages.length > 0 ? resolvedProductImages : productImages).map((uri, imgIndex) => (
                     <Pressable
                       key={imgIndex}
                       onPress={() => openImageViewer(imgIndex)}
@@ -368,7 +402,7 @@ const ProductCard = ({
                 </ScrollView>
                 {/* Image indicators */}
                 <View className="absolute bottom-1 left-0 right-0 flex-row justify-center">
-                  {productImages.map((_, imgIndex) => (
+                  {(resolvedProductImages.length > 0 ? resolvedProductImages : productImages).map((_, imgIndex) => (
                     <View
                       key={imgIndex}
                       className="w-1.5 h-1.5 rounded-full mx-0.5"
@@ -713,6 +747,7 @@ export default function ShopScreen() {
 
   const customProducers = useProducerStore((s) => s.producers);
   const updateProductInProducer = useProducerStore((s) => s.updateProductInProducer);
+  const setSyncedProducers = useSupabaseSyncStore((s) => s.setSyncedProducers);
 
   // Check if user is admin or producer
   const { isAdmin, isProducer, isPro, isProApproved, canAccessProPricing } = usePermissions();
@@ -747,6 +782,7 @@ export default function ShopScreen() {
   }, [isAdmin, syncedProducers, customProducers]);
 
   const producer = allProducers.find((p) => p.id === producerId);
+  const canManageProducts = !!producer && (isAdmin || (isProducer && !!profile?.id && producer.profileId === profile.id));
 
   // Reviews
   const reviews = useProducerReviewsStore((s) => s.reviews);
@@ -791,8 +827,8 @@ export default function ShopScreen() {
   };
 
   // Handle product images update (for producers)
-  const handleUpdateProductImages = (productId: string, images: string[]) => {
-    if (!producer) return;
+  const handleUpdateProductImages = async (productId: string, images: string[]) => {
+    if (!producer || !canManageProducts) return;
 
     const product = producer.products.find(p => p.id === productId);
     if (!product) return;
@@ -803,7 +839,26 @@ export default function ShopScreen() {
       image: images[0] || product.image, // First image is the main one
     };
 
-    updateProductInProducer(producer.id, updatedProduct);
+    // Update local UI state
+    if (syncedProducers.length > 0) {
+      const nextSynced = syncedProducers.map((p) =>
+        p.id === producer.id
+          ? { ...p, products: p.products.map((prod) => (prod.id === productId ? updatedProduct : prod)) }
+          : p
+      );
+      setSyncedProducers(nextSynced);
+    } else {
+      updateProductInProducer(producer.id, updatedProduct);
+    }
+
+    // Persist to Supabase if configured
+    if (isSupabaseSyncConfigured()) {
+      try {
+        await updateProductInSupabase(productId, { images: updatedProduct.images, image: updatedProduct.image });
+      } catch (error) {
+        console.warn('[Shop] Failed to sync product images:', error);
+      }
+    }
   };
 
   // Handle sample request
@@ -1237,7 +1292,7 @@ export default function ShopScreen() {
                 producerId={producer.id}
                 producerName={producer.name}
                 index={index}
-                isProducer={isProducer}
+                isProducer={canManageProducts}
                 isPro={canAccessProPricing}
                 onUpdateProductImages={handleUpdateProductImages}
                 onPress={() => {
