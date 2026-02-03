@@ -36,6 +36,8 @@ import {
   ZoomOut,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
+import { getSupabaseConfig } from '@/lib/env-validation';
+import { getSession } from '@/lib/supabase-auth';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
@@ -320,10 +322,78 @@ export function LabAnalysisUploader({
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const [capturing, setCapturing] = useState(false);
+  const [resolvedValue, setResolvedValue] = useState<string | null>(null);
+  const [resolvingValue, setResolvingValue] = useState(false);
+  const [resolveError, setResolveError] = useState<string | null>(null);
 
   // Zoom pour la visualisation d'image
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const resolveSignedUrl = async () => {
+      setResolveError(null);
+
+      if (!value) {
+        setResolvedValue(null);
+        return;
+      }
+
+      const isRemote = value.startsWith('http://') || value.startsWith('https://');
+      const isLocal = value.startsWith('file://') || value.startsWith('/data/') || value.includes('/cache/');
+      if (isRemote || isLocal) {
+        setResolvedValue(value);
+        return;
+      }
+
+      const session = getSession();
+      if (!session?.access_token) {
+        setResolveError('Connexion requise pour accéder à l’analyse.');
+        setResolvedValue(null);
+        return;
+      }
+
+      try {
+        setResolvingValue(true);
+        const { url: supabaseUrl, anonKey } = getSupabaseConfig();
+        const response = await fetch(`${supabaseUrl}/functions/v1/lab-analyses-url`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': anonKey,
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ path: value }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Impossible de générer l\'URL sécurisée');
+        }
+
+        const data = await response.json();
+        if (isMounted) {
+          setResolvedValue(data?.url || null);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setResolveError(error instanceof Error ? error.message : 'Erreur de chargement');
+          setResolvedValue(null);
+        }
+      } finally {
+        if (isMounted) {
+          setResolvingValue(false);
+        }
+      }
+    };
+
+    resolveSignedUrl();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [value]);
 
   // Sélectionner un PDF depuis le téléphone
   const pickDocument = async () => {
@@ -435,7 +505,8 @@ export function LabAnalysisUploader({
 
   // Ouvrir le visualiseur
   const openViewer = () => {
-    if (!value) return;
+    const displayValue = resolvedValue ?? value ?? null;
+    if (!displayValue) return;
 
     // Reset zoom
     scale.value = 1;
@@ -445,7 +516,8 @@ export function LabAnalysisUploader({
 
   // Partager le document
   const shareDocument = async () => {
-    if (!value) return;
+    const displayValue = resolvedValue ?? value ?? null;
+    if (!displayValue) return;
 
     try {
       const canShare = await Sharing.isAvailableAsync();
@@ -455,7 +527,7 @@ export function LabAnalysisUploader({
       }
 
       // Pour les fichiers locaux (file://), on doit les copier dans un répertoire accessible
-      if (value.startsWith('file://') || value.startsWith('/data/')) {
+      if (displayValue.startsWith('file://') || displayValue.startsWith('/data/')) {
         const FileSystem = await import('expo-file-system');
 
         // Déterminer l'extension du fichier
@@ -464,7 +536,7 @@ export function LabAnalysisUploader({
         const destinationUri = `${FileSystem.cacheDirectory}${fileName}`;
 
         // Copier le fichier vers le cache accessible
-        const sourceUri = value.startsWith('file://') ? value : `file://${value}`;
+        const sourceUri = displayValue.startsWith('file://') ? displayValue : `file://${displayValue}`;
         await FileSystem.copyAsync({
           from: sourceUri,
           to: destinationUri,
@@ -478,7 +550,7 @@ export function LabAnalysisUploader({
         });
       } else {
         // Pour les URLs HTTP, partager directement
-        await Sharing.shareAsync(value);
+        await Sharing.shareAsync(displayValue);
       }
     } catch (error) {
       console.error('[LabAnalysis] Error sharing:', error);
@@ -487,8 +559,9 @@ export function LabAnalysisUploader({
   };
 
   // Déterminer si c'est un PDF ou une image
-  const isPdf = value?.toLowerCase().endsWith('.pdf') || value?.includes('application/pdf');
-  const hasDocument = !!value;
+  const displayValue = resolvedValue ?? value ?? null;
+  const isPdf = displayValue?.toLowerCase().endsWith('.pdf') || displayValue?.includes('application/pdf');
+  const hasDocument = !!displayValue;
 
   // Geste de pinch pour zoom
   const pinchGesture = Gesture.Pinch()
@@ -556,7 +629,7 @@ export function LabAnalysisUploader({
               {isPdf ? 'Document PDF' : 'Image du document'}
             </Text>
             <Text style={{ color: COLORS.accent.teal }} className="text-xs">
-              Analyse uploadée
+              {resolvingValue ? 'Chargement en cours...' : resolveError ? 'Analyse indisponible' : 'Analyse uploadée'}
             </Text>
           </View>
           <View className="flex-row">
@@ -688,7 +761,7 @@ export function LabAnalysisUploader({
           {isPdf ? (
             // Afficher le PDF avec WebView
             <View className="flex-1">
-              <PdfViewer uri={value || ''} />
+              <PdfViewer uri={displayValue || ''} />
               {/* Bouton partager en bas */}
               <View
                 className="absolute bottom-0 left-0 right-0 flex-row items-center justify-center py-4"
@@ -725,7 +798,7 @@ export function LabAnalysisUploader({
                   showsHorizontalScrollIndicator={false}
                 >
                   <Animated.Image
-                    source={{ uri: value || '' }}
+                    source={{ uri: displayValue || '' }}
                     style={[
                       {
                         width: SCREEN_WIDTH,

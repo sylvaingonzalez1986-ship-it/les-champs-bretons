@@ -12,7 +12,6 @@ import {
   Settings,
   User,
   ShoppingCart,
-  Sprout,
   Package,
   Percent,
   Briefcase,
@@ -71,7 +70,7 @@ function useTabVisibility() {
 
   // Helper to check tab visibility
   const shouldShowTab = useMemo(() => {
-    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'farming' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'chat-producteurs' | 'marche-local') => {
+    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'chat-producteurs' | 'marche-local') => {
       // Admin sees everything
       if (isAdmin) return true;
       // Use role-based configuration
@@ -326,18 +325,7 @@ export default function TabLayout() {
         }}
       />
 
-      <Tabs.Screen
-        name="farming"
-        options={{
-          title: 'Farm',
-          href: shouldShowTab('farming') ? '/(tabs)/farming' : null,
-          tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon focused={focused} focusColor={COLORS.accent.hemp}>
-              <Sprout size={size} color={focused ? COLORS.accent.hemp : color} strokeWidth={focused ? 2.5 : 2} />
-            </TabIcon>
-          ),
-        }}
-      />
+      {/* FARMING/GAME SUPPRIMÉ - Feature retirée pour simplifier l'app */}
 
       <Tabs.Screen
         name="tirage"
