@@ -126,6 +126,7 @@ import {
   syncOrderToSupabase,
   updateOrderInSupabase,
   deleteOrderFromSupabase,
+  SessionExpiredError,
 } from '@/lib/supabase-sync';
 import { useSupabaseSyncStore } from '@/lib/store';
 import { processImageForSync } from '@/lib/image-upload';
@@ -3187,7 +3188,11 @@ export default function AdminScreen() {
       try {
         await updateOrderInSupabase(orderId, { status: newStatus });
       } catch (error) {
-        console.error('Erreur sync statut commande:', error);
+        if (error instanceof SessionExpiredError) {
+          console.warn('Session expirée lors de la sync commande');
+          return;
+        }
+        console.warn('Erreur sync statut commande:', error);
       }
     }
   };
@@ -6277,7 +6282,11 @@ export default function AdminScreen() {
                                 ticketsDistributed: true,
                               });
                             } catch (error) {
-                              console.error('Error syncing payment validation to Supabase:', error);
+                              if (error instanceof SessionExpiredError) {
+                                console.warn('Session expirée lors de la sync paiement');
+                                return;
+                              }
+                              console.warn('Error syncing payment validation to Supabase:', error);
                             }
                           }
 

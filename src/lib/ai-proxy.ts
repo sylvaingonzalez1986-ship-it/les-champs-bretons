@@ -5,7 +5,7 @@
  * L'authentification utilisateur est requise pour tous les appels.
  */
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+import { SUPABASE_URL } from './env-validation';
 
 // Types pour les différents providers
 export type AIProvider = 'openai' | 'anthropic' | 'google' | 'grok' | 'elevenlabs';

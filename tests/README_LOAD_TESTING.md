@@ -80,36 +80,7 @@ k6 run tests/k6-browse-products.js
 
 ---
 
-### 2. Bourse Trading (`k6-bourse-trading.js`)
-
-Simulates professional users trading on the bourse (market).
-
-**User Journey:**
-- Load market data (50 products)
-- Fetch price updates
-- Create 1-3 buy orders (30% of users)
-- Check order status
-- Poll for price updates (20% of users)
-
-**Target Load:** 100 concurrent pro traders
-**Expected Duration:** 15 minutes
-**Expected RPS:** 10+ requests/second
-
-**Run Test:**
-```bash
-source .env.k6
-k6 run tests/k6-bourse-trading.js
-```
-
-**Expected Results (After Optimizations):**
-- Bourse load p95: < 500ms ✅
-- Order creation p95: < 300ms ✅
-- Price update p95: < 100ms ✅
-- Error rate: < 0.1% ✅
-
----
-
-### 3. Stress Test (Find Breaking Point)
+### 2. Stress Test (Find Breaking Point)
 
 **Coming Soon:** `k6-stress-test.js`
 
@@ -418,7 +389,6 @@ k6 run --verbose tests/k6-browse-products.js
 |-----------|-----|-----|-----|
 | Product Catalog | < 100ms | < 300ms | < 500ms |
 | Product Detail | < 50ms | < 200ms | < 300ms |
-| Bourse Market Data | < 150ms | < 500ms | < 1000ms |
 | Order Creation | < 100ms | < 300ms | < 500ms |
 | Cart Operations | < 50ms | < 200ms | < 300ms |
 

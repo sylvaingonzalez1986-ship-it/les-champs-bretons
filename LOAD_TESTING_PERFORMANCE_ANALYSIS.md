@@ -1,6 +1,8 @@
 # Load Testing & Performance Analysis
 ## Les Chanvriers - React Native Expo Application
 
+> **⚠️ Note (2026-02-04):** La fonctionnalité Bourse a été retirée de l'application. Les sections concernant `supabase-bourse.ts`, `bourse.tsx`, et `BourseBubbleGrid` ne sont plus applicables.
+
 **Analysis Date:** 2026-02-02
 **Target Capacity:** 500+ concurrent users
 **Technology Stack:** Expo SDK 53, React Native 0.76.7, Supabase Backend, React Query

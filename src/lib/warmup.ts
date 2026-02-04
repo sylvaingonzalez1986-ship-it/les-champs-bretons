@@ -30,11 +30,45 @@ async function warmCreateDirectSaleOrders(): Promise<void> {
   });
 }
 
+async function warmLabAnalyses(): Promise<void> {
+  // Warm up lab-analyses-url function
+  await fetch(`${SUPABASE_URL}/functions/v1/lab-analyses-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      'x-warmup': '1',
+    },
+    body: JSON.stringify({ storagePath: 'warmup' }),
+  });
+}
+
+async function warmProducersMutations(): Promise<void> {
+  const session = await getValidSession();
+  const token = session?.access_token;
+  if (!token) return;
+
+  // Just ping the function, don't actually mutate
+  await fetch(`${SUPABASE_URL}/functions/v1/producers-mutations`, {
+    method: 'OPTIONS',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
 export async function warmEdgeFunctions(): Promise<void> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
 
   try {
-    await Promise.allSettled([warmPublicCatalog(), warmCreateDirectSaleOrders()]);
+    await Promise.allSettled([
+      warmPublicCatalog(),
+      warmCreateDirectSaleOrders(),
+      warmLabAnalyses(),
+      warmProducersMutations(),
+    ]);
   } catch {
     // Ignore warmup failures
   }

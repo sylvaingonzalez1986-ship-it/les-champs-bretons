@@ -4,10 +4,10 @@
 
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system';
-import * as Crypto from 'expo-crypto';
 import { isSupabaseConfigured, getSupabaseConfig } from './env-validation';
 import { getValidSession } from './supabase-auth';
 import { ensureDeviceId } from './device-id';
+import { generateSecureUUID } from './uuid';
 
 // Storage bucket name - must be created in Supabase dashboard
 const STORAGE_BUCKET = 'images';
@@ -23,14 +23,6 @@ const RETRY_DELAY_BASE = 2000; // 2 seconds
 
 // Track if bucket has been verified
 let bucketVerified = false;
-
-/**
- * Generate a secure UUID for filenames (prevents enumeration attacks)
- * Uses expo-crypto for cryptographically secure random generation
- */
-function generateSecureUUID(): string {
-  return Crypto.randomUUID();
-}
 
 // Upload state for UI feedback
 export type UploadStatus = 'idle' | 'compressing' | 'validating' | 'uploading' | 'retrying' | 'success' | 'error';

@@ -1,4 +1,4 @@
-export { isSupabaseSyncConfigured } from './supabase-sync-core';
+export { isSupabaseSyncConfigured, SessionExpiredError } from './supabase-sync-core';
 export * from './supabase-sync.catalog';
 export * from './supabase-sync.packs';
 export * from './supabase-sync.promo';

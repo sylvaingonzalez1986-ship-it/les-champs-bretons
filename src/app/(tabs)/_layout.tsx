@@ -153,6 +153,9 @@ export default function TabLayout() {
   const screenOptions = useMemo(
     () => ({
       headerShown: false,
+      lazy: true,
+      detachInactiveScreens: true,
+      freezeOnBlur: true,
       tabBarStyle: {
         backgroundColor: COLORS.background.nightSky,
         borderTopColor: COLORS.primary.gold,
@@ -256,8 +259,6 @@ export default function TabLayout() {
           ),
         }}
       />
-
-      {/* BOURSE SUPPRIMÉE - Feature retirée pour simplifier l'app */}
 
       <Tabs.Screen
         name="regions"

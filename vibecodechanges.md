@@ -76,21 +76,7 @@ Below is the exact, step-by-step checklist to apply across apps. Each step has t
 
 ---
 
-## Step 3c — Virtualize Bourse grid (HIGH)
-**Goal:** Avoid rendering all bourse bubbles at once.
-
-**Where:**
-- src/components/BourseBubbleGrid.tsx
-
-**Change:**
-- Replace ScrollView grid with FlatList (virtualized).
-- Move summary/legend to ListHeader/ListFooter.
-
-**Status in this app:** ✅ Implemented.
-
----
-
-## Step 3d — Prevent Local Market orders memory growth (MEDIUM)
+## Step 3c — Prevent Local Market orders memory growth (MEDIUM)
 **Goal:** Avoid unbounded memory growth in local orders store.
 
 **Where:**

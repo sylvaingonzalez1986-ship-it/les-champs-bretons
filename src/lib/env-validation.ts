@@ -66,21 +66,28 @@ The application cannot start without them.
   }
 }
 
+// =============================================================================
+// CENTRALIZED SUPABASE CONFIGURATION
+// =============================================================================
+// These are the SINGLE SOURCE OF TRUTH for Supabase credentials.
+// All other files should import from here (or re-export for backward compat).
+// =============================================================================
+
+export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+
 /**
  * Get Supabase configuration
  * Throws if not configured
  */
 export function getSupabaseConfig(): { url: string; anonKey: string } {
-  const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !anonKey) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     throw new Error(
       'Supabase non configuré. Ajoutez EXPO_PUBLIC_SUPABASE_URL et EXPO_PUBLIC_SUPABASE_ANON_KEY dans l\'onglet ENV.'
     );
   }
 
-  return { url, anonKey };
+  return { url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY };
 }
 
 /**

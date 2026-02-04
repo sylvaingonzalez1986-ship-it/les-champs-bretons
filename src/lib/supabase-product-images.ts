@@ -3,13 +3,10 @@
  * Handles product image uploads for producers
  */
 
-import { getSupabaseConfig } from './env-validation';
+import { getSupabaseConfig, SUPABASE_URL, SUPABASE_ANON_KEY } from './env-validation';
 import { getSession, getValidSession } from './supabase-auth';
 import { ensureDeviceId } from './device-id';
 import * as Crypto from 'expo-crypto';
-
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
 export const PRODUCT_IMAGES_BUCKET = 'product-images';
 

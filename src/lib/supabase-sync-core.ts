@@ -2,9 +2,10 @@ import { getValidSession } from './supabase-auth';
 import { ensureDeviceId } from './device-id';
 import { fetchWithRetry, NetworkError } from './fetch-with-retry';
 import NetInfo from '@react-native-community/netinfo';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './env-validation';
 
-export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+// Re-export for backward compatibility (source: env-validation.ts)
+export { SUPABASE_URL, SUPABASE_ANON_KEY };
 
 // Configuration du retry pour les requêtes Supabase
 const RETRY_CONFIG = {
@@ -20,14 +21,32 @@ export const getHeaders = () => ({
   'Prefer': 'return=representation',
 });
 
+// Erreur personnalisée pour session expirée
+export class SessionExpiredError extends Error {
+  constructor(message = 'Session expirée, veuillez vous reconnecter') {
+    super(message);
+    this.name = 'SessionExpiredError';
+  }
+}
+
 // Headers authentifiés avec le token JWT de l'utilisateur pour les requêtes sécurisées (orders)
+// Lève SessionExpiredError si pas de session valide
 export const getAuthenticatedHeaders = async () => {
   const session = await getValidSession();
-  const token = session?.access_token || SUPABASE_ANON_KEY;
+  
+  if (!session?.access_token) {
+    console.warn('[getAuthenticatedHeaders] Pas de session valide - utilisateur non connecté');
+    throw new SessionExpiredError();
+  }
+  
+  // Log pour debug (masquer le token complet)
+  const tokenPreview = session.access_token.substring(0, 20) + '...';
+  console.log('[getAuthenticatedHeaders] Token obtenu:', tokenPreview, 'expire:', new Date(session.expires_at * 1000).toISOString());
+  
   const deviceId = await ensureDeviceId();
   return {
     'apikey': SUPABASE_ANON_KEY,
-    'Authorization': `Bearer ${token}`,
+    'Authorization': `Bearer ${session.access_token}`,
     'Content-Type': 'application/json',
     'Prefer': 'return=representation',
     'X-Device-Id': deviceId,

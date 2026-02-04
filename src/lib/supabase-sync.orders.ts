@@ -1,9 +1,10 @@
-import { getValidSession } from './supabase-auth';
+import { getValidSession, refreshSession } from './supabase-auth';
 import {
   SUPABASE_URL,
   getAuthenticatedHeaders,
   isSupabaseSyncConfigured,
   supabaseFetch,
+  SessionExpiredError,
 } from './supabase-sync-core';
 import { Order, OrderStatus } from './store';
 
@@ -301,15 +302,61 @@ export async function updateOrderInSupabase(id: string, updates: Partial<Order>)
   if (updates.notes !== undefined) supabaseUpdates.notes = updates.notes;
   supabaseUpdates.updated_at = new Date().toISOString();
 
-  const headers = await getAuthenticatedHeaders();
-  const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/orders-update`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ id, updates: supabaseUpdates }),
-  });
+  // getAuthenticatedHeaders lève SessionExpiredError si pas de session
+  let headers: Record<string, string>;
+  try {
+    headers = await getAuthenticatedHeaders();
+  } catch (error) {
+    if (error instanceof SessionExpiredError) {
+      throw error;
+    }
+    throw error;
+  }
+
+  const sendUpdate = async (authHeaders: Record<string, string>) => {
+    console.log('[updateOrderInSupabase] Envoi requête pour commande:', id);
+    return supabaseFetch(`${SUPABASE_URL}/functions/v1/orders-update`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ id, updates: supabaseUpdates }),
+    });
+  };
+
+  let response = await sendUpdate(headers);
+  console.log('[updateOrderInSupabase] Réponse:', response.status);
+
+  // Retry once after refresh on 401
+  if (response.status === 401) {
+    console.log('[updateOrderInSupabase] 401 reçu, tentative de refresh...');
+    const refreshed = await refreshSession();
+    if (!refreshed?.access_token) {
+      console.warn('[updateOrderInSupabase] Refresh échoué');
+      throw new SessionExpiredError();
+    }
+    console.log('[updateOrderInSupabase] Refresh OK, retry...');
+    headers = await getAuthenticatedHeaders();
+    response = await sendUpdate(headers);
+    console.log('[updateOrderInSupabase] Réponse après retry:', response.status);
+  }
 
   if (!response.ok) {
-    throw new Error('Erreur mise à jour commande');
+    const errorBody = await response.text().catch(() => 'unknown');
+
+    if (response.status === 401) {
+      console.warn('[updateOrderInSupabase] Session expirée:', errorBody);
+      throw new SessionExpiredError();
+    }
+    if (response.status === 403) {
+      console.warn('[updateOrderInSupabase] Accès refusé:', errorBody);
+      throw new Error('Vous n\'êtes pas autorisé à modifier cette commande.');
+    }
+    if (response.status === 404) {
+      console.warn('[updateOrderInSupabase] Commande introuvable:', errorBody);
+      throw new Error('Commande introuvable.');
+    }
+
+    console.error('[updateOrderInSupabase] Error:', response.status, errorBody);
+    throw new Error(`Erreur mise à jour commande: ${response.status}`);
   }
 }
 
@@ -319,13 +366,25 @@ export async function deleteOrderFromSupabase(id: string): Promise<void> {
     throw new Error('Supabase non configuré');
   }
 
-  const headers = await getAuthenticatedHeaders();
+  let headers: Record<string, string>;
+  try {
+    headers = await getAuthenticatedHeaders();
+  } catch (error) {
+    if (error instanceof SessionExpiredError) {
+      throw error;
+    }
+    throw error;
+  }
+  
   const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/orders?id=eq.${id}`, {
     method: 'DELETE',
     headers,
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new SessionExpiredError();
+    }
     throw new Error('Erreur suppression commande');
   }
 }

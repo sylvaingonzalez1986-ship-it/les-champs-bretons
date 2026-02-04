@@ -1,13 +1,11 @@
-/**
+﻿/**
  * Supabase Lab Analyses Management
  * Handles lab analysis uploads (PDF or image) for products
  */
 
-import { getValidSession } from './supabase-auth';
+import { getValidSession, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-auth';
 import { ensureDeviceId } from './device-id';
-
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+import { generateSecureUUID } from './uuid';
 
 export const LAB_ANALYSES_BUCKET = 'lab-analyses';
 
@@ -44,14 +42,6 @@ function getContentType(ext: string, mimeType?: string): string {
   return 'image/jpeg';
 }
 
-function generateId(): string {
-  const cryptoObj = (globalThis as unknown as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (cryptoObj?.randomUUID) {
-    return cryptoObj.randomUUID();
-  }
-  return `lab_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
-}
-
 /**
  * Upload a lab analysis file to Supabase Storage
  * @param fileUri - Local file URI (file://...) or remote URL
@@ -69,7 +59,12 @@ export async function uploadLabAnalysis(
   mimeType?: string
 ): Promise<string> {
   if (!isLabAnalysesConfigured()) {
-    throw new Error('Supabase non configuré');
+    throw new Error('Supabase non configurÃ©');
+  }
+
+  const session = await getValidSession();
+  if (!session?.access_token) {
+    throw new Error('Utilisateur non authentifiÃ©');
   }
 
   // Already a remote URL
@@ -87,18 +82,45 @@ export async function uploadLabAnalysis(
   const response = await fetch(fileUri);
   const blob = await response.blob();
 
-  const id = generateId();
+  const id = generateSecureUUID();
   const finalName = `${producerId}/${productId}/${id}.${ext}`;
 
-  const uploadResponse = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${LAB_ANALYSES_BUCKET}/${finalName}`,
+  const deviceId = await ensureDeviceId();
+  const signedUrlResponse = await fetch(
+    `${SUPABASE_URL}/functions/v1/lab-analyses-upload-url`,
     {
       method: 'POST',
       headers: {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+        'X-Device-Id': deviceId,
+      },
+      body: JSON.stringify({
+        path: finalName,
+        contentType: contentType || blob.type || 'application/octet-stream',
+        fileSize: blob.size,
+      }),
+    }
+  );
+
+  if (!signedUrlResponse.ok) {
+    throw new Error('Erreur signature upload');
+  }
+
+  const signedPayload = await signedUrlResponse.json();
+  const signedUrl = signedPayload?.signedUrl;
+  const storedPath = signedPayload?.path;
+
+  if (!signedUrl || !storedPath) {
+    throw new Error('Erreur signature upload');
+  }
+
+  const uploadResponse = await fetch(
+    signedUrl,
+    {
+      method: 'PUT',
+      headers: {
         'Content-Type': contentType || blob.type || 'application/octet-stream',
-        'x-upsert': 'true',
       },
       body: blob,
     }
@@ -110,5 +132,5 @@ export async function uploadLabAnalysis(
     throw new Error('Erreur upload analyse laboratoire');
   }
 
-  return `${LAB_ANALYSES_BUCKET}/${finalName}`;
+  return storedPath as string;
 }

@@ -1603,15 +1603,7 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS stock_available integer DEFAULT 0;
 UPDATE products SET base_price = price WHERE base_price IS NULL;
 ```
 
-#### Fichiers associés
-
-- `src/app/(tabs)/bourse.tsx`: Écran principal de la bourse
-- `src/lib/supabase-bourse.ts`: API pour les ordres et calculs de prix
-- `src/lib/bourse-store.ts`: Store Zustand pour l'état de la bourse
-- `src/components/BourseProductBubble.tsx`: Composant bulle animé
-- `src/components/BourseBubbleGrid.tsx`: Grille de bulles avec statistiques
-- `src/components/BourseProductDetailModal.tsx`: Modal de détail avec formulaire
-- `src/components/BourseAdminView.tsx`: Vue admin avec gestion des ordres
+> **Note:** La fonctionnalité Bourse a été retirée de l'application pour simplification.
 
 ### Formulaires de Profil par Rôle
 

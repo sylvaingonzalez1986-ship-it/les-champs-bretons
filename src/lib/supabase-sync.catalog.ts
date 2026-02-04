@@ -521,7 +521,86 @@ export async function deleteProductFromSupabase(id: string): Promise<void> {
 
 // ==================== FULL SYNC ====================
 
+// Interface for the producers_catalog materialized view response
+interface ProducersCatalogRow {
+  id: string;
+  name: string;
+  email: string | null;
+  region: string;
+  department: string;
+  city: string;
+  image: string;
+  description: string;
+  latitude: number;
+  longitude: number;
+  map_position_x: number | null;
+  map_position_y: number | null;
+  soil_type: string;
+  soil_ph: string;
+  soil_characteristics: string;
+  climate_type: string;
+  climate_avg_temp: string;
+  climate_rainfall: string;
+  culture_outdoor: boolean | null;
+  culture_greenhouse: boolean | null;
+  culture_indoor: boolean | null;
+  vente_directe_ferme: boolean | null;
+  adresse_retrait: string | null;
+  horaires_retrait: string | null;
+  instructions_retrait: string | null;
+  profile_id: string | null;
+  created_at: string;
+  updated_at: string;
+  profile: {
+    company_name: string | null;
+    business_name: string | null;
+  } | null;
+  products: SupabaseProduct[]; // JSONB array parsed by PostgREST
+}
+
+// Convert catalog row to Producer (with embedded products)
+function catalogRowToProducer(row: ProducersCatalogRow): Producer {
+  // Parse products from JSONB array
+  const products: ProducerProduct[] = (row.products || []).map(supabaseToProduct);
+
+  return {
+    id: row.id,
+    name: row.name,
+    companyName: row.profile?.company_name ?? undefined,
+    businessName: row.profile?.business_name ?? undefined,
+    profileId: row.profile_id ?? undefined,
+    email: row.email ?? undefined,
+    region: row.region,
+    department: row.department,
+    city: row.city,
+    image: row.image,
+    description: row.description,
+    coordinates: {
+      latitude: row.latitude,
+      longitude: row.longitude,
+    },
+    mapPosition: row.map_position_x !== null && row.map_position_y !== null
+      ? { x: row.map_position_x, y: row.map_position_y }
+      : undefined,
+    soil: {
+      type: row.soil_type,
+      ph: row.soil_ph,
+      characteristics: row.soil_characteristics,
+    },
+    climate: {
+      type: row.climate_type,
+      avgTemp: row.climate_avg_temp,
+      rainfall: row.climate_rainfall,
+    },
+    products,
+    cultureOutdoor: row.culture_outdoor ?? undefined,
+    cultureGreenhouse: row.culture_greenhouse ?? undefined,
+    cultureIndoor: row.culture_indoor ?? undefined,
+  };
+}
+
 // Fetch all data and return as Producer array
+// OPTIMIZED: Uses materialized view (1 query instead of N+1 pattern)
 export async function fetchAllProducersWithProducts(): Promise<Producer[]> {
   if (!isSupabaseSyncConfigured()) {
     return [];
@@ -534,42 +613,39 @@ export async function fetchAllProducersWithProducts(): Promise<Producer[]> {
   }
 
   try {
-    const supabaseProducers: SupabaseProducer[] = [];
-    let producersOffset = 0;
+    // Single query to materialized view with pagination
+    const allProducers: Producer[] = [];
+    let offset = 0;
+    const limit = 500; // Larger batches since data is pre-joined
+
     while (true) {
-      const { producers, nextOffset } = await fetchProducersPage({
-        limit: 200,
-        offset: producersOffset,
-      });
-      supabaseProducers.push(...producers);
-      if (nextOffset === null) break;
-      producersOffset = nextOffset;
+      const response = await supabaseFetch(
+        `${SUPABASE_URL}/rest/v1/producers_catalog?order=name.asc&limit=${limit}&offset=${offset}`,
+        {
+          method: 'GET',
+          headers: getHeaders(),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Erreur récupération catalogue producteurs');
+      }
+
+      const rows: ProducersCatalogRow[] = await response.json();
+
+      // Convert to Producer format
+      for (const row of rows) {
+        allProducers.push(catalogRowToProducer(row));
+      }
+
+      // Check if there are more pages
+      if (rows.length < limit) {
+        break;
+      }
+      offset += limit;
     }
 
-    const supabaseProducts: SupabaseProduct[] = [];
-    let productsOffset = 0;
-    while (true) {
-      const { products, nextOffset } = await fetchProductsPage({
-        limit: 200,
-        offset: productsOffset,
-      });
-      supabaseProducts.push(...products);
-      if (nextOffset === null) break;
-      productsOffset = nextOffset;
-    }
-
-    // Group products by producer_id
-    const productsByProducer = new Map<string, ProducerProduct[]>();
-    for (const sp of supabaseProducts) {
-      const products = productsByProducer.get(sp.producer_id) || [];
-      products.push(supabaseToProduct(sp));
-      productsByProducer.set(sp.producer_id, products);
-    }
-
-    // Convert to Producer array
-    return supabaseProducers.map((sp) =>
-      supabaseToProducer(sp, productsByProducer.get(sp.id) || [])
-    );
+    return allProducers;
   } catch (error) {
     console.warn('Error fetching from Supabase:', error);
     const cached = await AsyncStorage.getItem('cache_producers_v2');

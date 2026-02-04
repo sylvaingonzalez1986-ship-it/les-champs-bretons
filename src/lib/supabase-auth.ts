@@ -8,12 +8,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchWithRetry, NetworkError } from './fetch-with-retry';
 import SecureStorage, { initializeSecureStorage } from './secure-storage';
 import { ensureDeviceId } from './device-id';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from './env-validation';
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 const DEVICE_BINDING_ENDPOINT = '/functions/v1/bind-device';
 
-// Exporter pour utilisation externe
+// Re-export for backward compatibility (source: env-validation.ts)
 export { SUPABASE_URL, SUPABASE_ANON_KEY };
 
 // Configuration du retry pour les requêtes auth
@@ -360,16 +359,42 @@ export function getSession(): AuthSession | null {
  * Obtenir une session valide (rafraîchit si expirée)
  */
 export async function getValidSession(): Promise<AuthSession | null> {
+  // Si pas de session en mémoire, essayer de charger depuis le stockage
   if (!currentSession) {
+    const stored = await loadStoredSession();
+    if (!stored) {
+      console.warn('[getValidSession] Aucune session stockée');
+      return null;
+    }
+    // loadStoredSession met à jour currentSession en interne
+  }
+
+  // Vérifier que currentSession existe maintenant
+  if (!currentSession) {
+    console.warn('[getValidSession] Session toujours null après chargement');
     return null;
   }
 
-  // Check if token is expired or will expire in the next 60 seconds
+  // Check if token is expired or will expire in the next 5 minutes
+  // Use a larger buffer to account for clock drift between client and server
   const expiresAt = currentSession.expires_at * 1000;
-  const bufferTime = 60 * 1000; // 60 seconds buffer
+  const bufferTime = 5 * 60 * 1000; // 5 minutes buffer (increased from 60s to handle clock drift)
+  const now = Date.now();
 
-  if (Date.now() + bufferTime >= expiresAt) {
+  console.log('[getValidSession] Check expiration:', {
+    now: new Date(now).toISOString(),
+    expiresAt: new Date(expiresAt).toISOString(),
+    isExpired: now + bufferTime >= expiresAt,
+  });
+
+  if (now + bufferTime >= expiresAt) {
+    console.log('[getValidSession] Token expiré ou bientôt expiré, rafraîchissement...');
     const refreshed = await refreshSession(currentSession.refresh_token);
+    if (!refreshed) {
+      console.warn('[getValidSession] Échec du rafraîchissement de session');
+      return null;
+    }
+    console.log('[getValidSession] Session rafraîchie avec succès');
     return refreshed;
   }
 
@@ -660,9 +685,13 @@ export async function refreshSession(
   refreshToken?: string
 ): Promise<AuthSession | null> {
   const token = refreshToken || currentSession?.refresh_token;
-  if (!token) return null;
+  if (!token) {
+    console.warn('[refreshSession] Pas de refresh token disponible');
+    return null;
+  }
 
   try {
+    console.log('[refreshSession] Tentative de rafraîchissement...');
     const response = await authFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
       method: 'POST',
       headers: getPublicHeaders(),
@@ -672,6 +701,7 @@ export async function refreshSession(
     const data = await response.json();
 
     if (!response.ok) {
+      console.warn('[refreshSession] Échec:', response.status, data);
       await clearSession();
       return null;
     }
@@ -686,9 +716,10 @@ export async function refreshSession(
     };
 
     await saveSession(session);
+    console.log('[refreshSession] Nouvelle session sauvegardée, expire dans', data.expires_in, 'secondes');
     return session;
   } catch (error) {
-    console.warn('Erreur rafraîchissement session:', error);
+    console.warn('[refreshSession] Erreur rafraîchissement session:', error);
     return null;
   }
 }

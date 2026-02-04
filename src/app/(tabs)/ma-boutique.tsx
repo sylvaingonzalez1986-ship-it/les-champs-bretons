@@ -65,7 +65,7 @@ import { uploadProductImage, isProductImagesConfigured, getSignedProductImageUrl
 import { uploadLabAnalysis, isLabAnalysesConfigured } from '@/lib/supabase-lab-analyses';
 import { LabAnalysisUploader } from '@/components/LabAnalysisUploader';
 import { useOrdersStore, Order, OrderStatus, ORDER_STATUS_CONFIG } from '@/lib/store';
-import { isSupabaseSyncConfigured, fetchOrdersForProducer, updateOrderInSupabase } from '@/lib/supabase-sync';
+import { isSupabaseSyncConfigured, fetchOrdersForProducer, updateOrderInSupabase, SessionExpiredError } from '@/lib/supabase-sync';
 import { useLocalMarketOrders, LocalMarketOrder, getStatusLabel, getStatusColor } from '@/lib/local-market-orders';
 import { useAuth } from '@/lib/useAuth';
 
@@ -140,7 +140,7 @@ const STATUS_OPTIONS = [
 export default function MaBoutiqueScreen() {
   const insets = useSafeAreaInsets();
   const { isProducer, isAdmin } = usePermissions();
-  const { session } = useAuth();
+  const { session, signOut } = useAuth();
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabType>('products');
@@ -404,8 +404,15 @@ export default function MaBoutiqueScreen() {
         await updateOrderInSupabase(orderId, { status: newStatus });
         showToast('Statut mis à jour', 'success');
       } catch (error) {
-        console.error('Erreur sync statut commande:', error);
-        showToast('Erreur de synchronisation', 'error');
+        const errMsg = error instanceof Error ? error.message : 'Erreur inconnue';
+        if (error instanceof SessionExpiredError) {
+          console.warn('Session expirée lors de la sync commande');
+          showToast('Session expirée. Merci de vous reconnecter.', 'error');
+          await signOut();
+          return;
+        }
+        console.warn('Erreur sync statut commande:', errMsg);
+        showToast(`Sync échoué: ${errMsg}`, 'error');
       }
     }
   };
@@ -433,7 +440,13 @@ export default function MaBoutiqueScreen() {
         await updateOrderInSupabase(orderId, { trackingNumber });
         showToast('Numéro de suivi enregistré', 'success');
       } catch (error) {
-        console.error('Erreur sync tracking:', error);
+        if (error instanceof SessionExpiredError) {
+          console.warn('Session expirée lors du tracking');
+          showToast('Session expirée. Merci de vous reconnecter.', 'error');
+          await signOut();
+          return;
+        }
+        console.warn('Erreur sync tracking:', error);
       }
     }
   };

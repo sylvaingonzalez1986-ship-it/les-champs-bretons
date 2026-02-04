@@ -19,9 +19,7 @@ Date: 2026-02-03
 - Moved user stats increment to Edge Function
 	- [supabase/functions/user-stats-mutations/index.ts](supabase/functions/user-stats-mutations/index.ts)
 	- [src/lib/supabase-sync.user.ts](src/lib/supabase-sync.user.ts#L470-L520)
-- Secured pro order creation via Edge Function
-	- [supabase/functions/pro-orders-mutations/index.ts](supabase/functions/pro-orders-mutations/index.ts)
-	- [src/lib/supabase-bourse.ts](src/lib/supabase-bourse.ts#L520-L576)
+- Bourse feature removed (pro orders no longer exist)
 - Secured lots CRUD via Edge Function (admin only)
 	- [supabase/functions/lots-mutations/index.ts](supabase/functions/lots-mutations/index.ts)
 	- [src/lib/supabase-sync.lots.ts](src/lib/supabase-sync.lots.ts#L133-L227)
@@ -63,13 +61,8 @@ Date: 2026-02-03
 
 ---
 
-### 4) HIGH — Client-side creation of pro orders
-**Evidence:** Client inserts directly into `pro_orders`.
-- [src/lib/supabase-bourse.ts](src/lib/supabase-bourse.ts#L540-L567)
-
-**Impact:** Quantity/price tampering, bypass of business rules (OWASP A01, A04).
-
-**Recommendation:** Move to Edge Function; validate quantity and pricing server-side.
+### 4) ~~HIGH — Client-side creation of pro orders~~ RESOLVED
+**Status:** Feature removed. La Bourse a été retirée de l'application.
 
 ---
 

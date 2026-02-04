@@ -7,8 +7,8 @@ import {
   RefreshControl,
   ActivityIndicator,
   Dimensions,
-  FlatList,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -466,6 +466,74 @@ export default function MarcheLocal() {
     );
   }
 
+  // Render header component for FlashList
+  const renderHeader = useCallback(() => (
+    <View style={{ paddingTop: insets.top + 16 }} className="px-4 mb-6 flex-row items-center justify-between">
+      <View className="flex-1">
+        <Text className="text-3xl font-bold" style={{ color: COLORS.text.cream }}>
+          Marché local
+        </Text>
+        <Text className="text-sm mt-2" style={{ color: COLORS.text.lightGray }}>
+          Commandez directement chez vos producteurs locaux
+        </Text>
+        <Text className="text-xs mt-1" style={{ color: COLORS.text.muted }}>
+          Paiement sur place lors du retrait
+        </Text>
+      </View>
+      <View className="flex-row items-center gap-2">
+        <Pressable
+          onPress={() => router.push('/mes-commandes-marche-local')}
+          className="p-3 rounded-lg"
+          style={{ backgroundColor: 'rgba(232, 148, 90, 0.19)' }}
+        >
+          <ClipboardList size={20} color={COLORS.primary.orange} />
+        </Pressable>
+        <CartButton />
+      </View>
+    </View>
+  ), [insets.top]);
+
+  // Render department item for FlashList
+  const renderDepartmentItem = useCallback(({ item: group }: { item: DepartmentGroup }) => (
+    <View className="px-4">
+      <DepartmentCard
+        department={group.department}
+        departmentName={group.departmentName}
+        producers={group.producers}
+        onPress={() => toggleDepartment(group.department, group.producers)}
+      />
+    </View>
+  ), [toggleDepartment]);
+
+  // Render footer component for FlashList
+  const renderFooter = useCallback(() => {
+    if (!producersHasMore) return null;
+    return (
+      <View className="items-center my-6 px-4">
+        <Pressable
+          onPress={onLoadMore}
+          disabled={producersLoadingMore}
+          className="px-4 py-2 rounded-full"
+          style={{ backgroundColor: `${COLORS.text.white}10` }}
+        >
+          <Text style={{ color: COLORS.text.lightGray }}>
+            {producersLoadingMore ? 'Chargement...' : 'Charger plus'}
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }, [producersHasMore, producersLoadingMore, onLoadMore]);
+
+  // Render empty component for FlashList
+  const renderEmpty = useCallback(() => (
+    <View className="flex-1 items-center justify-center px-4 py-12">
+      <Store size={48} color={COLORS.text.muted} strokeWidth={1.5} />
+      <Text className="text-center mt-4" style={{ color: COLORS.text.lightGray }}>
+        Aucun producteur ne propose la vente directe pour le moment.
+      </Text>
+    </View>
+  ), []);
+
   return (
     <LinearGradient
       colors={[COLORS.background.nightSky, COLORS.background.mediumBlue]}
@@ -473,74 +541,19 @@ export default function MarcheLocal() {
       end={{ x: 1, y: 1 }}
       style={{ flex: 1 }}
     >
-      <ScrollView
-        ref={scrollViewRef}
-        style={{ flex: 1 }}
+      <FlashList
+        data={departmentGroups}
+        renderItem={renderDepartmentItem}
+        estimatedItemSize={100}
+        keyExtractor={(item) => item.department}
+        ListHeaderComponent={renderHeader}
+        ListFooterComponent={renderFooter}
+        ListEmptyComponent={renderEmpty}
         contentContainerStyle={{ paddingBottom: 40 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary.gold} />}
-      >
-        {/* Header */}
-        <View style={{ paddingTop: insets.top + 16 }} className="px-4 mb-6 flex-row items-center justify-between">
-          <View className="flex-1">
-            <Text className="text-3xl font-bold" style={{ color: COLORS.text.cream }}>
-              Marché local
-            </Text>
-            <Text className="text-sm mt-2" style={{ color: COLORS.text.lightGray }}>
-              Commandez directement chez vos producteurs locaux
-            </Text>
-            <Text className="text-xs mt-1" style={{ color: COLORS.text.muted }}>
-              Paiement sur place lors du retrait
-            </Text>
-          </View>
-          <View className="flex-row items-center gap-2">
-            <Pressable
-              onPress={() => router.push('/mes-commandes-marche-local')}
-              className="p-3 rounded-lg"
-              style={{ backgroundColor: 'rgba(232, 148, 90, 0.19)' }}
-            >
-              <ClipboardList size={20} color={COLORS.primary.orange} />
-            </Pressable>
-            <CartButton />
-          </View>
-        </View>
-
-        {/* Liste des départements */}
-        {departmentGroups.length === 0 ? (
-          <View className="flex-1 items-center justify-center px-4 py-12">
-            <Store size={48} color={COLORS.text.muted} strokeWidth={1.5} />
-            <Text className="text-center mt-4" style={{ color: COLORS.text.lightGray }}>
-              Aucun producteur ne propose la vente directe pour le moment.
-            </Text>
-          </View>
-        ) : (
-          <View className="px-4">
-            {departmentGroups.map((group) => (
-              <DepartmentCard
-                key={group.department}
-                department={group.department}
-                departmentName={group.departmentName}
-                producers={group.producers}
-                onPress={() => toggleDepartment(group.department, group.producers)}
-              />
-            ))}
-
-            {producersHasMore && (
-              <View className="items-center my-6">
-                <Pressable
-                  onPress={onLoadMore}
-                  disabled={producersLoadingMore}
-                  className="px-4 py-2 rounded-full"
-                  style={{ backgroundColor: `${COLORS.text.white}10` }}
-                >
-                  <Text style={{ color: COLORS.text.lightGray }}>
-                    {producersLoadingMore ? 'Chargement...' : 'Charger plus'}
-                  </Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
-        )}
-      </ScrollView>
+        onEndReached={onLoadMore}
+        onEndReachedThreshold={0.3}
+      />
 
       {/* Carrousel de producteurs (style carte Pokémon) */}
       {carouselVisible && carouselProducers.length > 0 && (

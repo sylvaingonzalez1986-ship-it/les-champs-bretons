@@ -8,7 +8,7 @@
  * - Timeouts globaux
  */
 
-import { getValidSession, AuthSession } from './supabase-auth';
+import { getValidSession, AuthSession, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-auth';
 import {
   userProfileSchema,
   userProfileUpdateSchema,
@@ -19,9 +19,6 @@ import {
   USER_ERROR_MESSAGES,
   sanitizeString,
 } from './validation';
-
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
 // Timeout global pour les requêtes (15 secondes)
 const REQUEST_TIMEOUT = 15000;

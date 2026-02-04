@@ -35,7 +35,7 @@ export function isOriginAllowed(origin?: string | null): boolean {
 export function buildCorsHeaders(origin?: string): Record<string, string> {
   const allowlist = parseAllowlist(Deno.env.get('CORS_ALLOWLIST'));
   const allowOrigin = allowlist.length === 0
-    ? '*'
+    ? 'null'
     : (origin && allowlist.includes(origin) ? origin : 'null');
 
   const varyHeader = allowlist.length > 0 ? { Vary: 'Origin' } : {};

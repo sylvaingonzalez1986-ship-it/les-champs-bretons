@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 import { getCorsHeaders, isOriginAllowed } from '../_shared/cors.ts';
 import { checkRateLimit, createRateLimitResponse, RATE_LIMIT_PRESETS } from '../_shared/rate-limit.ts';
@@ -41,8 +41,29 @@ serve(async (req) => {
     return jsonResponse({ error: 'METHOD_NOT_ALLOWED' }, 405, responseCorsHeaders);
   }
 
-  const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
-  const rateLimitResult = await checkRateLimit(ip, RATE_LIMIT_PRESETS.GENERAL);
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+
+  if (!supabaseUrl || !anonKey || !serviceKey) {
+    return jsonResponse({ error: 'CONFIG_ERROR' }, 500, responseCorsHeaders);
+  }
+
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader) {
+    return jsonResponse({ error: 'UNAUTHORIZED' }, 401, responseCorsHeaders);
+  }
+
+  const userClient = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+  });
+
+  const { data: userData, error: userError } = await userClient.auth.getUser();
+  if (userError || !userData.user) {
+    return jsonResponse({ error: 'UNAUTHORIZED' }, 401, responseCorsHeaders);
+  }
+
+  const rateLimitResult = await checkRateLimit(userData.user.id, RATE_LIMIT_PRESETS.GENERAL);
   if (!rateLimitResult.allowed) {
     return createRateLimitResponse(rateLimitResult, RATE_LIMIT_PRESETS.GENERAL, responseCorsHeaders);
   }
@@ -57,13 +78,6 @@ serve(async (req) => {
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {
     return jsonResponse({ error: 'VALIDATION_ERROR' }, 400, responseCorsHeaders);
-  }
-
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-
-  if (!supabaseUrl || !serviceKey) {
-    return jsonResponse({ error: 'CONFIG_ERROR' }, 500, responseCorsHeaders);
   }
 
   const serviceClient = createClient(supabaseUrl, serviceKey);

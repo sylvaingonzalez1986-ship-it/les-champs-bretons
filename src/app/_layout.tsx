@@ -11,7 +11,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts, Wallpoet_400Regular } from '@expo-google-fonts/wallpoet';
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import { View, ActivityIndicator, Text, Pressable } from 'react-native';
+import { View, ActivityIndicator, Text, Pressable, InteractionManager } from 'react-native';
+import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useDataSync } from '@/lib/useDataSync';
 import { useUserDataSync } from '@/lib/useUserData';
@@ -23,6 +24,12 @@ import { NetworkProvider, useNetwork } from '@/lib/network-context';
 import { NetworkBanner } from '@/components/NetworkBanner';
 import { setupOrderQueueNetworkListener, cleanupOrderQueueNetworkListener } from '@/lib/order-queue-store';
 import { warmEdgeFunctions } from '@/lib/warmup';
+
+// Configure Reanimated logger to suppress strict mode warnings
+configureReanimatedLogger({
+  level: ReanimatedLogLevel.warn,
+  strict: false,
+});
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',
@@ -39,7 +46,7 @@ const queryClient = new QueryClient({
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
       staleTime: 1000 * 60 * 10,
       gcTime: 1000 * 60 * 60,
-      refetchOnMount: 'always',
+      refetchOnMount: 'ifStale',
       refetchOnWindowFocus: false,
     },
   },
@@ -368,7 +375,12 @@ export default function RootLayout() {
   useEffect(() => {
     if (!supabaseConfigured || warmupTriggered.current) return;
     warmupTriggered.current = true;
-    void warmEdgeFunctions();
+    const task = InteractionManager.runAfterInteractions(() => {
+      void warmEdgeFunctions();
+    });
+    return () => {
+      task.cancel?.();
+    };
   }, [supabaseConfigured]);
 
   const [fontTimeout, setFontTimeout] = useState(false);

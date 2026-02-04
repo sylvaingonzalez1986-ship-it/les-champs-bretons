@@ -1,12 +1,14 @@
 # Quick Fixes Implementation Guide
 
+> **⚠️ Note (2026-02-04):** La fonctionnalité Bourse a été retirée de l'application. Les Fix 1 et Fix 3 (Bourse) ne sont plus nécessaires.
+
 ## Priority 1: Fix N+1 Queries (2 hours - Immediate Impact)
 
-### Fix 1: Optimize Bourse Product Fetch
+### ~~Fix 1: Optimize Bourse Product Fetch~~ (RETIRÉ - Feature supprimée)
 
-**File:** `src/lib/supabase-bourse.ts`
+**File:** `src/lib/supabase-bourse.ts` *(supprimé)*
 **Lines:** 258-284
-**Impact:** 80% query reduction
+**Impact:** N/A - Feature retirée
 
 #### Current Code (N+1 Problem):
 ```typescript
