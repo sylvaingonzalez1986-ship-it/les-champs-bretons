@@ -1,75 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-type RateLimitResult = {
-  allowed: boolean;
-  remaining: number;
-  resetAt: number;
-};
-
-type RateLimitPreset = {
-  windowMs: number;
-  limit: number;
-};
-
-const RATE_LIMIT_PRESETS: Record<string, RateLimitPreset> = {
-  GENERAL: { windowMs: 60_000, limit: 60 },
-};
-
-const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimit(key: string, preset: RateLimitPreset): RateLimitResult {
-  const now = Date.now();
-  const entry = rateLimitStore.get(key);
-
-  if (!entry || now >= entry.resetAt) {
-    const resetAt = now + preset.windowMs;
-    rateLimitStore.set(key, { count: 1, resetAt });
-    return { allowed: true, remaining: preset.limit - 1, resetAt };
-  }
-
-  if (entry.count >= preset.limit) {
-    return { allowed: false, remaining: 0, resetAt: entry.resetAt };
-  }
-
-  entry.count += 1;
-  rateLimitStore.set(key, entry);
-  return { allowed: true, remaining: Math.max(preset.limit - entry.count, 0), resetAt: entry.resetAt };
-}
-
-function createRateLimitResponse(
-  result: RateLimitResult,
-  preset: RateLimitPreset,
-  extraHeaders: Record<string, string>,
-): Response {
-  const headers = new Headers({
-    ...extraHeaders,
-    "Content-Type": "application/json",
-    "Retry-After": Math.ceil((result.resetAt - Date.now()) / 1000).toString(),
-    "X-RateLimit-Limit": preset.limit.toString(),
-    "X-RateLimit-Remaining": result.remaining.toString(),
-    "X-RateLimit-Reset": Math.floor(result.resetAt / 1000).toString(),
-  });
-
-  return new Response(JSON.stringify({ error: "RATE_LIMITED" }), { status: 429, headers });
-}
-
-function logSecurityEvent(event: {
-  userId: string;
-  action: string;
-  endpoint: string;
-  ip: string;
-  userAgent: string;
-  success: boolean;
-  reason?: string;
-}) {
-  console.warn("[security-event]", JSON.stringify(event));
-}
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { getCorsHeaders, isOriginAllowed } from "../_shared/cors.ts";
+import {
+  checkRateLimit,
+  createRateLimitResponse,
+  logSecurityEvent,
+  RATE_LIMIT_PRESETS,
+} from "../_shared/rate-limit.ts";
 
 interface ProduitVente {
   nom: string;
@@ -95,6 +33,11 @@ interface RequestBody {
   format?: string;
 }
 
+const requestSchema = z.object({
+  depuis: z.string().datetime().optional().nullable(),
+  format: z.literal("json").optional(),
+});
+
 function calculateTotals(lignes: any[]): { ht: number; tva: number; ttc: number } {
   let totalHt = 0;
   let totalTva = 0;
@@ -119,14 +62,24 @@ function calculateTotals(lignes: any[]): { ht: number; tva: number; ttc: number 
 }
 
 serve(async (req) => {
+  const responseCorsHeaders = getCorsHeaders(req);
+  const origin = req.headers.get("origin");
+
+  if (!isOriginAllowed(origin)) {
+    return new Response(JSON.stringify({ error: "CORS_NOT_ALLOWED" }), {
+      status: 403,
+      headers: { ...responseCorsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { headers: responseCorsHeaders });
   }
 
   if (req.method !== "POST") {
     return new Response(
       JSON.stringify({ error: "Method not allowed" }),
-      { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 405, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } }
     );
   }
 
@@ -136,7 +89,7 @@ serve(async (req) => {
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return new Response(
         JSON.stringify({ error: "Unauthorized", message: "Missing or invalid Authorization header" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 401, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -147,20 +100,20 @@ serve(async (req) => {
       console.error("COMPTA_API_KEY not configured");
       return new Response(
         JSON.stringify({ error: "Server Error", message: "API configuration error" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 500, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     if (token !== apiKey) {
       return new Response(
         JSON.stringify({ error: "Unauthorized", message: "Invalid API key" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 401, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0] || "unknown";
     const userAgent = req.headers.get("user-agent") || "unknown";
-    const rateLimitResult = checkRateLimit(ip, RATE_LIMIT_PRESETS.GENERAL);
+    const rateLimitResult = await checkRateLimit(ip, RATE_LIMIT_PRESETS.GENERAL);
 
     if (!rateLimitResult.allowed) {
       logSecurityEvent({
@@ -172,7 +125,7 @@ serve(async (req) => {
         success: false,
         reason: `Exceeded ${RATE_LIMIT_PRESETS.GENERAL.limit} requests per window`,
       });
-      return createRateLimitResponse(rateLimitResult, RATE_LIMIT_PRESETS.GENERAL, corsHeaders);
+      return createRateLimitResponse(rateLimitResult, RATE_LIMIT_PRESETS.GENERAL, responseCorsHeaders);
     }
 
     // 2. Parse du body
@@ -183,12 +136,20 @@ serve(async (req) => {
       body = {};
     }
 
-    const { depuis, format = "json" } = body;
+    const parsed = requestSchema.safeParse(body);
+    if (!parsed.success) {
+      return new Response(
+        JSON.stringify({ error: "VALIDATION_ERROR", details: parsed.error.errors }),
+        { status: 400, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { depuis, format = "json" } = parsed.data;
 
     if (format !== "json") {
       return new Response(
         JSON.stringify({ error: "Bad Request", message: "Only JSON format is supported" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 400, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -241,7 +202,7 @@ serve(async (req) => {
       console.error("Database error:", error);
       return new Response(
         JSON.stringify({ error: "Database Error", message: error.message }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 500, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -290,12 +251,31 @@ serve(async (req) => {
       };
     });
 
+    try {
+      await supabase.from("audit_log_entries").insert({
+        user_id: null,
+        action: "export_compta",
+        table_name: "commandes",
+        record_id: null,
+        old_data: null,
+        new_data: {
+          count: ventes.length,
+          depuis: depuis ?? null,
+          format,
+        },
+        ip_address: ip,
+        user_agent: userAgent,
+      });
+    } catch {
+      // Ignore audit logging failures to avoid blocking export
+    }
+
     return new Response(
       JSON.stringify({ ventes }),
       {
         status: 200,
         headers: {
-          ...corsHeaders,
+          ...responseCorsHeaders,
           "Content-Type": "application/json",
           "X-Total-Count": ventes.length.toString(),
         },
@@ -306,7 +286,7 @@ serve(async (req) => {
     console.error("Unexpected error:", error);
     return new Response(
       JSON.stringify({ error: "Server Error", message: "An unexpected error occurred" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status: 500, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

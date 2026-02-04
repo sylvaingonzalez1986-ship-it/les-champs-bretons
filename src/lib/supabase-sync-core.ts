@@ -1,5 +1,7 @@
 import { getValidSession } from './supabase-auth';
+import { ensureDeviceId } from './device-id';
 import { fetchWithRetry, NetworkError } from './fetch-with-retry';
+import NetInfo from '@react-native-community/netinfo';
 
 export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -22,11 +24,13 @@ export const getHeaders = () => ({
 export const getAuthenticatedHeaders = async () => {
   const session = await getValidSession();
   const token = session?.access_token || SUPABASE_ANON_KEY;
+  const deviceId = await ensureDeviceId();
   return {
     'apikey': SUPABASE_ANON_KEY,
     'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json',
     'Prefer': 'return=representation',
+    'X-Device-Id': deviceId,
   };
 };
 
@@ -54,4 +58,13 @@ export async function supabaseFetchOrNull(url: string, options: RequestInit = {}
 
 export function isSupabaseSyncConfigured(): boolean {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+}
+
+export async function isNetworkOnline(): Promise<boolean> {
+  try {
+    const state = await NetInfo.fetch();
+    return state.isConnected === true && state.isInternetReachable !== false;
+  } catch {
+    return true;
+  }
 }

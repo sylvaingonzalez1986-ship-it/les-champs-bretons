@@ -3,7 +3,7 @@ import { View, Pressable, Image, Dimensions } from 'react-native';
 import { Text } from '@/components/ui';
 import { MapPin, X, Leaf, ShoppingBag, Sparkles, Star, ChevronLeft, ChevronRight, Instagram, Facebook, Twitter, Youtube, Globe } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
-import * as Linking from 'expo-linking';
+import { safeOpenExternalUrl } from '@/lib/safe-linking';
 import Animated, {
   FadeIn,
   FadeOut,
@@ -461,7 +461,9 @@ export const PokemonCard = ({
                   <View className="flex-row items-center justify-center gap-3 mb-3">
                     {producer.socialLinks?.instagram ? (
                       <Pressable
-                        onPress={() => Linking.openURL(producer.socialLinks!.instagram!)}
+                        onPress={() => {
+                          void safeOpenExternalUrl(producer.socialLinks!.instagram!);
+                        }}
                         className="w-9 h-9 rounded-full items-center justify-center"
                         style={{ backgroundColor: '#E1306C25', borderWidth: 1, borderColor: '#E1306C50' }}
                       >
@@ -470,7 +472,9 @@ export const PokemonCard = ({
                     ) : null}
                     {producer.socialLinks?.facebook ? (
                       <Pressable
-                        onPress={() => Linking.openURL(producer.socialLinks!.facebook!)}
+                        onPress={() => {
+                          void safeOpenExternalUrl(producer.socialLinks!.facebook!);
+                        }}
                         className="w-9 h-9 rounded-full items-center justify-center"
                         style={{ backgroundColor: '#1877F225', borderWidth: 1, borderColor: '#1877F250' }}
                       >
@@ -479,7 +483,9 @@ export const PokemonCard = ({
                     ) : null}
                     {producer.socialLinks?.twitter ? (
                       <Pressable
-                        onPress={() => Linking.openURL(producer.socialLinks!.twitter!)}
+                        onPress={() => {
+                          void safeOpenExternalUrl(producer.socialLinks!.twitter!);
+                        }}
                         className="w-9 h-9 rounded-full items-center justify-center"
                         style={{ backgroundColor: '#1DA1F225', borderWidth: 1, borderColor: '#1DA1F250' }}
                       >
@@ -488,7 +494,9 @@ export const PokemonCard = ({
                     ) : null}
                     {producer.socialLinks?.tiktok ? (
                       <Pressable
-                        onPress={() => Linking.openURL(producer.socialLinks!.tiktok!)}
+                        onPress={() => {
+                          void safeOpenExternalUrl(producer.socialLinks!.tiktok!);
+                        }}
                         className="w-9 h-9 rounded-full items-center justify-center"
                         style={{ backgroundColor: '#FFFFFF15', borderWidth: 1, borderColor: '#FFFFFF30' }}
                       >
@@ -497,7 +505,9 @@ export const PokemonCard = ({
                     ) : null}
                     {producer.socialLinks?.youtube ? (
                       <Pressable
-                        onPress={() => Linking.openURL(producer.socialLinks!.youtube!)}
+                        onPress={() => {
+                          void safeOpenExternalUrl(producer.socialLinks!.youtube!);
+                        }}
                         className="w-9 h-9 rounded-full items-center justify-center"
                         style={{ backgroundColor: '#FF000025', borderWidth: 1, borderColor: '#FF000050' }}
                       >
@@ -506,7 +516,9 @@ export const PokemonCard = ({
                     ) : null}
                     {producer.socialLinks?.website ? (
                       <Pressable
-                        onPress={() => Linking.openURL(producer.socialLinks!.website!)}
+                        onPress={() => {
+                          void safeOpenExternalUrl(producer.socialLinks!.website!);
+                        }}
                         className="w-9 h-9 rounded-full items-center justify-center"
                         style={{ backgroundColor: `${COLORS.primary.gold}25`, borderWidth: 1, borderColor: `${COLORS.primary.gold}50` }}
                       >

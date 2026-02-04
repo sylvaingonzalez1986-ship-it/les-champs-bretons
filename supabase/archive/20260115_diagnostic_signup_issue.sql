@@ -66,13 +66,13 @@ ORDER BY cmd, policyname;
 -- Résultat attendu: relrowsecurity = true
 
 SELECT
-  schemaname,
-  tablename,
+  nspname AS schemaname,
+  relname AS tablename,
   relrowsecurity
 FROM pg_class
 JOIN pg_namespace ON pg_class.relnamespace = pg_namespace.oid
 WHERE relname = 'profiles'
-AND schemaname = 'public';
+AND nspname = 'public';
 
 -- ============================================================================
 -- 5. VÉRIFIER LES PERMISSIONS SUR LA TABLE profiles
@@ -110,16 +110,7 @@ ORDER BY u.created_at DESC;
 -- Affiche les logs des trigger failures (si la table audit existe)
 
 SELECT
-  id,
-  user_id,
-  action,
-  error_message,
-  created_at
-FROM public.audit_log_entries
-WHERE action LIKE 'trigger%'
-AND created_at > NOW() - INTERVAL '24 hours'
-ORDER BY created_at DESC
-LIMIT 20;
+  'audit_log_entries not queried in migration' AS info;
 
 -- ============================================================================
 -- 8. TEST MANUEL - Créer un profil directement
@@ -155,15 +146,7 @@ ORDER BY ordinal_position;
 -- Remarque: Les logs Supabase ont une rétention limitée
 
 SELECT
-  created_at,
-  message,
-  instance_id
-FROM auth.audit_log_entries
-WHERE created_at > NOW() - INTERVAL '24 hours'
-AND message LIKE '%profiles%'
-OR message LIKE '%error%'
-ORDER BY created_at DESC
-LIMIT 20;
+  'auth.audit_log_entries not queried in migration' AS info;
 
 -- ============================================================================
 -- RÉSUMÉ DES VÉRIFICATIONS

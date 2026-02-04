@@ -164,20 +164,6 @@ export async function fetchOrders(
       const joinUrl = `${SUPABASE_URL}/rest/v1/orders?select=*,order_items!inner(producer_id)&order=created_at.desc&order_items.producer_id=eq.${producerId}`;
       const pagedJoinUrl = `${joinUrl}${options?.limit !== undefined ? `&limit=${options.limit}` : ''}${options?.offset !== undefined ? `&offset=${options.offset}` : ''}`;
       response = await supabaseFetch(pagedJoinUrl, { method: 'GET', headers });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        const missingTable = errorText.includes('order_items') || errorText.includes('relation');
-
-        if (!missingTable) {
-          // Non-table error, return empty
-          return [];
-        }
-
-        // Fallback to JSON containment if order_items doesn't exist
-        url += `&items=cs.[{"producer_id":"${producerId}"}]`;
-        response = await supabaseFetch(url, { method: 'GET', headers });
-      }
     } else {
       if (options?.limit !== undefined) {
         url += `&limit=${options.limit}`;
@@ -220,13 +206,17 @@ export async function fetchOrders(
 /**
  * Fetch orders for a specific producer - server-side filtered
  * Only returns orders containing products from the authenticated producer
+ * Supports pagination for load testing and performance optimization
  */
-export async function fetchOrdersForProducer(producerId: string): Promise<Order[]> {
+export async function fetchOrdersForProducer(
+  producerId: string,
+  options?: { limit?: number; offset?: number }
+): Promise<Order[]> {
   if (!producerId) {
     console.warn('[fetchOrdersForProducer] Producer ID is required');
     return [];
   }
-  return fetchOrders(producerId);
+  return fetchOrders(producerId, options);
 }
 
 // Add order to Supabase (inclut user_id pour RLS)

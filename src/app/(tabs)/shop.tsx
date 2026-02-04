@@ -13,7 +13,7 @@ import { Text, TextInput } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, MapPin, ShoppingCart, Plus, Minus, Leaf, Sparkles, Store, Star, MessageSquare, Send, User, X, Camera, Briefcase, Package, Mail, Check, Truck, Layers } from 'lucide-react-native';
-import * as Linking from 'expo-linking';
+import { safeOpenExternalUrl } from '@/lib/safe-linking';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown, FadeInUp, FadeIn } from 'react-native-reanimated';
 import { COLORS } from '@/lib/colors';
@@ -21,6 +21,7 @@ import { useProducerStore, useCartStore, useProducerReviewsStore, useSupabaseSyn
 import { SAMPLE_PRODUCERS, PRODUCT_TYPE_COLORS, PRODUCT_TYPE_LABELS, ProducerProduct, getPriceForQuantity } from '@/lib/producers';
 import { getImageSource } from '@/lib/asset-images';
 import { usePermissions, useAuth } from '@/lib/useAuth';
+import { usePricingMode } from '@/lib/useProductPricing';
 import { ProductPhotoManager } from '@/components/ProductPhotoManager';
 import { LabAnalysisViewer } from '@/components/LabAnalysisViewer';
 import { CultureTypeIcons } from '@/components/CultureTypeIcons';
@@ -752,6 +753,7 @@ export default function ShopScreen() {
   // Check if user is admin or producer
   const { isAdmin, isProducer, isPro, isProApproved, canAccessProPricing } = usePermissions();
   const { profile } = useAuth();
+  const pricingMode = usePricingMode();
 
   // Sample request state
   const [showSampleModal, setShowSampleModal] = useState(false);
@@ -782,6 +784,44 @@ export default function ShopScreen() {
   }, [isAdmin, syncedProducers, customProducers]);
 
   const producer = allProducers.find((p) => p.id === producerId);
+  const visibleProducts = React.useMemo(() => {
+    if (!producer) return [] as ProducerProduct[];
+    if (pricingMode === 'all') return producer.products;
+
+    const groups = new Map<string, ProducerProduct[]>();
+    for (const product of producer.products) {
+      const key = [
+        product.name?.trim().toLowerCase() ?? '',
+        product.type ?? '',
+        product.weight ?? '',
+        String(product.cbdPercent ?? ''),
+        String(product.thcPercent ?? ''),
+      ].join('|');
+      const existing = groups.get(key) ?? [];
+      existing.push(product);
+      groups.set(key, existing);
+    }
+
+    const pickVariant = (variants: ProducerProduct[]): ProducerProduct => {
+      if (pricingMode === 'pro') {
+        return (
+          variants.find((p) =>
+            p.visibleForPros === true ||
+            p.pricePro !== undefined ||
+            (p.priceProTiers && p.priceProTiers.length > 0)
+          ) ||
+          variants[0]
+        );
+      }
+
+      return (
+        variants.find((p) => p.visibleForClients !== false) ||
+        variants[0]
+      );
+    };
+
+    return Array.from(groups.values()).map(pickVariant);
+  }, [producer, pricingMode]);
   const canManageProducts = !!producer && (isAdmin || (isProducer && !!profile?.id && producer.profileId === profile.id));
 
   // Reviews
@@ -898,9 +938,8 @@ export default function ShopScreen() {
     const mailtoUrl = `mailto:${producer.email}?subject=${subject}&body=${body}`;
 
     try {
-      const canOpen = await Linking.canOpenURL(mailtoUrl);
-      if (canOpen) {
-        await Linking.openURL(mailtoUrl);
+      const opened = await safeOpenExternalUrl(mailtoUrl, { allowMailto: true });
+      if (opened) {
         setSampleRequestSent(true);
         setShowSampleModal(false);
       } else {
@@ -1262,7 +1301,7 @@ export default function ShopScreen() {
 
         {/* Products */}
         <View className="px-5">
-          {producer.products.length === 0 ? (
+          {visibleProducts.length === 0 ? (
             <View
               className="rounded-2xl p-8 items-center"
               style={{
@@ -1285,7 +1324,7 @@ export default function ShopScreen() {
               </Text>
             </View>
           ) : (
-            producer.products.map((product, index) => (
+            visibleProducts.map((product, index) => (
               <ProductCard
                 key={product.id}
                 product={product}

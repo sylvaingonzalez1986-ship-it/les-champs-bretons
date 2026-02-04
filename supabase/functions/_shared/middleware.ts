@@ -21,6 +21,7 @@ import {
   RATE_LIMIT_PRESETS,
   logSecurityEvent,
 } from './rate-limit.ts';
+import { verifyDeviceBinding } from './device.ts';
 import { corsHeaders, getCorsHeaders } from './cors.ts';
 
 // =============================================================================
@@ -172,6 +173,13 @@ export function createValidatedHandler<T>(
         Deno.env.get('SUPABASE_URL') ?? '',
         Deno.env.get('SUPABASE_ANON_KEY') ?? ''
       );
+    }
+
+    if (user) {
+      const deviceError = await verifyDeviceBinding(req, user, supabase, responseCorsHeaders);
+      if (deviceError) {
+        return deviceError;
+      }
     }
 
     const userId = user?.id || ip; // Use IP for rate limiting if anonymous

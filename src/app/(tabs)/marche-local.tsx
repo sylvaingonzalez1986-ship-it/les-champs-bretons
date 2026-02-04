@@ -343,63 +343,21 @@ export default function MarcheLocal() {
       const nextPage = reset ? 0 : producersPage;
       const offset = nextPage * PRODUCERS_PAGE_SIZE;
 
-      const productsUrl = `${SUPABASE_URL}/rest/v1/products?select=producer_id&disponible_vente_directe=eq.true&status=eq.published&limit=${PRODUCERS_PAGE_SIZE}&offset=${offset}`;
-      const productsResponse = await fetch(productsUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          Pragma: 'no-cache',
-          Prefer: 'return=representation',
-        },
-      });
-
-      const responseText = await productsResponse.text();
-
-      if (!productsResponse.ok) {
-        // Joindre avec profiles pour récupérer company_name (nom de l'entreprise)
-        const fallbackUrl = `${SUPABASE_URL}/rest/v1/producers?select=id,name,city,region,department,image,vente_directe_ferme,adresse_retrait,horaires_retrait,instructions_retrait,soil_type,climate_type,culture_outdoor,culture_greenhouse,culture_indoor,profile_id,profile:profiles(company_name,business_name)&vente_directe_ferme=eq.true&order=name.asc&limit=${PRODUCERS_PAGE_SIZE}&offset=${offset}`;
-
-        const fallbackResponse = await fetch(fallbackUrl, {
+      const response = await fetch(
+        `${SUPABASE_URL}/functions/v1/public-catalog?action=producers&limit=${PRODUCERS_PAGE_SIZE}&offset=${offset}`,
+        {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
             apikey: SUPABASE_ANON_KEY,
             Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            Pragma: 'no-cache',
           },
-        });
-
-        if (fallbackResponse.ok) {
-          const fallbackData = await fallbackResponse.json();
-          setProducers((prev) => {
-            const merged = [...prev, ...(fallbackData || [])];
-            const unique = new Map(merged.map((p: DirectSalesProducer) => [p.id, p]));
-            return Array.from(unique.values());
-          });
-          setProducersHasMore((fallbackData || []).length === PRODUCERS_PAGE_SIZE);
-          setProducersPage((prev) => (reset ? 1 : prev + 1));
-        } else {
-          setProducers([]);
-          setProducersHasMore(false);
         }
-        setLoading(false);
-        return;
-      }
+      );
 
-      let productsData;
-      try {
-        productsData = JSON.parse(responseText);
-      } catch {
-        setProducers([]);
-        setLoading(false);
-        return;
-      }
-
-      const producerIds = [...new Set(productsData?.map((p: { producer_id: string }) => p.producer_id).filter(Boolean) || [])] as string[];
-
-      if (producerIds.length === 0) {
+      if (!response.ok) {
         if (reset) {
           setProducers([]);
         }
@@ -408,65 +366,21 @@ export default function MarcheLocal() {
         return;
       }
 
-      const producerIdsFilter = producerIds.map(id => `"${id}"`).join(',');
-      // Joindre avec profiles pour récupérer company_name (nom de l'entreprise)
-      const producersUrl = `${SUPABASE_URL}/rest/v1/producers?select=id,name,city,region,department,image,vente_directe_ferme,adresse_retrait,horaires_retrait,instructions_retrait,soil_type,climate_type,culture_outdoor,culture_greenhouse,culture_indoor,profile_id,profile:profiles(company_name,business_name)&id=in.(${producerIdsFilter})&order=name.asc`;
-      const producersResponse = await fetch(producersUrl, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          Pragma: 'no-cache',
-        },
+      const result = await response.json();
+      const producersList: DirectSalesProducer[] = Array.isArray(result?.producers) ? result.producers : [];
+
+      const uniqueProducers = producersList.filter(
+        (producer: DirectSalesProducer, index: number, self: DirectSalesProducer[]) =>
+          index === self.findIndex((p) => p.id === producer.id)
+      );
+
+      setProducers((prev) => {
+        const merged = [...prev, ...uniqueProducers];
+        const unique = new Map(merged.map((p) => [p.id, p]));
+        return Array.from(unique.values());
       });
-
-      if (producersResponse.ok) {
-        const producersData = await producersResponse.json();
-        const productsForProducers = await fetch(
-          `${SUPABASE_URL}/rest/v1/products?select=id,name,price_public,price_pro,image,description,producer_id,disponible_vente_directe,stock,price_tiers&producer_id=in.(${producerIdsFilter})&disponible_vente_directe=eq.true&status=eq.published`,
-          {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-              apikey: SUPABASE_ANON_KEY,
-              Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-              Pragma: 'no-cache',
-            },
-          }
-        );
-
-        let producersList = producersData || [];
-
-        if (productsForProducers.ok) {
-          const allProducts = await productsForProducers.json();
-
-          producersList = producersData.map((producer: DirectSalesProducer) => ({
-            ...producer,
-            products: (allProducts || []).filter((p: { producer_id: string }) => p.producer_id === producer.id),
-          }));
-        }
-
-        // Dédupliquer les producteurs par ID pour éviter les doublons dans le carrousel
-        const uniqueProducers = producersList.filter(
-          (producer: DirectSalesProducer, index: number, self: DirectSalesProducer[]) =>
-            index === self.findIndex((p) => p.id === producer.id)
-        );
-
-        setProducers((prev) => {
-          const merged = [...prev, ...uniqueProducers];
-          const unique = new Map(merged.map((p) => [p.id, p]));
-          return Array.from(unique.values());
-        });
-        setProducersHasMore(productsData.length === PRODUCERS_PAGE_SIZE);
-        setProducersPage((prev) => (reset ? 1 : prev + 1));
-      } else {
-        const errorText = await producersResponse.text();
-        setProducers([]);
-        setProducersHasMore(false);
-      }
+      setProducersHasMore(Boolean(result?.hasMore));
+      setProducersPage((prev) => (reset ? 1 : prev + 1));
     } catch (error) {
       if (reset) {
         setProducers([]);

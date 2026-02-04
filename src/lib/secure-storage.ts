@@ -93,6 +93,12 @@ async function getEncryptionSecret(): Promise<string> {
     return envKey.trim();
   }
 
+  const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
+
+  if (!isDev) {
+    throw new Error('[SecureStorage] EXPO_PUBLIC_ENCRYPTION_KEY manquante en production');
+  }
+
   // 2. Avertissement si clé env non définie ou trop courte
   if (Platform.OS === 'web') {
     if (!envKey) {
@@ -109,12 +115,12 @@ async function getEncryptionSecret(): Promise<string> {
     }
   }
 
-  // 3. Utiliser la clé runtime en mémoire si déjà générée
+  // 3. Utiliser la clé runtime en mémoire si déjà générée (dev uniquement)
   if (runtimeGeneratedKey) {
     return runtimeGeneratedKey;
   }
 
-  // 4. Essayer de récupérer une clé runtime précédemment stockée
+  // 4. Essayer de récupérer une clé runtime précédemment stockée (dev uniquement)
   try {
     const storedRuntimeKey = await AsyncStorage.getItem(RUNTIME_KEY_STORAGE_KEY);
     if (storedRuntimeKey && storedRuntimeKey.length >= 32) {
@@ -125,7 +131,7 @@ async function getEncryptionSecret(): Promise<string> {
     // Ignorer les erreurs de lecture
   }
 
-  // 5. Générer une nouvelle clé runtime et la persister
+  // 5. Générer une nouvelle clé runtime et la persister (dev uniquement)
   runtimeGeneratedKey = generateSecureRandomKey(RUNTIME_KEY_LENGTH);
 
   try {

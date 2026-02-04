@@ -24,6 +24,14 @@ function parseAllowlist(value?: string | null): string[] {
     .filter(Boolean);
 }
 
+export function isOriginAllowed(origin?: string | null): boolean {
+  if (!origin) return true; // Non-browser clients (mobile/server) don't send Origin
+
+  const allowlist = parseAllowlist(Deno.env.get('CORS_ALLOWLIST'));
+  if (allowlist.length === 0) return false;
+  return allowlist.includes(origin);
+}
+
 export function buildCorsHeaders(origin?: string): Record<string, string> {
   const allowlist = parseAllowlist(Deno.env.get('CORS_ALLOWLIST'));
   const allowOrigin = allowlist.length === 0

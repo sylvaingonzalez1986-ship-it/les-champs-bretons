@@ -4,7 +4,7 @@
  * S'affiche quand la sync échoue et qu'on affiche les données en cache
  */
 
-import React from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { View, Pressable, ActivityIndicator } from 'react-native';
 import { Text } from '@/components/ui';
 import { WifiOff, RefreshCw, Database, CheckCircle, AlertTriangle } from 'lucide-react-native';
@@ -22,7 +22,7 @@ interface CacheStatusBannerProps {
   onRefreshSuccess?: () => void;
 }
 
-export function CacheStatusBanner({
+function CacheStatusBannerComponent({
   style,
   showOnlyOnError = false,
   onRefreshSuccess,
@@ -31,7 +31,7 @@ export function CacheStatusBanner({
   const [isRefreshing, setIsRefreshing] = React.useState(false);
 
   // Fonction de refresh manuel
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsRefreshing(true);
 
@@ -46,21 +46,21 @@ export function CacheStatusBanner({
     } finally {
       setIsRefreshing(false);
     }
-  };
+  }, [onRefreshSuccess]);
 
   // Déterminer si on doit afficher la bannière
-  const shouldShow = (() => {
+  const shouldShow = useMemo(() => {
     if (showOnlyOnError) {
       return status === 'error' || (isUsingCache && status !== 'syncing');
     }
     // Afficher pour error, syncing, ou si on utilise le cache
     return status === 'error' || status === 'syncing' || isUsingCache;
-  })();
+  }, [showOnlyOnError, status, isUsingCache]);
 
   if (!shouldShow) return null;
 
   // Configuration de l'affichage selon l'état
-  const getDisplayConfig = () => {
+  const config = useMemo(() => {
     if (status === 'error') {
       return {
         icon: WifiOff,
@@ -101,9 +101,7 @@ export function CacheStatusBanner({
     }
 
     return null;
-  };
-
-  const config = getDisplayConfig();
+  }, [error, isUsingCache, status]);
   if (!config) return null;
 
   const IconComponent = config.icon;
@@ -187,7 +185,7 @@ interface CompactCacheStatusProps {
   style?: object;
 }
 
-export function CompactCacheStatus({ style }: CompactCacheStatusProps) {
+function CompactCacheStatusComponent({ style }: CompactCacheStatusProps) {
   const { status, isUsingCache } = useSyncState();
 
   // N'afficher que si erreur ou utilisant le cache
@@ -217,6 +215,9 @@ export function CompactCacheStatus({ style }: CompactCacheStatusProps) {
     </View>
   );
 }
+
+export const CacheStatusBanner = React.memo(CacheStatusBannerComponent);
+export const CompactCacheStatus = React.memo(CompactCacheStatusComponent);
 
 // Helper pour formater la date de dernière sync
 function formatLastSync(timestamp: number): string {

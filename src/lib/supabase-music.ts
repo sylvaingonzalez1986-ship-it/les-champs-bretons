@@ -4,6 +4,8 @@
  */
 
 import { isSupabaseConfigured, getSupabaseConfig } from './env-validation';
+import { getValidSession } from './supabase-auth';
+import { ensureDeviceId } from './device-id';
 
 // Bucket names
 export const MUSIC_AUDIO_BUCKET = 'music-audio';
@@ -39,6 +41,20 @@ const getHeaders = () => {
     'Authorization': `Bearer ${anonKey}`,
     'Content-Type': 'application/json',
     'Prefer': 'return=representation',
+  };
+};
+
+const getAdminHeaders = async () => {
+  const session = await getValidSession();
+  if (!session?.access_token) {
+    throw new Error('Utilisateur non authentifié');
+  }
+
+  const deviceId = await ensureDeviceId();
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${session.access_token}`,
+    'X-Device-Id': deviceId,
   };
 };
 
@@ -86,14 +102,14 @@ export async function addMusicTrack(track: MusicTrackInsert): Promise<MusicTrack
   }
 
   const { url } = getSupabaseConfig();
+  const headers = await getAdminHeaders();
 
-  const response = await fetch(`${url}/rest/v1/music_tracks`, {
+  const response = await fetch(`${url}/functions/v1/music-tracks-admin`, {
     method: 'POST',
-    headers: getHeaders(),
+    headers,
     body: JSON.stringify({
-      ...track,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      action: 'create',
+      track,
     }),
   });
 
@@ -115,13 +131,15 @@ export async function updateMusicTrack(
   }
 
   const { url } = getSupabaseConfig();
+  const headers = await getAdminHeaders();
 
-  const response = await fetch(`${url}/rest/v1/music_tracks?id=eq.${id}`, {
-    method: 'PATCH',
-    headers: getHeaders(),
+  const response = await fetch(`${url}/functions/v1/music-tracks-admin`, {
+    method: 'POST',
+    headers,
     body: JSON.stringify({
-      ...updates,
-      updated_at: new Date().toISOString(),
+      action: 'update',
+      id,
+      updates,
     }),
   });
 
@@ -140,10 +158,15 @@ export async function deleteMusicTrack(id: string): Promise<void> {
   }
 
   const { url } = getSupabaseConfig();
+  const headers = await getAdminHeaders();
 
-  const response = await fetch(`${url}/rest/v1/music_tracks?id=eq.${id}`, {
-    method: 'DELETE',
-    headers: getHeaders(),
+  const response = await fetch(`${url}/functions/v1/music-tracks-admin`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      action: 'delete',
+      id,
+    }),
   });
 
   if (!response.ok) {
@@ -176,7 +199,8 @@ export async function uploadAudioFile(
     throw new Error('Supabase non configuré');
   }
 
-  const { url, anonKey } = getSupabaseConfig();
+  const { url } = getSupabaseConfig();
+  const headers = await getAdminHeaders();
 
   // Read the file as blob
   const response = await fetch(fileUri);
@@ -187,27 +211,42 @@ export async function uploadAudioFile(
   const sanitizedName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
   const finalName = `${timestamp}_${sanitizedName}`;
 
-  // Upload to Supabase Storage
-  const uploadResponse = await fetch(
-    `${url}/storage/v1/object/${MUSIC_AUDIO_BUCKET}/${finalName}`,
-    {
-      method: 'POST',
-      headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
-        'Content-Type': blob.type || 'audio/mpeg',
-        'x-upsert': 'true',
-      },
-      body: blob,
-    }
-  );
+  const signedResponse = await fetch(`${url}/functions/v1/music-storage-upload-url`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      bucket: MUSIC_AUDIO_BUCKET,
+      path: finalName,
+      contentType: blob.type || 'audio/mpeg',
+      fileSize: blob.size,
+    }),
+  });
+
+  if (!signedResponse.ok) {
+    throw new Error('Erreur signature upload audio');
+  }
+
+  const signedPayload = await signedResponse.json();
+  const signedUrl = signedPayload?.signedUrl;
+
+  if (!signedUrl) {
+    throw new Error('Erreur signature upload audio');
+  }
+
+  const uploadResponse = await fetch(signedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': blob.type || 'audio/mpeg',
+    },
+    body: blob,
+  });
 
   if (!uploadResponse.ok) {
     throw new Error('Erreur upload audio');
   }
 
-  // Return the public URL (or signed URL for private bucket)
-  return `${url}/storage/v1/object/${MUSIC_AUDIO_BUCKET}/${finalName}`;
+  // Return the public URL (bucket should be public for playback)
+  return `${url}/storage/v1/object/public/${MUSIC_AUDIO_BUCKET}/${finalName}`;
 }
 
 // Upload cover image to Supabase Storage
@@ -219,7 +258,8 @@ export async function uploadCoverImage(
     throw new Error('Supabase non configuré');
   }
 
-  const { url, anonKey } = getSupabaseConfig();
+  const { url } = getSupabaseConfig();
+  const headers = await getAdminHeaders();
 
   // Read the file as blob
   const response = await fetch(fileUri);
@@ -230,20 +270,35 @@ export async function uploadCoverImage(
   const sanitizedName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
   const finalName = `${timestamp}_${sanitizedName}`;
 
-  // Upload to Supabase Storage
-  const uploadResponse = await fetch(
-    `${url}/storage/v1/object/${MUSIC_COVERS_BUCKET}/${finalName}`,
-    {
-      method: 'POST',
-      headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
-        'Content-Type': blob.type || 'image/jpeg',
-        'x-upsert': 'true',
-      },
-      body: blob,
-    }
-  );
+  const signedResponse = await fetch(`${url}/functions/v1/music-storage-upload-url`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      bucket: MUSIC_COVERS_BUCKET,
+      path: finalName,
+      contentType: blob.type || 'image/jpeg',
+      fileSize: blob.size,
+    }),
+  });
+
+  if (!signedResponse.ok) {
+    throw new Error('Erreur signature upload cover');
+  }
+
+  const signedPayload = await signedResponse.json();
+  const signedUrl = signedPayload?.signedUrl;
+
+  if (!signedUrl) {
+    throw new Error('Erreur signature upload cover');
+  }
+
+  const uploadResponse = await fetch(signedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': blob.type || 'image/jpeg',
+    },
+    body: blob,
+  });
 
   if (!uploadResponse.ok) {
     throw new Error('Erreur upload cover');
@@ -262,16 +317,19 @@ export async function deleteStorageFile(
     throw new Error('Supabase non configuré');
   }
 
-  const { url, anonKey } = getSupabaseConfig();
+  const { url } = getSupabaseConfig();
+  const headers = await getAdminHeaders();
 
   const response = await fetch(
-    `${url}/storage/v1/object/${bucket}/${filePath}`,
+    `${url}/functions/v1/music-storage-mutations`,
     {
-      method: 'DELETE',
-      headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
-      },
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'delete',
+        bucket,
+        path: `${bucket}/${filePath}`,
+      }),
     }
   );
 
@@ -286,18 +344,19 @@ export async function getSignedAudioUrl(filePath: string): Promise<string> {
     throw new Error('Supabase non configuré');
   }
 
-  const { url, anonKey } = getSupabaseConfig();
+  const { url } = getSupabaseConfig();
+  const headers = await getAdminHeaders();
 
   const response = await fetch(
-    `${url}/storage/v1/object/sign/${MUSIC_AUDIO_BUCKET}/${filePath}`,
+    `${url}/functions/v1/music-storage-signed-url`,
     {
       method: 'POST',
-      headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ expiresIn: 3600 }), // 1 hour
+      headers,
+      body: JSON.stringify({
+        bucket: MUSIC_AUDIO_BUCKET,
+        path: `${MUSIC_AUDIO_BUCKET}/${filePath}`,
+        expiresIn: 3600,
+      }),
     }
   );
 
@@ -306,5 +365,5 @@ export async function getSignedAudioUrl(filePath: string): Promise<string> {
   }
 
   const data = await response.json();
-  return `${url}/storage/v1${data.signedURL}`;
+  return data?.url || '';
 }

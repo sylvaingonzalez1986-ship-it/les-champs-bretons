@@ -155,7 +155,7 @@ ON public.producer_chat_messages FOR INSERT
 TO authenticated
 WITH CHECK (
   (public.is_producer() OR public.is_admin())
-  AND sender_id = auth.uid()
+  AND sender_id = auth.uid()::text
 );
 
 -- Suppression réservée aux admins uniquement

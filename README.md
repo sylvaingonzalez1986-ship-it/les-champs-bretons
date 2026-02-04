@@ -376,19 +376,19 @@ Ajout des champs vente directe au schema `userProfileSchema`:
 ### TODO Priorités
 
 **P1 - Bloquants (à faire maintenant) :**
-- [ ] Supprimer `@react-native-menu/menu` du package.json (inutilisé)
-- [ ] Remplacer `@expo-google-fonts/fredoka-one` (deprecated) par `@expo-google-fonts/fredoka`
+- [x] Supprimer `@react-native-menu/menu` du package.json (inutilisé)
+- [x] Remplacer `@expo-google-fonts/fredoka-one` (deprecated) par `@expo-google-fonts/fredoka`
 - [ ] Tester sur émulateur Android après `npx expo prebuild --clean`
 
 **P2 - Recommandés :**
-- [ ] Migrer les menus contextuels vers `zeego` (déjà dans les dépendances)
-- [ ] Ajouter des tests unitaires pour les hooks critiques (useAuth, useDataSync)
-- [ ] Documenter les variables d'environnement requises
+- [x] Migrer les menus contextuels vers `zeego` (N/A : aucun menu contextuel détecté)
+- [x] Ajouter des tests unitaires pour les hooks critiques (useAuth, useDataSync)
+- [x] Documenter les variables d'environnement requises
 
 **P3 - Améliorations futures :**
 - [ ] Implémenter un système de logging centralisé (Sentry ou similaire)
-- [ ] Ajouter des animations de skeleton pendant les chargements
-- [ ] Optimiser les re-renders avec React DevTools Profiler
+- [x] Ajouter des animations de skeleton pendant les chargements
+- [x] Optimiser les re-renders avec React DevTools Profiler
 
 ---
 

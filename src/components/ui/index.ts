@@ -3,3 +3,4 @@ export { Text } from './Text';
 export { TextInput } from './TextInput';
 export { Button } from './Button';
 export { Card } from './Card';
+export { Skeleton } from './Skeleton';

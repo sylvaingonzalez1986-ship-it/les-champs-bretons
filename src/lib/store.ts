@@ -2314,6 +2314,13 @@ export const useTabVisibilityStore = create<TabVisibilityStore>()(
         if (!tab) return true;
         // If no role (not logged in), treat as client
         const effectiveRole = role ?? 'client';
+
+        // Enforce pro tabs: Carte / Chat / Marché Local / Profil only
+        if (effectiveRole === 'pro') {
+          const proAllowed: TabId[] = ['map', 'chat-producteurs', 'marche-local', 'profile'];
+          return proAllowed.includes(tabId);
+        }
+
         return tab.roleVisibility?.[effectiveRole] ?? tab.visible ?? true;
       },
 

@@ -3,6 +3,9 @@
  * Handles lab analysis uploads (PDF or image) for products
  */
 
+import { getValidSession } from './supabase-auth';
+import { ensureDeviceId } from './device-id';
+
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 

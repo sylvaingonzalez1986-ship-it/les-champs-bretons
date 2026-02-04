@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase-auth';
 import { isSupabaseConfigured, getSupabaseConfig } from './env-validation';
 import { startMetric, endMetric, incrementMetric } from './perf-metrics';
+import { ensureDeviceId } from './device-id';
 
 // Helper pour obtenir la config de manière sécurisée
 const getConfig = () => {
@@ -10,6 +11,15 @@ const getConfig = () => {
   }
   // Fallback sur les imports existants pour compatibilité
   return { url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY };
+};
+
+const getMutationHeaders = async (accessToken: string) => {
+  const deviceId = await ensureDeviceId();
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${accessToken}`,
+    'X-Device-Id': deviceId,
+  };
 };
 
 export interface DirectSalesCartItem {
@@ -107,19 +117,17 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
       if (!userId) return;
 
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/panier_vente_directe`,
+        `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${accessToken}`,
-          },
+          headers: await getMutationHeaders(accessToken),
           body: JSON.stringify({
-            user_id: userId,
-            product_id: item.product_id,
-            producer_id: item.producer_id,
-            quantity: item.quantity,
+            action: 'addItem',
+            item: {
+              productId: item.product_id,
+              producerId: item.producer_id,
+              quantity: item.quantity,
+            },
           }),
         }
       );
@@ -139,13 +147,14 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
       if (!userId) return;
 
       await fetch(
-        `${SUPABASE_URL}/rest/v1/panier_vente_directe?id=eq.${id}`,
+        `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
         {
-          method: 'DELETE',
-          headers: {
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${accessToken}`,
-          },
+          method: 'POST',
+          headers: await getMutationHeaders(accessToken),
+          body: JSON.stringify({
+            action: 'removeItem',
+            itemId: id,
+          }),
         }
       );
 
@@ -166,15 +175,15 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
       if (!userId) return;
 
       await fetch(
-        `${SUPABASE_URL}/rest/v1/panier_vente_directe?id=eq.${id}`,
+        `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
         {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({ quantity }),
+          method: 'POST',
+          headers: await getMutationHeaders(accessToken),
+          body: JSON.stringify({
+            action: 'updateQuantity',
+            itemId: id,
+            quantity,
+          }),
         }
       );
 
@@ -194,13 +203,13 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
       if (!userId) return;
 
       await fetch(
-        `${SUPABASE_URL}/rest/v1/panier_vente_directe?user_id=eq.${userId}`,
+        `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
         {
-          method: 'DELETE',
-          headers: {
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${accessToken}`,
-          },
+          method: 'POST',
+          headers: await getMutationHeaders(accessToken),
+          body: JSON.stringify({
+            action: 'clearCart',
+          }),
         }
       );
 

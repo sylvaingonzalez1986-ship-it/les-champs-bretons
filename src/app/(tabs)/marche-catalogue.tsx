@@ -75,7 +75,7 @@ export default function MarcheCatalogue() {
 
       // Récupérer les produits du producteur avec disponible_vente_directe = true et price_tiers
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/products?select=id,name,price_public,price_pro,description,image,stock,cbd_percent,thc_percent,disponible_vente_directe,price_tiers,producer:producers(id,name,city,region,adresse_retrait,horaires_retrait,instructions_retrait)&producer_id=eq.${producerId}&disponible_vente_directe=eq.true&status=eq.published&order=name.asc&limit=${PAGE_SIZE}&offset=${offset}`,
+        `${SUPABASE_URL}/functions/v1/public-catalog?action=productsByProducer&producerId=${producerId}&limit=${PAGE_SIZE}&offset=${offset}`,
         {
           method: 'GET',
           headers: {
@@ -88,13 +88,13 @@ export default function MarcheCatalogue() {
 
       if (response.ok) {
         const data = await response.json();
-        const next = Array.isArray(data) ? data : [];
+        const next = Array.isArray(data?.products) ? data.products : [];
         setProducts((prev) => (reset ? next : [...prev, ...next]));
-        setHasMore(next.length === PAGE_SIZE);
+        setHasMore(Boolean(data?.hasMore));
         setPage((prev) => (reset ? 1 : prev + 1));
 
-        if (reset && next[0]?.producer) {
-          setProducer(next[0].producer);
+        if (reset && data?.producer) {
+          setProducer(data.producer as ProducerInfo);
         }
       } else {
         if (reset) {

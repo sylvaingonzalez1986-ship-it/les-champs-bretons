@@ -42,7 +42,7 @@ export function useAuth() {
   const [isInitialized, setIsInitialized] = useState(false);
 
   // Charger la session au démarrage
-  const { data: session, isLoading: isLoadingSession } = useQuery({
+  const { data: session, isLoading: isLoadingSession, error: sessionError } = useQuery({
     queryKey: AUTH_QUERY_KEYS.session,
     queryFn: async () => {
       const stored = await loadStoredSession();
@@ -61,11 +61,13 @@ export function useAuth() {
 
   // Charger le profil si connecté
   // La queryKey inclut le user.id pour isoler le cache entre utilisateurs
-  const { data: profile, isLoading: isLoadingProfile } = useQuery({
+  const { data: profile, isLoading: isLoadingProfile, error: profileError } = useQuery({
     queryKey: [...AUTH_QUERY_KEYS.profile, session?.user?.id],
     queryFn: async () => {
       const result = await fetchProfile();
-      // React Query requires a non-undefined return value
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
       return result.profile ?? null;
     },
     enabled: !!session?.user?.id,
@@ -218,6 +220,10 @@ export function useAuth() {
     isAuthenticated: !!session,
     isInitialized,
     isLoading: isLoadingSession || isLoadingProfile,
+    isLoadingSession,
+    isLoadingProfile,
+    sessionError,
+    profileError,
 
     // Actions
     signIn: signInMutation.mutateAsync,

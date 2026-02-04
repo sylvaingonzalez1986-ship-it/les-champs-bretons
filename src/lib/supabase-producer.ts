@@ -400,11 +400,15 @@ export async function updateMyProducer(
     // Le producteur appartient au bon utilisateur, effectuer la mise à jour
     const headers = await getValidAuthHeaders();
     const response = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/producers?id=eq.${encodeURIComponent(producerId)}`,
+      `${SUPABASE_URL}/functions/v1/producers-mutations`,
       {
-        method: 'PATCH',
+        method: 'POST',
         headers,
-        body: JSON.stringify(sanitizedUpdates),
+        body: JSON.stringify({
+          action: 'update',
+          producerId,
+          updates: sanitizedUpdates,
+        }),
       }
     );
 
@@ -476,11 +480,15 @@ export async function decrementProductStockInSupabase(
 
     // Mettre à jour le stock
     const updateResponse = await fetchWithTimeout(
-      `${SUPABASE_URL}/rest/v1/products?id=eq.${encodeURIComponent(productId)}`,
+      `${SUPABASE_URL}/functions/v1/products-mutations`,
       {
-        method: 'PATCH',
+        method: 'POST',
         headers,
-        body: JSON.stringify({ stock: newStock }),
+        body: JSON.stringify({
+          action: 'update',
+          productId,
+          updates: { stock: newStock },
+        }),
       }
     );
 

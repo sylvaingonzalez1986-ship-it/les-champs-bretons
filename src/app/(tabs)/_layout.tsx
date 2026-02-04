@@ -189,6 +189,7 @@ export default function TabLayout() {
       <Tabs.Screen name="settings" options={{ href: null }} />
       <Tabs.Screen name="donnees-partagees" options={{ href: null }} />
       <Tabs.Screen name="marche-catalogue" options={{ href: null }} />
+      <Tabs.Screen name="compta" options={{ href: null }} />
 
       {/* Visible tabs */}
       <Tabs.Screen

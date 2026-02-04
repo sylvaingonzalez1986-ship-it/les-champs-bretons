@@ -16,7 +16,7 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import { Text } from '@/components/ui';
+import { Skeleton, Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -45,7 +45,7 @@ import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as MailComposer from 'expo-mail-composer';
-import * as Linking from 'expo-linking';
+import { safeOpenExternalUrl } from '@/lib/safe-linking';
 
 type PeriodFilter = 'all' | '1month' | '3months' | '6months' | '12months';
 
@@ -889,10 +889,9 @@ export default function GestionCommandesScreen() {
       }
 
       const mailtoUrl = `mailto:${PAYMENT_LINK_EMAIL}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
-      const canOpen = await Linking.canOpenURL(mailtoUrl);
+      const opened = await safeOpenExternalUrl(mailtoUrl, { allowMailto: true });
 
-      if (canOpen) {
-        await Linking.openURL(mailtoUrl);
+      if (opened) {
         markPaymentLinkSent(order.id);
         Alert.alert('Email prêt', "Vérifiez et envoyez l'email pour déclencher le bot.");
         return;
@@ -1422,11 +1421,29 @@ export default function GestionCommandesScreen() {
       {/* Liste des commandes */}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20 }}>
         {isLoadingOrders ? (
-          <View style={{ alignItems: 'center', paddingTop: 60 }}>
-            <ActivityIndicator size="large" color={COLORS.primary.gold} />
-            <Text style={{ fontSize: 16, color: COLORS.text.muted, textAlign: 'center', marginTop: 15 }}>
-              Chargement des commandes...
-            </Text>
+          <View style={{ paddingTop: 10 }}>
+            {Array.from({ length: 5 }).map((_, index) => (
+              <View
+                key={`order-skeleton-${index}`}
+                style={{
+                  backgroundColor: COLORS.background.charcoal,
+                  borderRadius: 12,
+                  padding: 15,
+                  borderLeftWidth: 4,
+                  borderLeftColor: withOpacity(COLORS.primary.gold, 0.2),
+                  marginBottom: 15,
+                }}
+              >
+                <Skeleton width="55%" height={10} style={{ marginBottom: 8 }} />
+                <Skeleton width="40%" height={16} style={{ marginBottom: 6 }} />
+                <Skeleton width="30%" height={10} />
+
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 }}>
+                  <Skeleton width="28%" height={10} />
+                  <Skeleton width="20%" height={16} />
+                </View>
+              </View>
+            ))}
           </View>
         ) : filteredOrders.length === 0 ? (
           <View style={{ alignItems: 'center', paddingTop: 60 }}>

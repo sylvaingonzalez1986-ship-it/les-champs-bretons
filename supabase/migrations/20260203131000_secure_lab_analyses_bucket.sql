@@ -13,6 +13,9 @@ WHERE id = 'lab-analyses';
 DROP POLICY IF EXISTS "Allow public read access" ON storage.objects;
 DROP POLICY IF EXISTS "lab_analyses_public_read" ON storage.objects;
 DROP POLICY IF EXISTS "Anyone can read lab analyses" ON storage.objects;
+DROP POLICY IF EXISTS "lab_analyses_authenticated_read" ON storage.objects;
+DROP POLICY IF EXISTS "lab_analyses_upload_admin_producer" ON storage.objects;
+DROP POLICY IF EXISTS "lab_analyses_delete_admin_only" ON storage.objects;
 
 -- 3. Policy: Seuls les utilisateurs authentifiés peuvent lire les analyses
 CREATE POLICY "lab_analyses_authenticated_read"

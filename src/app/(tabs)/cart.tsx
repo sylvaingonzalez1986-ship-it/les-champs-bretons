@@ -15,7 +15,7 @@ import { ShoppingCart, Trash2, Plus, Minus, ArrowLeft, Package, Sparkles, MapPin
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as MailComposer from 'expo-mail-composer';
-import * as Linking from 'expo-linking';
+import { safeOpenExternalUrl } from '@/lib/safe-linking';
 import { COLORS } from '@/lib/colors';
 import { useCartStore, useCustomerInfoStore, useOrdersStore, useSubscriptionStore, useCollectionStore, useStockInventoryStore, useProducerStore, Order, CustomerInfo } from '@/lib/store';
 import { PRODUCT_TYPE_COLORS, PRODUCT_TYPE_LABELS, getPriceForQuantity } from '@/lib/producers';
@@ -348,10 +348,9 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
       if (ccRecipients && ccRecipients.length > 0) {
         mailtoUrl += `&cc=${ccRecipients.join(',')}`;
       }
-      const canOpen = await Linking.canOpenURL(mailtoUrl);
+      const opened = await safeOpenExternalUrl(mailtoUrl, { allowMailto: true });
 
-      if (canOpen) {
-        await Linking.openURL(mailtoUrl);
+      if (opened) {
         // Avec mailto on ne peut pas savoir si envoyé - on suppose que c'est ok
         return { success: true, cancelled: false, usedMailto: true };
       }

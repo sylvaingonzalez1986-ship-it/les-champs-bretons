@@ -2,10 +2,12 @@
 // This syncs admin-configured data to all users
 
 import { Producer, ProducerProduct } from './producers';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   SUPABASE_URL,
   getAuthenticatedHeaders,
   getHeaders,
+  isNetworkOnline,
   isSupabaseSyncConfigured,
   supabaseFetch,
 } from './supabase-sync-core';
@@ -173,10 +175,13 @@ export async function addProducerToSupabase(producer: Producer): Promise<Supabas
 
   try {
     const headers = await getAuthenticatedHeaders();
-    const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/producers`, {
+    const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/producers-mutations`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(producerToSupabase(producer)),
+      body: JSON.stringify({
+        action: 'create',
+        producer: producerToSupabase(producer),
+      }),
     });
 
     if (!response.ok) {
@@ -232,10 +237,14 @@ export async function updateProducerInSupabase(id: string, producer: Partial<Pro
 
   try {
     const headers = await getAuthenticatedHeaders();
-    const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/producers?id=eq.${id}`, {
-      method: 'PATCH',
+    const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/producers-mutations`, {
+      method: 'POST',
       headers,
-      body: JSON.stringify(updates),
+      body: JSON.stringify({
+        action: 'update',
+        producerId: id,
+        updates,
+      }),
     });
 
     if (!response.ok) {
@@ -256,17 +265,13 @@ export async function deleteProducerFromSupabase(id: string): Promise<void> {
 
   try {
     const headers = await getAuthenticatedHeaders();
-
-    // First delete all products of this producer
-    await supabaseFetch(`${SUPABASE_URL}/rest/v1/products?producer_id=eq.${id}`, {
-      method: 'DELETE',
+    const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/producers-mutations`, {
+      method: 'POST',
       headers,
-    });
-
-    // Then delete the producer
-    const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/producers?id=eq.${id}`, {
-      method: 'DELETE',
-      headers,
+      body: JSON.stringify({
+        action: 'delete',
+        producerId: id,
+      }),
     });
 
     if (!response.ok) {
@@ -522,6 +527,12 @@ export async function fetchAllProducersWithProducts(): Promise<Producer[]> {
     return [];
   }
 
+  const isOnline = await isNetworkOnline();
+  if (!isOnline) {
+    const cached = await AsyncStorage.getItem('cache_producers_v2');
+    return cached ? (JSON.parse(cached) as Producer[]) : [];
+  }
+
   try {
     const supabaseProducers: SupabaseProducer[] = [];
     let producersOffset = 0;
@@ -561,7 +572,8 @@ export async function fetchAllProducersWithProducts(): Promise<Producer[]> {
     );
   } catch (error) {
     console.warn('Error fetching from Supabase:', error);
-    return [];
+    const cached = await AsyncStorage.getItem('cache_producers_v2');
+    return cached ? (JSON.parse(cached) as Producer[]) : [];
   }
 }
 

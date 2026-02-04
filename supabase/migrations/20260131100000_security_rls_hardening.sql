@@ -47,14 +47,14 @@ BEGIN
 
     -- Immutable ownership: prevent profile_id changes
     CREATE OR REPLACE FUNCTION prevent_producer_profile_change()
-    RETURNS TRIGGER AS $$
+    RETURNS TRIGGER AS $func$
     BEGIN
       IF NEW.profile_id IS DISTINCT FROM OLD.profile_id THEN
         RAISE EXCEPTION 'profile_id is immutable';
       END IF;
       RETURN NEW;
     END;
-    $$ LANGUAGE plpgsql;
+    $func$ LANGUAGE plpgsql;
 
     DROP TRIGGER IF EXISTS producers_profile_immutable ON producers;
     CREATE TRIGGER producers_profile_immutable
@@ -74,10 +74,13 @@ BEGIN
 
     DROP POLICY IF EXISTS "orders_select" ON orders;
     DROP POLICY IF EXISTS "orders_select_enhanced" ON orders;
+    DROP POLICY IF EXISTS "orders_select_secure" ON orders;
     DROP POLICY IF EXISTS "orders_insert" ON orders;
     DROP POLICY IF EXISTS "orders_insert_authenticated" ON orders;
+    DROP POLICY IF EXISTS "orders_insert_own" ON orders;
     DROP POLICY IF EXISTS "orders_update" ON orders;
     DROP POLICY IF EXISTS "orders_update_own" ON orders;
+    DROP POLICY IF EXISTS "orders_update_admin_producer" ON orders;
     DROP POLICY IF EXISTS "orders_delete" ON orders;
     DROP POLICY IF EXISTS "orders_delete_admin" ON orders;
 
@@ -134,7 +137,7 @@ BEGIN
 
     -- Immutable ownership: prevent changing user_id/customer_email
     CREATE OR REPLACE FUNCTION prevent_orders_identity_change()
-    RETURNS TRIGGER AS $$
+    RETURNS TRIGGER AS $func$
     BEGIN
       IF NEW.user_id IS DISTINCT FROM OLD.user_id THEN
         RAISE EXCEPTION 'user_id is immutable';
@@ -144,7 +147,7 @@ BEGIN
       END IF;
       RETURN NEW;
     END;
-    $$ LANGUAGE plpgsql;
+    $func$ LANGUAGE plpgsql;
 
     DROP TRIGGER IF EXISTS orders_identity_immutable ON orders;
     CREATE TRIGGER orders_identity_immutable
@@ -167,6 +170,12 @@ BEGIN
     DROP POLICY IF EXISTS "Admins can view all orders" ON commandes_vente_directe;
     DROP POLICY IF EXISTS "Users can create own orders" ON commandes_vente_directe;
     DROP POLICY IF EXISTS "Admins can update orders" ON commandes_vente_directe;
+    DROP POLICY IF EXISTS "cdv_select_customer" ON commandes_vente_directe;
+    DROP POLICY IF EXISTS "cdv_select_producer" ON commandes_vente_directe;
+    DROP POLICY IF EXISTS "cdv_select_admin" ON commandes_vente_directe;
+    DROP POLICY IF EXISTS "cdv_insert_customer" ON commandes_vente_directe;
+    DROP POLICY IF EXISTS "cdv_update_producer" ON commandes_vente_directe;
+    DROP POLICY IF EXISTS "cdv_update_admin" ON commandes_vente_directe;
 
     CREATE POLICY "cdv_select_customer"
     ON commandes_vente_directe FOR SELECT
@@ -202,7 +211,7 @@ BEGIN
 
     -- Immutable ownership: prevent user_id/producer_id changes
     CREATE OR REPLACE FUNCTION prevent_cdv_identity_change()
-    RETURNS TRIGGER AS $$
+    RETURNS TRIGGER AS $func$
     BEGIN
       IF NEW.user_id IS DISTINCT FROM OLD.user_id THEN
         RAISE EXCEPTION 'user_id is immutable';
@@ -212,7 +221,7 @@ BEGIN
       END IF;
       RETURN NEW;
     END;
-    $$ LANGUAGE plpgsql;
+    $func$ LANGUAGE plpgsql;
 
     DROP TRIGGER IF EXISTS cdv_identity_immutable ON commandes_vente_directe;
     CREATE TRIGGER cdv_identity_immutable
@@ -234,6 +243,10 @@ BEGIN
     DROP POLICY IF EXISTS "Producers can view their order lines" ON lignes_commande_vente_directe;
     DROP POLICY IF EXISTS "Admins can view all order lines" ON lignes_commande_vente_directe;
     DROP POLICY IF EXISTS "Users can create own order lines" ON lignes_commande_vente_directe;
+    DROP POLICY IF EXISTS "cdv_lines_select_customer" ON lignes_commande_vente_directe;
+    DROP POLICY IF EXISTS "cdv_lines_select_producer" ON lignes_commande_vente_directe;
+    DROP POLICY IF EXISTS "cdv_lines_select_admin" ON lignes_commande_vente_directe;
+    DROP POLICY IF EXISTS "cdv_lines_insert_customer" ON lignes_commande_vente_directe;
 
     CREATE POLICY "cdv_lines_select_customer"
     ON lignes_commande_vente_directe FOR SELECT
@@ -265,7 +278,7 @@ BEGIN
     );
 
     CREATE OR REPLACE FUNCTION prevent_cdv_line_identity_change()
-    RETURNS TRIGGER AS $$
+    RETURNS TRIGGER AS $func$
     BEGIN
       IF NEW.commande_id IS DISTINCT FROM OLD.commande_id THEN
         RAISE EXCEPTION 'commande_id is immutable';
@@ -275,7 +288,7 @@ BEGIN
       END IF;
       RETURN NEW;
     END;
-    $$ LANGUAGE plpgsql;
+    $func$ LANGUAGE plpgsql;
 
     DROP TRIGGER IF EXISTS cdv_line_identity_immutable ON lignes_commande_vente_directe;
     CREATE TRIGGER cdv_line_identity_immutable
@@ -339,7 +352,7 @@ BEGIN
 
     -- Immutable ownership: prevent changing customer/producer/product/pickup_code
     CREATE OR REPLACE FUNCTION prevent_lmo_identity_change()
-    RETURNS TRIGGER AS $$
+    RETURNS TRIGGER AS $func$
     BEGIN
       IF NEW.customer_id IS DISTINCT FROM OLD.customer_id THEN
         RAISE EXCEPTION 'customer_id is immutable';
@@ -355,7 +368,7 @@ BEGIN
       END IF;
       RETURN NEW;
     END;
-    $$ LANGUAGE plpgsql;
+    $func$ LANGUAGE plpgsql;
 
     DROP TRIGGER IF EXISTS lmo_identity_immutable ON local_market_orders;
     CREATE TRIGGER lmo_identity_immutable

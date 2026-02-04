@@ -350,7 +350,9 @@ export default function MaBoutiqueScreen() {
       setOrdersPage((prev) => (reset ? 1 : prev + 1));
 
       // Toujours mettre à jour le store avec les données reçues (même vide = producteur sans commandes)
-      setOrders((prev) => (reset ? supabaseOrders : [...prev, ...supabaseOrders]));
+      // Note: setOrders expects an array, not a function - get current orders and merge
+      const newOrders = reset ? supabaseOrders : [...orders, ...supabaseOrders];
+      setOrders(newOrders);
     } catch (error) {
       console.error('[MaBoutique] Error loading orders:', error);
     } finally {
@@ -610,8 +612,8 @@ export default function MaBoutiqueScreen() {
 
   // Demander permission galerie
   const requestMediaLibraryPermission = async (): Promise<boolean> => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted' && status !== 'limited') {
+    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!granted) {
       Alert.alert(
         'Permission requise',
         'Veuillez autoriser l\'accès à la galerie pour sélectionner des photos.',
@@ -2506,7 +2508,7 @@ export default function MaBoutiqueScreen() {
           )}
           {activeTab === 'direct_sales' && (
             <Pressable
-              onPress={loadDirectSalesOrders}
+              onPress={() => loadDirectSalesOrders(true)}
               className="px-4 py-2.5 rounded-xl flex-row items-center"
               style={{ backgroundColor: `${COLORS.accent.hemp}20` }}
             >

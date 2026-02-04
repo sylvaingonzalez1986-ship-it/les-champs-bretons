@@ -183,23 +183,23 @@ export async function addToUserCollection(item: {
     if (!session?.user?.id) return null;
 
     const headers = await getAuthenticatedHeaders();
-    const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/user_collection`, {
+    const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-collection-mutations`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        user_id: session.user.id,
-        product_id: item.productId,
-        product_name: item.productName,
-        product_rarity: item.productRarity,
-        product_value: item.productValue,
-        product_image: item.productImage || null,
-        lot_id: item.lotId || null,
-        lot_type: item.lotType || null,
-        discount_percent: item.discountPercent || null,
-        discount_amount: item.discountAmount || null,
-        min_order_amount: item.minOrderAmount || null,
-        used: false,
-        obtained_at: new Date().toISOString(),
+        action: 'add',
+        item: {
+          productId: item.productId,
+          productName: item.productName,
+          productRarity: item.productRarity,
+          productValue: item.productValue,
+          productImage: item.productImage || null,
+          lotId: item.lotId || null,
+          lotType: item.lotType || null,
+          discountPercent: item.discountPercent || null,
+          discountAmount: item.discountAmount || null,
+          minOrderAmount: item.minOrderAmount || null,
+        },
       }),
     });
 
@@ -209,7 +209,7 @@ export async function addToUserCollection(item: {
     }
 
     const result = await response.json();
-    return result[0]?.id || null;
+    return result?.id || null;
   } catch (error) {
     console.warn('[UserSync] Erreur add collection:', error);
     return null;
@@ -221,10 +221,13 @@ export async function markCollectionItemUsed(itemId: string): Promise<void> {
 
   try {
     const headers = await getAuthenticatedHeaders();
-    await supabaseFetch(`${SUPABASE_URL}/rest/v1/user_collection?id=eq.${itemId}`, {
-      method: 'PATCH',
+    await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-collection-mutations`, {
+      method: 'POST',
       headers,
-      body: JSON.stringify({ used: true }),
+      body: JSON.stringify({
+        action: 'markUsed',
+        itemId,
+      }),
     });
   } catch (error) {
     console.warn('[UserSync] Erreur mark used:', error);
@@ -236,9 +239,13 @@ export async function deleteCollectionItem(itemId: string): Promise<void> {
 
   try {
     const headers = await getAuthenticatedHeaders();
-    await supabaseFetch(`${SUPABASE_URL}/rest/v1/user_collection?id=eq.${itemId}`, {
-      method: 'DELETE',
+    await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-collection-mutations`, {
+      method: 'POST',
       headers,
+      body: JSON.stringify({
+        action: 'delete',
+        itemId,
+      }),
     });
   } catch (error) {
     console.warn('[UserSync] Erreur delete collection:', error);
@@ -275,34 +282,15 @@ export async function upsertUserReferral(code: string, points: number): Promise<
     if (!session?.user?.id) return;
 
     const headers = await getAuthenticatedHeaders();
-
-    // Essayer mise à jour
-    const updateResponse = await supabaseFetch(
-      `${SUPABASE_URL}/rest/v1/user_referrals?user_id=eq.${session.user.id}`,
-      {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({
-          points,
-          updated_at: new Date().toISOString(),
-        }),
-      }
-    );
-
-    if (updateResponse.ok) {
-      const result = await updateResponse.json();
-      if (result.length === 0) {
-        await supabaseFetch(`${SUPABASE_URL}/rest/v1/user_referrals`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            user_id: session.user.id,
-            referral_code: code,
-            points,
-          }),
-        });
-      }
-    }
+    await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-referrals-mutations`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'upsert',
+        referralCode: code,
+        points,
+      }),
+    });
   } catch (error) {
     console.warn('[UserSync] Erreur upsert referral:', error);
   }
@@ -532,21 +520,18 @@ export async function linkUserCode(userCode: string): Promise<boolean> {
 
     const headers = await getAuthenticatedHeaders();
 
-    // Essayer d'insérer le mapping
-    const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/user_code_mapping`, {
+    const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-code-mapping-mutations`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
-        user_code: userCode,
-        user_id: session.user.id,
+        action: 'link',
+        userCode,
       }),
     });
 
     if (!response.ok) {
-      // Si le code est déjà mappé, c'est ok
-      const text = await response.text();
-      if (text.includes('duplicate')) {
-        return true;
+      if (response.status === 409) {
+        return false;
       }
       console.warn('[UserSync] Erreur link code');
       return false;
@@ -682,40 +667,3 @@ export async function markLotAsUsed(lotId: string): Promise<void> {
   }
 }
 
-/**
- * Migrer les lots depuis user_code local vers user_id
- * À appeler quand un utilisateur se connecte
- */
-export async function migrateLotsForUser(userCode: string): Promise<number> {
-  if (!isSupabaseSyncConfigured()) return 0;
-
-  try {
-    const session = await getValidSession();
-    if (!session?.user?.id) return 0;
-
-    // D'abord, lier le user_code
-    await linkUserCode(userCode);
-
-    // Ensuite, mettre à jour tous les lots avec ce user_code
-    const headers = await getAuthenticatedHeaders();
-    const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-lots-mutations`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        action: 'migrate',
-        userCode,
-      }),
-    });
-
-    if (!response.ok) {
-      console.warn('[UserSync] Erreur migrate lots');
-      return 0;
-    }
-
-    const result = await response.json();
-    return result?.migrated || 0;
-  } catch (error) {
-    console.warn('[UserSync] Erreur migrate lots:', error);
-    return 0;
-  }
-}

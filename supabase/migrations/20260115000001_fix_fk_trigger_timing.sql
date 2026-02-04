@@ -119,14 +119,17 @@ ON CONFLICT (id) DO NOTHING;
 -- ============================================================================
 -- S'assurer que la colonne id de profiles référence bien auth.users.id
 SELECT
-  constraint_name,
-  table_name,
-  column_name,
-  foreign_table_name,
-  foreign_column_name
-FROM information_schema.key_column_usage
-WHERE table_name = 'profiles'
-AND constraint_type = 'FOREIGN KEY';
+  kcu.constraint_name,
+  kcu.table_name,
+  kcu.column_name,
+  ccu.table_name AS foreign_table_name,
+  ccu.column_name AS foreign_column_name
+FROM information_schema.key_column_usage kcu
+JOIN information_schema.constraint_column_usage ccu
+  ON kcu.constraint_name = ccu.constraint_name
+  AND kcu.constraint_schema = ccu.constraint_schema
+WHERE kcu.table_name = 'profiles'
+AND kcu.constraint_schema = 'public';
 
 -- Résultat attendu:
 -- constraint_name: profiles_id_fkey

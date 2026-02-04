@@ -241,8 +241,8 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
   const pickImage = async () => {
     if (formData.images.length >= MAX_IMAGES) return;
 
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted' && status !== 'limited') return;
+    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!granted) return;
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
@@ -296,8 +296,8 @@ export const AddProductModal = ({ visible, producerId, producerName, onClose, ed
   };
 
   const pickVideo = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted' && status !== 'limited') return;
+    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!granted) return;
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['videos'],

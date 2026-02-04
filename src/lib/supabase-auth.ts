@@ -7,9 +7,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchWithRetry, NetworkError } from './fetch-with-retry';
 import SecureStorage, { initializeSecureStorage } from './secure-storage';
+import { ensureDeviceId } from './device-id';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+const DEVICE_BINDING_ENDPOINT = '/functions/v1/bind-device';
 
 // Exporter pour utilisation externe
 export { SUPABASE_URL, SUPABASE_ANON_KEY };
@@ -247,6 +249,103 @@ async function clearSession(): Promise<void> {
     await AsyncStorage.removeItem(AUTH_SESSION_KEY);
   } catch (error) {
     console.warn('[Auth] Error clearing session:', error);
+  }
+}
+
+/**
+ * Sauvegarder la session (tokens sécurisés + métadonnées)
+ */
+async function saveSession(session: AuthSession): Promise<void> {
+  try {
+    currentSession = session;
+
+    // Stocker les tokens dans SecureStorage (chiffré)
+    await secureSet(SECURE_ACCESS_TOKEN_KEY, session.access_token);
+    await secureSet(SECURE_REFRESH_TOKEN_KEY, session.refresh_token);
+
+    // Stocker les métadonnées dans AsyncStorage (non sensible)
+    const sessionMeta = {
+      expires_at: session.expires_at,
+      expires_in: session.expires_in,
+      token_type: session.token_type,
+      user: session.user,
+    };
+    await AsyncStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(sessionMeta));
+
+    // Bind device to session (best-effort, non-blocking)
+    try {
+      const deviceId = await ensureDeviceId();
+      await fetch(`${SUPABASE_URL}${DEVICE_BINDING_ENDPOINT}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+          'X-Device-Id': deviceId,
+        },
+        body: JSON.stringify({}),
+      });
+    } catch (bindError) {
+      console.warn('[Auth] Device binding skipped:', bindError);
+    }
+  } catch (error) {
+    console.warn('[Auth] Error saving session:', error);
+  }
+}
+
+/**
+ * Charger la session stockée au démarrage de l'app
+ */
+export async function loadStoredSession(): Promise<AuthSession | null> {
+  try {
+    // Charger les tokens depuis SecureStorage
+    const accessToken = await secureGet(SECURE_ACCESS_TOKEN_KEY);
+    const refreshToken = await secureGet(SECURE_REFRESH_TOKEN_KEY);
+
+    if (!accessToken || !refreshToken) {
+      return null;
+    }
+
+    // Charger les métadonnées depuis AsyncStorage
+    const sessionMetaStr = await AsyncStorage.getItem(AUTH_SESSION_KEY);
+    if (!sessionMetaStr) {
+      // Tokens présents mais pas de métadonnées - nettoyer
+      await clearSession();
+      return null;
+    }
+
+    const sessionMeta = JSON.parse(sessionMetaStr);
+
+    // Reconstruire la session complète
+    const session: AuthSession = {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_at: sessionMeta.expires_at,
+      expires_in: sessionMeta.expires_in,
+      token_type: sessionMeta.token_type,
+      user: sessionMeta.user,
+    };
+
+    // Vérifier si la session est expirée
+    const now = Math.floor(Date.now() / 1000);
+    if (session.expires_at < now) {
+      // Session expirée - essayer de rafraîchir
+      console.log('[Auth] Session expirée, tentative de rafraîchissement...');
+      const refreshed = await refreshSession(refreshToken);
+      return refreshed;
+    }
+
+    // Session valide - la stocker en mémoire
+    currentSession = session;
+    try {
+      await ensureDeviceId();
+    } catch (deviceError) {
+      console.warn('[Auth] Device ID init skipped:', deviceError);
+    }
+    return session;
+  } catch (error) {
+    console.warn('[Auth] Error loading stored session:', error);
+    await clearSession();
+    return null;
   }
 }
 

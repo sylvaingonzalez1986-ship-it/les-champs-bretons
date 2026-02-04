@@ -1,79 +1,17 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
 import { createClient, SupabaseClient, User } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Max-Age': '86400',
-};
+import { getCorsHeaders, isOriginAllowed } from '../_shared/cors.ts';
+import {
+  checkRateLimit,
+  createRateLimitResponse,
+  logSecurityEvent,
+  RATE_LIMIT_PRESETS,
+} from '../_shared/rate-limit.ts';
 
 const EMAIL_WEBHOOK_SECRET = Deno.env.get('EMAIL_WEBHOOK_SECRET') || '';
+const REQUIRE_WEBHOOK_SIGNATURE = Deno.env.get('REQUIRE_WEBHOOK_SIGNATURE') === 'true';
 
-const RATE_LIMIT_PRESETS = {
-  ORDERS: {
-    limit: 10,
-    windowMs: 60 * 1000,
-    identifier: 'orders',
-  },
-} as const;
-
-interface RateLimitConfig {
-  limit: number;
-  windowMs: number;
-  identifier: string;
-}
-
-interface RateLimitResult {
-  allowed: boolean;
-  remaining: number;
-  resetAt: number;
-  retryAfterSeconds?: number;
-}
-
-const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimit(userId: string, config: RateLimitConfig): RateLimitResult {
-  const now = Date.now();
-  const key = `${config.identifier}:${userId}`;
-  const entry = rateLimitStore.get(key);
-
-  if (!entry || now > entry.resetAt) {
-    rateLimitStore.set(key, { count: 1, resetAt: now + config.windowMs });
-    return { allowed: true, remaining: config.limit - 1, resetAt: now + config.windowMs };
-  }
-
-  if (entry.count >= config.limit) {
-    return {
-      allowed: false,
-      remaining: 0,
-      resetAt: entry.resetAt,
-      retryAfterSeconds: Math.ceil((entry.resetAt - now) / 1000),
-    };
-  }
-
-  entry.count += 1;
-  return { allowed: true, remaining: config.limit - entry.count, resetAt: entry.resetAt };
-}
-
-function createRateLimitResponse(
-  result: RateLimitResult,
-  config: RateLimitConfig
-): Response {
-  return new Response(
-    JSON.stringify({
-      error: 'RATE_LIMIT_EXCEEDED',
-      message: `Rate limit exceeded. Maximum ${config.limit} requests per ${Math.ceil(config.windowMs / 1000)} seconds.`,
-      retryAfter: result.retryAfterSeconds,
-      resetAt: new Date(result.resetAt).toISOString(),
-    }),
-    {
-      status: 429,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    }
-  );
-}
 
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -103,18 +41,36 @@ async function computeSignature(secret: string, payload: string): Promise<string
   return btoa(binary);
 }
 
-async function verifyOptionalWebhookSignature(req: Request, rawBody: string): Promise<Response | null> {
-  if (!EMAIL_WEBHOOK_SECRET) return null;
+async function verifyOptionalWebhookSignature(
+  req: Request,
+  rawBody: string,
+  responseCorsHeaders: Record<string, string>
+): Promise<Response | null> {
+  if (!EMAIL_WEBHOOK_SECRET) {
+    return REQUIRE_WEBHOOK_SIGNATURE
+      ? new Response(JSON.stringify({ error: 'SIGNATURE_REQUIRED' }), {
+          status: 401,
+          headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
+        })
+      : null;
+  }
 
   const signature = req.headers.get('X-Webhook-Signature');
   const timestamp = req.headers.get('X-Webhook-Timestamp');
-  if (!signature || !timestamp) return null;
+  if (!signature || !timestamp) {
+    return REQUIRE_WEBHOOK_SIGNATURE
+      ? new Response(JSON.stringify({ error: 'SIGNATURE_REQUIRED' }), {
+          status: 401,
+          headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
+        })
+      : null;
+  }
 
   const timestampMs = Number(timestamp) * 1000;
   if (!Number.isFinite(timestampMs)) {
     return new Response(JSON.stringify({ error: 'INVALID_SIGNATURE' }), {
       status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
@@ -122,7 +78,7 @@ async function verifyOptionalWebhookSignature(req: Request, rawBody: string): Pr
   if (Math.abs(now - timestampMs) > 5 * 60 * 1000) {
     return new Response(JSON.stringify({ error: 'SIGNATURE_EXPIRED' }), {
       status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
@@ -132,7 +88,7 @@ async function verifyOptionalWebhookSignature(req: Request, rawBody: string): Pr
   if (!timingSafeEqual(signature, expected)) {
     return new Response(JSON.stringify({ error: 'INVALID_SIGNATURE' }), {
       status: 401,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
     });
   }
 
@@ -153,24 +109,43 @@ interface ValidatedRequest<T> {
   user: User;
   data: T;
   supabase: SupabaseClient;
+  responseCorsHeaders: Record<string, string>;
 }
 
 function createValidatedHandler<T>(
-  config: { schema: z.ZodSchema<T>; rateLimit: RateLimitConfig; functionName: string },
+  config: { schema: z.ZodSchema<T>; rateLimit: { limit: number; windowMs: number; identifier: string }; functionName: string },
   handler: (validated: ValidatedRequest<T>) => Promise<Response>
 ): (req: Request) => Promise<Response> {
   const { schema, rateLimit, functionName } = config;
 
   return async (req: Request): Promise<Response> => {
+    const responseCorsHeaders = getCorsHeaders(req);
+    const origin = req.headers.get('Origin');
+    if (!isOriginAllowed(origin)) {
+      logSecurityEvent({
+        userId: 'anonymous',
+        action: 'invalid_origin',
+        endpoint: functionName,
+        ip: req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown',
+        userAgent: req.headers.get('User-Agent') || 'unknown',
+        success: false,
+        reason: `Origin not allowed: ${origin ?? 'unknown'}`,
+      });
+      return new Response(JSON.stringify({ error: 'FORBIDDEN', message: 'Invalid origin' }), {
+        status: 403,
+        headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (req.method === 'OPTIONS') {
-      return new Response('ok', { headers: corsHeaders });
+      return new Response('ok', { headers: responseCorsHeaders });
     }
 
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
         status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -184,14 +159,23 @@ function createValidatedHandler<T>(
     if (userError || !userData.user) {
       return new Response(JSON.stringify({ error: 'UNAUTHORIZED' }), {
         status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     const userId = userData.user.id;
-    const rateLimitResult = checkRateLimit(userId, rateLimit);
+    const rateLimitResult = await checkRateLimit(userId, rateLimit);
     if (!rateLimitResult.allowed) {
-      return createRateLimitResponse(rateLimitResult, rateLimit);
+      logSecurityEvent({
+        userId,
+        action: 'rate_limit_exceeded',
+        endpoint: functionName,
+        ip: req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown',
+        userAgent: req.headers.get('User-Agent') || 'unknown',
+        success: false,
+        reason: `Exceeded ${rateLimit.limit} requests per window`,
+      });
+      return createRateLimitResponse(rateLimitResult, rateLimit, responseCorsHeaders);
     }
 
     let rawBody = '';
@@ -200,11 +184,11 @@ function createValidatedHandler<T>(
     } catch {
       return new Response(JSON.stringify({ error: 'PARSE_ERROR' }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const signatureError = await verifyOptionalWebhookSignature(req, rawBody);
+    const signatureError = await verifyOptionalWebhookSignature(req, rawBody, responseCorsHeaders);
     if (signatureError) {
       return signatureError;
     }
@@ -215,7 +199,7 @@ function createValidatedHandler<T>(
     } catch {
       return new Response(JSON.stringify({ error: 'PARSE_ERROR' }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -230,7 +214,7 @@ function createValidatedHandler<T>(
         })),
       }), {
         status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -239,12 +223,13 @@ function createValidatedHandler<T>(
         user: userData.user,
         data: validation.data,
         supabase,
+        responseCorsHeaders,
       });
     } catch (error) {
       console.error(`[${functionName}] Handler error:`, error);
       return new Response(JSON.stringify({ error: 'INTERNAL_ERROR' }), {
         status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
       });
     }
   };

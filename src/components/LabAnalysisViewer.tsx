@@ -274,7 +274,9 @@ function PdfViewer({ uri }: { uri: string }) {
             }
           }
         }).catch(function(error) {
-          container.innerHTML = '<div class="loading">Erreur: ' + error.message + '</div>';
+          // SEC-012 FIX: Escape error message to prevent XSS
+          var safeMessage = (error.message || 'Erreur inconnue').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+          container.innerHTML = '<div class="loading">Erreur: ' + safeMessage + '</div>';
         });
       </script>
     </body>
@@ -285,9 +287,10 @@ function PdfViewer({ uri }: { uri: string }) {
     <WebView
       source={{ html: htmlContent }}
       style={{ flex: 1, backgroundColor: '#000' }}
-      originWhitelist={['*']}
+      originWhitelist={['https://*', 'about:blank']}
       javaScriptEnabled={true}
       domStorageEnabled={true}
+      onShouldStartLoadWithRequest={(request) => request.url.startsWith('https://') || request.url.startsWith('about:blank')}
       startInLoadingState={true}
       renderLoading={() => (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>

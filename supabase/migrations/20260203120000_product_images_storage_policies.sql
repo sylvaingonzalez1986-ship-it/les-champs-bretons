@@ -1,5 +1,6 @@
--- Enable RLS on storage.objects if not already enabled
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- Note: RLS is already enabled on storage.objects by Supabase's initial schema
+-- (See supabase/storage migration 0002-storage-schema.sql)
+-- We only need to create the policies, not enable RLS
 
 -- Drop existing policies (idempotent)
 DROP POLICY IF EXISTS "product_images_insert" ON storage.objects;

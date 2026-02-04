@@ -3,7 +3,7 @@
  * Affiche toutes les infos du produit avec sélection de quantité
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Modal,
@@ -51,6 +51,23 @@ import { WebView } from 'react-native-webview';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
+const ALLOWED_VIDEO_HOSTS = new Set([
+  'www.youtube.com',
+  'youtube.com',
+  'youtu.be',
+  'player.vimeo.com',
+  'vimeo.com',
+]);
+
+function isAllowedVideoUrl(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+    return url.protocol === 'https:' && ALLOWED_VIDEO_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 interface ProProductDetailModalProps {
   visible: boolean;
   onClose: () => void;
@@ -70,6 +87,17 @@ export function ProProductDetailModal({
   const [quantity, setQuantity] = useState(1);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [showVideo, setShowVideo] = useState(false);
+
+  const safeVideoUrl = useMemo(() => {
+    if (!product?.videoUrl) return null;
+    return isAllowedVideoUrl(product.videoUrl) ? product.videoUrl : null;
+  }, [product?.videoUrl]);
+
+  useEffect(() => {
+    if (!safeVideoUrl) {
+      setShowVideo(false);
+    }
+  }, [safeVideoUrl]);
 
   if (!product || !producer) return null;
 
@@ -151,11 +179,13 @@ export function ProProductDetailModal({
       <View className="flex-1" style={{ backgroundColor: COLORS.background.dark }}>
         {/* Header avec image */}
         <View style={{ height: 300 }}>
-          {showVideo && product.videoUrl ? (
+          {showVideo && safeVideoUrl ? (
             <WebView
-              source={{ uri: product.videoUrl }}
+              source={{ uri: safeVideoUrl }}
               style={{ flex: 1 }}
               allowsFullscreenVideo
+              originWhitelist={['https://*']}
+              onShouldStartLoadWithRequest={(request) => isAllowedVideoUrl(request.url)}
             />
           ) : images.length > 0 ? (
             <>
@@ -230,7 +260,7 @@ export function ProProductDetailModal({
           </Pressable>
 
           {/* Bouton vidéo si disponible */}
-          {product.videoUrl && (
+          {safeVideoUrl && (
             <Pressable
               onPress={() => setShowVideo(!showVideo)}
               className="absolute top-4 left-4 px-3 py-2 rounded-full flex-row items-center"

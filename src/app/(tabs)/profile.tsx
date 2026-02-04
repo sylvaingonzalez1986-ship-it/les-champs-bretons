@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { User, Package, Award, Settings, ChevronRight, Leaf, Camera, Lock, LogOut, X, Ticket, Check, Grid3X3, ChevronDown, ChevronUp, Mail, Phone, MapPin, Home, ShoppingBag, Clock, Truck, CreditCard, XCircle, Copy, ExternalLink, Gift, RefreshCw, Shield, Building2, FileText, UserCircle, Users, BarChart3 } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
-import * as Linking from 'expo-linking';
+import { safeOpenExternalUrl } from '@/lib/safe-linking';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -1203,7 +1203,9 @@ export default function ProfileScreen() {
 
                             {/* Lien Mondial Relay */}
                             <Pressable
-                              onPress={() => Linking.openURL('https://www.mondialrelay.fr/suivi-de-colis')}
+                              onPress={() => {
+                                void safeOpenExternalUrl('https://www.mondialrelay.fr/suivi-de-colis');
+                              }}
                               className="flex-row items-center mt-2 active:opacity-70"
                             >
                               <ExternalLink size={14} color="#60A5FA" />

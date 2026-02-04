@@ -1,8 +1,10 @@
 import { PromoProduct } from './store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   SUPABASE_URL,
   getAuthenticatedHeaders,
   getHeaders,
+  isNetworkOnline,
   isSupabaseSyncConfigured,
   supabaseFetch,
 } from './supabase-sync-core';
@@ -63,6 +65,12 @@ export async function fetchPromoProducts(): Promise<PromoProduct[]> {
     return [];
   }
 
+  const isOnline = await isNetworkOnline();
+  if (!isOnline) {
+    const cached = await AsyncStorage.getItem('cache_promo_products_v2');
+    return cached ? (JSON.parse(cached) as PromoProduct[]) : [];
+  }
+
   try {
     const response = await supabaseFetch(`${SUPABASE_URL}/rest/v1/promo_products?select=*&order=product_name.asc`, {
       method: 'GET',
@@ -77,7 +85,8 @@ export async function fetchPromoProducts(): Promise<PromoProduct[]> {
     return data.map(supabaseToPromoProduct);
   } catch (error) {
     console.warn('Error fetching promo products from Supabase:', error);
-    return [];
+    const cached = await AsyncStorage.getItem('cache_promo_products_v2');
+    return cached ? (JSON.parse(cached) as PromoProduct[]) : [];
   }
 }
 

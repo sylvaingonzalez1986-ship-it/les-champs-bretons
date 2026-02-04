@@ -225,6 +225,26 @@ export const directSaleOrderSchema = z.object({
 export type DirectSaleOrderInput = z.infer<typeof directSaleOrderSchema>;
 
 // =============================================================================
+// PUBLIC CATALOG SCHEMAS
+// =============================================================================
+
+export const publicCatalogSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('producers'),
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+    offset: z.coerce.number().int().min(0).default(0),
+  }),
+  z.object({
+    action: z.literal('productsByProducer'),
+    producerId: uuidSchema,
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+    offset: z.coerce.number().int().min(0).default(0),
+  }),
+]);
+
+export type PublicCatalogInput = z.infer<typeof publicCatalogSchema>;
+
+// =============================================================================
 // LOCAL MARKET ORDERS SCHEMAS
 // =============================================================================
 

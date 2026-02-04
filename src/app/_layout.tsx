@@ -11,7 +11,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts, Wallpoet_400Regular } from '@expo-google-fonts/wallpoet';
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import { View, ActivityIndicator, Text } from 'react-native';
+import { View, ActivityIndicator, Text, Pressable } from 'react-native';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useDataSync } from '@/lib/useDataSync';
 import { useUserDataSync } from '@/lib/useUserData';
@@ -22,6 +22,7 @@ import { isSupabaseConfigured } from '@/lib/env-validation';
 import { NetworkProvider, useNetwork } from '@/lib/network-context';
 import { NetworkBanner } from '@/components/NetworkBanner';
 import { setupOrderQueueNetworkListener, cleanupOrderQueueNetworkListener } from '@/lib/order-queue-store';
+import { warmEdgeFunctions } from '@/lib/warmup';
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',
@@ -74,6 +75,44 @@ function LoadingScreen({ message }: { message?: string }) {
   );
 }
 
+function AuthErrorScreen({
+  title,
+  message,
+  onRetry,
+}: {
+  title: string;
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <View style={{
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: COLORS.background.nightSky,
+      padding: 24,
+    }}>
+      <Text style={{ color: '#FF6B6B', fontSize: 18, fontWeight: 'bold', marginBottom: 12, textAlign: 'center' }}>
+        {title}
+      </Text>
+      <Text style={{ color: COLORS.text.muted, fontSize: 14, textAlign: 'center', marginBottom: 16 }}>
+        {message}
+      </Text>
+      <Pressable
+        onPress={onRetry}
+        style={{
+          paddingHorizontal: 16,
+          paddingVertical: 10,
+          backgroundColor: COLORS.primary.gold,
+          borderRadius: 10,
+        }}
+      >
+        <Text style={{ color: '#0A0F0D', fontWeight: 'bold' }}>Réessayer</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function EnvironmentErrorScreen() {
   return (
     <View style={{
@@ -103,30 +142,30 @@ function EnvironmentErrorScreen() {
  * Auth Guard - Simplified version
  */
 function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, isInitialized, profile, session } = useAuth();
+  const {
+    isAuthenticated,
+    isInitialized,
+    profile,
+    session,
+    isLoadingSession,
+    isLoadingProfile,
+    sessionError,
+    profileError,
+    retrySession,
+    retryProfile,
+  } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const rootNavState = useRootNavigationState();
-  const [loadingTimeout, setLoadingTimeout] = useState(false);
   const navigationDone = useRef<string | null>(null);
-
-  // Safety timeout
-  useEffect(() => {
-    if (!isInitialized || isLoading) {
-      const timeout = setTimeout(() => {
-        console.warn('[AuthGuard] Loading timeout reached after 10s');
-        setLoadingTimeout(true);
-      }, 10000);
-      return () => clearTimeout(timeout);
-    }
-  }, [isInitialized, isLoading]);
 
   // Navigation logic - with deduplication
   useEffect(() => {
     if (!rootNavState?.key) return;
     if (!rootNavState?.routes?.length) return;
     if (!segments || segments.length === 0) return;
-    if (!isInitialized || (isLoading && !loadingTimeout)) return;
+    if (!isInitialized || isLoadingSession || isLoadingProfile) return;
+    if (sessionError || profileError) return;
 
     const inAuthGroup = segments[0] === 'auth';
     const inAgeVerification = segments[0] === 'age-verification';
@@ -141,23 +180,33 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const isAdultVerified = profile?.is_adult === true;
-    if (!isAdultVerified) {
-      if (!inAgeVerification && !inAuthGroup) {
-        targetRoute = '/age-verification';
+    // 1. FIRST: Check if user is authenticated
+    if (!isAuthenticated) {
+      // Not authenticated - redirect to login if not already in auth group
+      if (!inAuthGroup) {
+        targetRoute = '/auth/login';
       }
     } else {
-      const isPro = profile?.role === 'pro';
-      const proStatus = (profile as any)?.pro_status;
-      const isProPending = isPro && (proStatus === 'pending' || proStatus === null);
-      const isProRejected = isPro && proStatus === 'rejected';
-
-      if (isProPending || isProRejected) {
-        if (!inProPendingPage && !inAuthGroup) {
-          targetRoute = '/pro-pending';
+      // 2. User is authenticated - check age verification
+      const isAdultVerified = profile?.is_adult === true;
+      if (!isAdultVerified) {
+        if (!inAgeVerification && !inAuthGroup) {
+          targetRoute = '/age-verification';
         }
-      } else if (inAuthGroup || inAgeVerification || inProPendingPage) {
-        targetRoute = '/(tabs)/map';
+      } else {
+        // 3. Age verified - check pro status
+        const isPro = profile?.role === 'pro';
+        const proStatus = (profile as any)?.pro_status;
+        const isProPending = isPro && (proStatus === 'pending' || proStatus === null);
+        const isProRejected = isPro && proStatus === 'rejected';
+
+        if (isProPending || isProRejected) {
+          if (!inProPendingPage && !inAuthGroup) {
+            targetRoute = '/pro-pending';
+          }
+        } else if (inAuthGroup || inAgeVerification || inProPendingPage) {
+          targetRoute = '/(tabs)/map';
+        }
       }
     }
 
@@ -169,8 +218,10 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   }, [
     isAuthenticated,
     isInitialized,
-    isLoading,
-    loadingTimeout,
+    isLoadingSession,
+    isLoadingProfile,
+    sessionError,
+    profileError,
     profile?.is_adult,
     profile?.role,
     (profile as any)?.pro_status,
@@ -184,8 +235,32 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     navigationDone.current = null;
   }, [isAuthenticated, profile?.is_adult, profile?.role, (profile as any)?.pro_status]);
 
-  if (!isInitialized || (isLoading && !loadingTimeout)) {
-    return <LoadingScreen message="Chargement..." />;
+  if (!isInitialized || isLoadingSession) {
+    return <LoadingScreen message="Chargement de la session..." />;
+  }
+
+  if (sessionError) {
+    return (
+      <AuthErrorScreen
+        title="Connexion impossible"
+        message="Impossible de charger la session. Vérifiez votre connexion et réessayez."
+        onRetry={retrySession}
+      />
+    );
+  }
+
+  if (isAuthenticated && isLoadingProfile) {
+    return <LoadingScreen message="Chargement du profil..." />;
+  }
+
+  if (profileError) {
+    return (
+      <AuthErrorScreen
+        title="Profil indisponible"
+        message="Le profil n'a pas pu être chargé. Vérifiez votre connexion et réessayez."
+        onRetry={retryProfile}
+      />
+    );
   }
 
   return <>{children}</>;
@@ -274,6 +349,7 @@ export default function RootLayout() {
   });
 
   const supabaseConfigured = useMemo(() => isSupabaseConfigured(), []);
+  const warmupTriggered = useRef(false);
 
   const onLayoutRootView = useCallback(async () => {
     if (fontsLoaded || fontError) {
@@ -289,14 +365,19 @@ export default function RootLayout() {
     }
   }, [fontError]);
 
+  useEffect(() => {
+    if (!supabaseConfigured || warmupTriggered.current) return;
+    warmupTriggered.current = true;
+    void warmEdgeFunctions();
+  }, [supabaseConfigured]);
+
   const [fontTimeout, setFontTimeout] = useState(false);
   useEffect(() => {
     const timeout = setTimeout(() => {
       if (!fontsLoaded && !fontError) {
-        console.warn('[Fonts] Font loading timeout');
         setFontTimeout(true);
       }
-    }, 5000);
+    }, 12000);
     return () => clearTimeout(timeout);
   }, [fontsLoaded, fontError]);
 

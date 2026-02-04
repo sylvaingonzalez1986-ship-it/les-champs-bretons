@@ -3,7 +3,7 @@
  * Affiche les infos du produit avec tarifs dégressifs selon le rôle (client/pro)
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Modal,
@@ -52,6 +52,23 @@ import { WebView } from 'react-native-webview';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
+const ALLOWED_VIDEO_HOSTS = new Set([
+  'www.youtube.com',
+  'youtube.com',
+  'youtu.be',
+  'player.vimeo.com',
+  'vimeo.com',
+]);
+
+function isAllowedVideoUrl(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+    return url.protocol === 'https:' && ALLOWED_VIDEO_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 interface ShopProductDetailModalProps {
   visible: boolean;
   onClose: () => void;
@@ -73,6 +90,52 @@ export function ShopProductDetailModal({
   const [quantity, setQuantity] = useState(1);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [showVideo, setShowVideo] = useState(false);
+
+  // Images
+  const images = useMemo(() => {
+    if (product?.images?.length) return product.images;
+    if (product?.image) return [product.image];
+    return [];
+  }, [product?.images, product?.image]);
+  const [resolvedImages, setResolvedImages] = useState<string[]>(images);
+  const displayImages = resolvedImages.length > 0 ? resolvedImages : images;
+  const hasMultipleImages = displayImages.length > 1;
+
+  const imagesKey = useMemo(() => images.join('|'), [images]);
+
+  const safeVideoUrl = useMemo(() => {
+    if (!product?.videoUrl) return null;
+    return isAllowedVideoUrl(product.videoUrl) ? product.videoUrl : null;
+  }, [product?.videoUrl]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const resolveImages = async () => {
+      if (images.length === 0) {
+        setResolvedImages([]);
+        return;
+      }
+
+      const signed = await Promise.all(images.map((image) => getSignedProductImageUrl(image)));
+      if (isMounted) {
+        const next = signed.map((url, idx) => url || images[idx]).filter(Boolean);
+        setResolvedImages(next);
+      }
+    };
+
+    resolveImages();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [imagesKey]);
+
+  useEffect(() => {
+    if (!safeVideoUrl) {
+      setShowVideo(false);
+    }
+  }, [safeVideoUrl]);
 
   if (!product || !producer) return null;
 
@@ -103,35 +166,6 @@ export function ShopProductDetailModal({
   const isOutOfStock = typeof product.stock === 'number' && product.stock <= 0;
   const stockAvailable = product.stock ?? Infinity;
   const maxQuantity = Math.min(stockAvailable, 100);
-
-  // Images
-  const images = product.images?.length ? product.images : product.image ? [product.image] : [];
-  const [resolvedImages, setResolvedImages] = useState<string[]>(images);
-  const displayImages = resolvedImages.length > 0 ? resolvedImages : images;
-  const hasMultipleImages = displayImages.length > 1;
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const resolveImages = async () => {
-      if (images.length === 0) {
-        setResolvedImages([]);
-        return;
-      }
-
-      const signed = await Promise.all(images.map((image) => getSignedProductImageUrl(image)));
-      if (isMounted) {
-        const next = signed.map((url, idx) => url || images[idx]).filter(Boolean);
-        setResolvedImages(next);
-      }
-    };
-
-    resolveImages();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [images]);
 
   // Calculs avec le prix final
   const totalPrice = finalUnitPrice * quantity;
@@ -184,11 +218,13 @@ export function ShopProductDetailModal({
       <View className="flex-1" style={{ backgroundColor: COLORS.background.dark }}>
         {/* Header avec image */}
         <View style={{ height: 280 }}>
-          {showVideo && product.videoUrl ? (
+          {showVideo && safeVideoUrl ? (
             <WebView
-              source={{ uri: product.videoUrl }}
+              source={{ uri: safeVideoUrl }}
               style={{ flex: 1 }}
               allowsFullscreenVideo
+              originWhitelist={['https://*']}
+              onShouldStartLoadWithRequest={(request) => isAllowedVideoUrl(request.url)}
             />
                 ) : displayImages.length > 0 ? (
             <>
@@ -263,7 +299,7 @@ export function ShopProductDetailModal({
           </Pressable>
 
           {/* Bouton vidéo si disponible */}
-          {product.videoUrl && (
+          {safeVideoUrl && (
             <Pressable
               onPress={() => setShowVideo(!showVideo)}
               className="absolute top-4 left-4 px-3 py-2 rounded-full flex-row items-center"

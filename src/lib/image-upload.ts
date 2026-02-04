@@ -6,6 +6,8 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system';
 import * as Crypto from 'expo-crypto';
 import { isSupabaseConfigured, getSupabaseConfig } from './env-validation';
+import { getValidSession } from './supabase-auth';
+import { ensureDeviceId } from './device-id';
 
 // Storage bucket name - must be created in Supabase dashboard
 const STORAGE_BUCKET = 'images';
@@ -289,29 +291,6 @@ function getRetryDelay(attempt: number): number {
 /**
  * Single upload attempt with timeout
  */
-async function attemptUpload(
-  blob: Blob,
-  filename: string,
-  signal: AbortSignal
-): Promise<Response> {
-  const { url, anonKey } = getSupabaseConfig();
-
-  return fetch(
-    `${url}/storage/v1/object/${STORAGE_BUCKET}/${filename}`,
-    {
-      method: 'POST',
-      headers: {
-        'apikey': anonKey,
-        'Authorization': `Bearer ${anonKey}`,
-        'Content-Type': 'image/jpeg',
-        'x-upsert': 'true',
-      },
-      body: blob,
-      signal,
-    }
-  );
-}
-
 /**
  * Upload an image to Supabase Storage with retry
  * @param localUri - Local file URI (file://...)
@@ -336,10 +315,10 @@ export async function uploadImageToSupabase(
   }
 
   try {
-    // Ensure bucket exists before uploading
-    const bucketReady = await ensureBucketExists();
-    if (!bucketReady) {
-      console.error('Could not verify/create storage bucket');
+    const session = await getValidSession();
+    if (!session?.access_token) {
+      notifyProgress({ status: 'error', message: ERROR_MESSAGES.NOT_CONFIGURED });
+      return null;
     }
 
     // Compress image first to reduce size and upload time
@@ -353,6 +332,19 @@ export async function uploadImageToSupabase(
     // Read the compressed file and convert to blob
     const response = await fetch(compressedUri);
     const blob = await response.blob();
+
+    const validation = await validateFileOnServer(
+      STORAGE_BUCKET,
+      filename,
+      blob.size,
+      blob.type || 'image/jpeg',
+      session.access_token
+    );
+
+    if (!validation.valid) {
+      notifyProgress({ status: 'error', message: ERROR_MESSAGES.VALIDATION_FAILED });
+      return null;
+    }
 
     // Upload to Supabase Storage with retry
     notifyProgress({ status: 'uploading', message: 'Envoi de l\'image...' });
@@ -373,7 +365,49 @@ export async function uploadImageToSupabase(
           });
         }
 
-        const uploadResponse = await attemptUpload(blob, filename, controller.signal);
+        const deviceId = await ensureDeviceId();
+        const signedResponse = await fetch(
+          `${url}/functions/v1/images-upload-url`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${session.access_token}`,
+              'X-Device-Id': deviceId,
+            },
+            body: JSON.stringify({
+              path: filename,
+              folder,
+              contentType: blob.type || 'image/jpeg',
+              fileSize: blob.size,
+            }),
+            signal: controller.signal,
+          }
+        );
+
+        if (!signedResponse.ok) {
+          clearTimeout(timeoutId);
+          const signedText = await signedResponse.text();
+          throw new Error(signedText || 'Erreur signature upload');
+        }
+
+        const signedPayload = await signedResponse.json();
+        const signedUrl = signedPayload?.signedUrl;
+        const storedPath = signedPayload?.path;
+
+        if (!signedUrl || !storedPath) {
+          clearTimeout(timeoutId);
+          throw new Error('Erreur signature upload');
+        }
+
+        const uploadResponse = await fetch(signedUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': blob.type || 'image/jpeg',
+          },
+          body: blob,
+          signal: controller.signal,
+        });
         clearTimeout(timeoutId);
 
         if (uploadResponse.ok) {
@@ -385,14 +419,6 @@ export async function uploadImageToSupabase(
 
         const errorText = await uploadResponse.text();
         console.error('Upload failed:', errorText);
-
-        // If bucket not found, reset verification and don't retry
-        if (errorText.includes('Bucket not found')) {
-          bucketVerified = false;
-          console.error('Bucket "images" not found. Please create it in Supabase Dashboard > Storage.');
-          notifyProgress({ status: 'error', message: ERROR_MESSAGES.BUCKET_NOT_FOUND });
-          return null;
-        }
 
         lastError = new Error(errorText);
       } catch (fetchError) {
@@ -554,25 +580,28 @@ export async function deleteImageFromSupabase(publicUrl: string): Promise<boolea
     return false;
   }
 
-  const { url, anonKey } = getSupabaseConfig();
-
-  // Extract path from public URL
-  const prefix = `${url}/storage/v1/object/public/${STORAGE_BUCKET}/`;
-  if (!publicUrl.startsWith(prefix)) {
-    return false; // Not a Supabase Storage URL
-  }
-
-  const path = publicUrl.replace(prefix, '');
-
   try {
+    const session = await getValidSession();
+    if (!session?.access_token) {
+      return false;
+    }
+
+    const deviceId = await ensureDeviceId();
+    const { url } = getSupabaseConfig();
+
     const response = await fetch(
-      `${url}/storage/v1/object/${STORAGE_BUCKET}/${path}`,
+      `${url}/functions/v1/images-mutations`,
       {
-        method: 'DELETE',
+        method: 'POST',
         headers: {
-          'apikey': anonKey,
-          'Authorization': `Bearer ${anonKey}`,
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+          'X-Device-Id': deviceId,
         },
+        body: JSON.stringify({
+          action: 'delete',
+          path: publicUrl,
+        }),
       }
     );
 

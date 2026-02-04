@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Pressable, Linking, Alert } from 'react-native';
+import { View, Pressable, Alert } from 'react-native';
 import { Text } from '@/components/ui';
 import { Trash2 } from 'lucide-react-native';
 import Animated, {
@@ -9,6 +9,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { ChatMessage } from '@/lib/supabase-sync';
+import { safeOpenExternalUrl } from '@/lib/safe-linking';
 
 // Couleurs du chat
 const CHAT_COLORS = {
@@ -84,7 +85,9 @@ const renderMessageContent = (content: string, textColor: string) => {
             <Text
               key={index}
               style={{ color: '#60A5FA', textDecorationLine: 'underline' }}
-              onPress={() => Linking.openURL(part)}
+              onPress={() => {
+                void safeOpenExternalUrl(part);
+              }}
             >
               {part}
             </Text>

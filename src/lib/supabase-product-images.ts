@@ -4,7 +4,9 @@
  */
 
 import { getSupabaseConfig } from './env-validation';
-import { getSession } from './supabase-auth';
+import { getSession, getValidSession } from './supabase-auth';
+import { ensureDeviceId } from './device-id';
+import * as Crypto from 'expo-crypto';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -32,6 +34,11 @@ export async function uploadProductImage(
     throw new Error('Supabase non configuré');
   }
 
+  const session = await getValidSession();
+  if (!session?.access_token) {
+    throw new Error('Utilisateur non authentifié');
+  }
+
   const uploadMetricStart = Date.now();
 
   // Read the file as blob
@@ -44,9 +51,9 @@ export async function uploadProductImage(
   }
 
   // Generate unique filename with producer/product path
-  const timestamp = Date.now();
+  const uuid = Crypto.randomUUID();
   const ext = fileUri.split('.').pop()?.toLowerCase() || 'jpg';
-  const finalName = `${producerId}/${productId}/${timestamp}.${ext}`;
+  const finalName = `${producerId}/${productId}/${uuid}.${ext}`;
 
   // Validate upload server-side (RPC)
   try {
@@ -58,7 +65,7 @@ export async function uploadProductImage(
         method: 'POST',
         headers: {
           'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -90,35 +97,55 @@ export async function uploadProductImage(
     console.warn('[ProductImages] Validation upload error:', error);
   }
 
-  // Upload to Supabase Storage
-  const uploadResponse = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${PRODUCT_IMAGES_BUCKET}/${finalName}`,
+  const deviceId = await ensureDeviceId();
+  const signedUrlResponse = await fetch(
+    `${SUPABASE_URL}/functions/v1/product-images-upload-url`,
     {
       method: 'POST',
       headers: {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': blob.type || 'image/jpeg',
-        'x-upsert': 'true',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+        'X-Device-Id': deviceId,
       },
-      body: blob,
+      body: JSON.stringify({
+        path: finalName,
+        contentType: blob.type || 'image/jpeg',
+        fileSize: blob.size,
+      }),
     }
   );
+
+  if (!signedUrlResponse.ok) {
+    throw new Error('Erreur signature upload');
+  }
+
+  const signedPayload = await signedUrlResponse.json();
+  const signedUrl = signedPayload?.signedUrl;
+  const storedPath = signedPayload?.path;
+
+  if (!signedUrl || !storedPath) {
+    throw new Error('Erreur signature upload');
+  }
+
+  const uploadResponse = await fetch(signedUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': blob.type || 'image/jpeg',
+    },
+    body: blob,
+  });
 
   if (!uploadResponse.ok) {
     console.warn('[ProductImages] Upload error');
     throw new Error('Erreur upload image');
   }
 
-  // Return the public URL
-  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${PRODUCT_IMAGES_BUCKET}/${finalName}`;
-
   if (__DEV__) {
     const duration = Date.now() - uploadMetricStart;
     console.info('[Metrics] upload.product_image', { durationMs: duration });
   }
 
-  return publicUrl;
+  return storedPath as string;
 }
 
 /**
@@ -130,23 +157,26 @@ export async function deleteProductImage(imageUrl: string): Promise<void> {
     throw new Error('Supabase non configuré');
   }
 
-  // Extract file path from URL
-  const pathMatch = imageUrl.match(new RegExp(`${PRODUCT_IMAGES_BUCKET}/(.+)$`));
-  if (!pathMatch) {
-    console.warn('[ProductImages] Could not extract path from URL:', imageUrl);
-    return;
+  const session = await getValidSession();
+  if (!session?.access_token) {
+    throw new Error('Utilisateur non authentifié');
   }
 
-  const filePath = pathMatch[1];
+  const deviceId = await ensureDeviceId();
 
   const response = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${PRODUCT_IMAGES_BUCKET}/${filePath}`,
+    `${SUPABASE_URL}/functions/v1/product-images-mutations`,
     {
-      method: 'DELETE',
+      method: 'POST',
       headers: {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+        'X-Device-Id': deviceId,
       },
+      body: JSON.stringify({
+        action: 'delete',
+        path: imageUrl,
+      }),
     }
   );
 

@@ -1,66 +1,8 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0';
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
-
-type RateLimitResult = {
-  allowed: boolean;
-  remaining: number;
-  resetAt: number;
-};
-
-type RateLimitPreset = {
-  windowMs: number;
-  limit: number;
-};
-
-const RATE_LIMIT_PRESETS: Record<string, RateLimitPreset> = {
-  ORDERS: { windowMs: 60_000, limit: 10 },
-};
-
-const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
-
-function checkRateLimit(key: string, preset: RateLimitPreset): RateLimitResult {
-  const now = Date.now();
-  const entry = rateLimitStore.get(key);
-
-  if (!entry || now >= entry.resetAt) {
-    const resetAt = now + preset.windowMs;
-    rateLimitStore.set(key, { count: 1, resetAt });
-    return { allowed: true, remaining: preset.limit - 1, resetAt };
-  }
-
-  if (entry.count >= preset.limit) {
-    return { allowed: false, remaining: 0, resetAt: entry.resetAt };
-  }
-
-  entry.count += 1;
-  rateLimitStore.set(key, entry);
-  return { allowed: true, remaining: Math.max(preset.limit - entry.count, 0), resetAt: entry.resetAt };
-}
-
-function createRateLimitResponse(
-  result: RateLimitResult,
-  preset: RateLimitPreset,
-  extraHeaders: Record<string, string>,
-): Response {
-  const headers = new Headers({
-    ...extraHeaders,
-    'Content-Type': 'application/json',
-    'Retry-After': Math.ceil((result.resetAt - Date.now()) / 1000).toString(),
-    'X-RateLimit-Limit': preset.limit.toString(),
-    'X-RateLimit-Remaining': result.remaining.toString(),
-    'X-RateLimit-Reset': Math.floor(result.resetAt / 1000).toString(),
-  });
-
-  return new Response(JSON.stringify({ error: 'RATE_LIMITED' }), { status: 429, headers });
-}
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Max-Age': '86400',
-};
+import { getCorsHeaders, isOriginAllowed } from '../_shared/cors.ts';
+import { checkRateLimit, createRateLimitResponse, RATE_LIMIT_PRESETS } from '../_shared/rate-limit.ts';
 
 const itemSchema = z.object({
   producerId: z.string().min(1),
@@ -74,7 +16,7 @@ const directSaleOrderSchema = z.object({
 
 type DirectSaleOrderInput = z.infer<typeof directSaleOrderSchema>;
 
-function jsonResponse(payload: unknown, status = 200): Response {
+function jsonResponse(payload: unknown, status = 200, corsHeaders: Record<string, string>): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -85,9 +27,10 @@ async function getUserFromRequest(req: Request) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
   const authHeader = req.headers.get('Authorization');
+  const responseCorsHeaders = getCorsHeaders(req);
 
   if (!authHeader) {
-    return { error: jsonResponse({ error: 'UNAUTHORIZED' }, 401) };
+    return { error: jsonResponse({ error: 'UNAUTHORIZED' }, 401, responseCorsHeaders) };
   }
 
   const supabase = createClient(supabaseUrl, anonKey, {
@@ -96,7 +39,7 @@ async function getUserFromRequest(req: Request) {
 
   const { data, error } = await supabase.auth.getUser();
   if (error || !data.user) {
-    return { error: jsonResponse({ error: 'UNAUTHORIZED' }, 401) };
+    return { error: jsonResponse({ error: 'UNAUTHORIZED' }, 401, responseCorsHeaders) };
   }
 
   return { user: data.user };
@@ -109,12 +52,22 @@ const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 
 serve(async (req) => {
+  const responseCorsHeaders = getCorsHeaders(req);
+  const origin = req.headers.get('origin');
+
+  if (!isOriginAllowed(origin)) {
+    return new Response(JSON.stringify({ error: 'CORS_NOT_ALLOWED' }), {
+      status: 403,
+      headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: responseCorsHeaders });
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'METHOD_NOT_ALLOWED' }, 405);
+    return jsonResponse({ error: 'METHOD_NOT_ALLOWED' }, 405, responseCorsHeaders);
   }
 
   const { user, error } = await getUserFromRequest(req);
@@ -122,21 +75,26 @@ serve(async (req) => {
     return error;
   }
 
+  const isWarmup = req.headers.get('x-warmup') === '1';
+  if (isWarmup) {
+    return jsonResponse({ ok: true, warmed: true }, 200, responseCorsHeaders);
+  }
+
   let body: unknown = {};
   try {
     body = await req.json();
   } catch {
-    return jsonResponse({ error: 'INVALID_JSON' }, 400);
+    return jsonResponse({ error: 'INVALID_JSON' }, 400, responseCorsHeaders);
   }
 
   const parsed = directSaleOrderSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonResponse({ error: 'VALIDATION_ERROR' }, 400);
+    return jsonResponse({ error: 'VALIDATION_ERROR' }, 400, responseCorsHeaders);
   }
 
-  const rateLimitResult = checkRateLimit(user.id, RATE_LIMIT_PRESETS.ORDERS);
+  const rateLimitResult = await checkRateLimit(user.id, RATE_LIMIT_PRESETS.ORDERS);
   if (!rateLimitResult.allowed) {
-    return createRateLimitResponse(rateLimitResult, RATE_LIMIT_PRESETS.ORDERS, corsHeaders);
+    return createRateLimitResponse(rateLimitResult, RATE_LIMIT_PRESETS.ORDERS, responseCorsHeaders);
   }
 
   const { items } = parsed.data;
@@ -211,7 +169,7 @@ serve(async (req) => {
       }),
       {
         status: orderIds.length > 0 ? 200 : 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
       }
     );
 });

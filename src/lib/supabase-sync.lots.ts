@@ -1,8 +1,10 @@
 import { getValidSession } from './supabase-auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   SUPABASE_URL,
   getAuthenticatedHeaders,
   getHeaders,
+  isNetworkOnline,
   isSupabaseSyncConfigured,
   supabaseFetch,
 } from './supabase-sync-core';
@@ -232,6 +234,12 @@ export async function fetchAllLotsWithItems(): Promise<Lot[]> {
     return [];
   }
 
+  const isOnline = await isNetworkOnline();
+  if (!isOnline) {
+    const cached = await AsyncStorage.getItem('cache_lots_v2');
+    return cached ? (JSON.parse(cached) as Lot[]) : [];
+  }
+
   try {
     const [supabaseLots, supabaseLotItems] = await Promise.all([
       fetchLots(),
@@ -252,7 +260,8 @@ export async function fetchAllLotsWithItems(): Promise<Lot[]> {
     );
   } catch (error) {
     console.warn('Error fetching lots from Supabase:', error);
-    return [];
+    const cached = await AsyncStorage.getItem('cache_lots_v2');
+    return cached ? (JSON.parse(cached) as Lot[]) : [];
   }
 }
 
@@ -274,14 +283,20 @@ export async function syncLotToSupabase(lot: Lot): Promise<void> {
     // Update existing lot
     await updateLotInSupabase(lot.id, lot);
 
-    // Delete old items and re-add
-    await supabaseFetch(`${SUPABASE_URL}/rest/v1/lot_items?lot_id=eq.${lot.id}`, {
-      method: 'DELETE',
-      headers: getHeaders(),
+    // Replace items via Edge Function
+    const headers = await getAuthenticatedHeaders();
+    const replaceResponse = await supabaseFetch(`${SUPABASE_URL}/functions/v1/lots-mutations`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'replaceItems',
+        lotId: lot.id,
+        items: lot.items,
+      }),
     });
 
-    for (const item of lot.items) {
-      await addLotItemToSupabase(item, lot.id);
+    if (!replaceResponse.ok) {
+      throw new Error('Erreur mise à jour lot items');
     }
   } else {
     // Add new lot

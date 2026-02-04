@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { useProducerStore, usePacksStore, usePromoProductsStore, useLotsStore } from './store';
 import {
   isSupabaseSyncConfigured,
@@ -187,6 +188,14 @@ export function useDataSync() {
         return;
       }
 
+      const networkState = await NetInfo.fetch();
+      const isOnline = networkState.isConnected === true && networkState.isInternetReachable !== false;
+      if (!isOnline) {
+        setSyncState({ status: 'offline', isUsingCache: true });
+        syncInProgress.current = false;
+        return;
+      }
+
       // Check if we've synced recently
       const now = Date.now();
       if (now - lastSyncTime < MIN_SYNC_INTERVAL) {
@@ -321,6 +330,12 @@ export async function forceDataSync(): Promise<{
 }> {
   if (!isSupabaseSyncConfigured()) {
     return { success: false, error: 'Configuration manquante', isUsingCache: true };
+  }
+
+  const networkState = await NetInfo.fetch();
+  const isOnline = networkState.isConnected === true && networkState.isInternetReachable !== false;
+  if (!isOnline) {
+    return { success: false, error: 'Hors ligne', isUsingCache: true };
   }
 
   setSyncState({ status: 'syncing', error: null });

@@ -1,8 +1,10 @@
 import { Pack, PackItem } from './store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   SUPABASE_URL,
   getAuthenticatedHeaders,
   getHeaders,
+  isNetworkOnline,
   isSupabaseSyncConfigured,
   supabaseFetch,
 } from './supabase-sync-core';
@@ -116,6 +118,12 @@ export async function fetchAllPacksWithItems(): Promise<Pack[]> {
     return [];
   }
 
+  const isOnline = await isNetworkOnline();
+  if (!isOnline) {
+    const cached = await AsyncStorage.getItem('cache_packs_v2');
+    return cached ? (JSON.parse(cached) as Pack[]) : [];
+  }
+
   try {
     const [supabasePacks, supabasePackItems] = await Promise.all([
       fetchPacks(),
@@ -136,7 +144,8 @@ export async function fetchAllPacksWithItems(): Promise<Pack[]> {
     );
   } catch (error) {
     console.warn('Error fetching packs from Supabase:', error);
-    return [];
+    const cached = await AsyncStorage.getItem('cache_packs_v2');
+    return cached ? (JSON.parse(cached) as Pack[]) : [];
   }
 }
 
