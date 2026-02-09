@@ -40,7 +40,8 @@ import {
   RefreshCw,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
-import { useAudio, Track } from '@/contexts/AudioContext';
+import { useAudioStore, type Track } from '@/lib/store';
+import type { AudioSource } from '@/lib/types';
 import {
   fetchMusicTracks,
   addMusicTrack,
@@ -49,6 +50,8 @@ import {
   reorderMusicTracks,
   uploadAudioFile,
   uploadCoverImage,
+  getSignedAudioUrl,
+  getSignedCoverUrl,
   isMusicApiConfigured,
 } from '@/lib/supabase-music';
 
@@ -94,15 +97,21 @@ interface EditableTrack {
   artist: string;
   album: string;
   coverUrl: string;
+  coverPath?: string;
   audioUrl: string;
+  audioPath?: string;
   position: number;
   isLocal: boolean; // True if from assets, false if from Supabase
-  localSource?: any; // Local require() source
+  localSource?: AudioSource; // Local require() source
 }
 
 export default function AdminMusicScreen() {
   const insets = useSafeAreaInsets();
-  const { currentTrack, isPlaying, playTrack: playContextTrack } = useAudio();
+  const playerTracks = useAudioStore((s) => s.tracks);
+  const currentTrackIndex = useAudioStore((s) => s.currentTrackIndex);
+  const currentTrack = playerTracks[currentTrackIndex] || null;
+  const isPlaying = useAudioStore((s) => s.isPlaying);
+  const playContextTrack = useAudioStore((s) => s.playTrack);
 
   const [tracks, setTracks] = useState<EditableTrack[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -148,15 +157,21 @@ export default function AdminMusicScreen() {
         // Try to load from Supabase
         const dbTracks = await fetchMusicTracks();
         if (dbTracks.length > 0) {
-          const supabaseTracks: EditableTrack[] = dbTracks.map((t) => ({
-            id: t.id,
-            title: t.title,
-            artist: t.artist,
-            album: t.album || '',
-            coverUrl: t.cover_url || '',
-            audioUrl: t.audio_url,
-            position: t.position,
-            isLocal: false,
+          const supabaseTracks: EditableTrack[] = await Promise.all(dbTracks.map(async (t) => {
+            const coverUrl = t.cover_url ? await getSignedCoverUrl(t.cover_url) : '';
+            const audioUrl = t.audio_url ? await getSignedAudioUrl(t.audio_url) : '';
+            return {
+              id: t.id,
+              title: t.title,
+              artist: t.artist,
+              album: t.album || '',
+              coverUrl,
+              coverPath: t.cover_url || undefined,
+              audioUrl,
+              audioPath: t.audio_url || undefined,
+              position: t.position,
+              isLocal: false,
+            };
           }));
           setTracks(supabaseTracks);
         } else {
@@ -235,7 +250,7 @@ export default function AdminMusicScreen() {
     setFormTitle(track.title);
     setFormArtist(track.artist);
     setFormAlbum(track.album);
-    setFormCoverUrl(track.coverUrl);
+    setFormCoverUrl(track.coverPath || track.coverUrl);
     setSelectedCoverUri(null);
     setEditModalVisible(true);
   };
@@ -527,15 +542,15 @@ export default function AdminMusicScreen() {
             {tracks.map((track, index) => (
               <Animated.View
                 key={track.id}
-                entering={FadeIn.delay(index * 50)}
                 layout={Layout.springify()}
                 className="mb-3"
               >
-                <View
-                  className="rounded-2xl overflow-hidden"
-                  style={{ backgroundColor: COLORS.background.charcoal }}
-                >
-                  <View className="flex-row items-center p-3">
+                <Animated.View entering={FadeIn.delay(index * 50)}>
+                  <View
+                    className="rounded-2xl overflow-hidden"
+                    style={{ backgroundColor: COLORS.background.charcoal }}
+                  >
+                    <View className="flex-row items-center p-3">
                     {/* Position & Drag Handle */}
                     <View className="items-center mr-3">
                       <Text className="text-xs mb-1" style={{ color: COLORS.text.muted }}>
@@ -653,6 +668,7 @@ export default function AdminMusicScreen() {
                     </Pressable>
                   </View>
                 </View>
+                </Animated.View>
               </Animated.View>
             ))}
           </View>

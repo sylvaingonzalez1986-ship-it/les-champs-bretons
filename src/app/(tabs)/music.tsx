@@ -41,7 +41,7 @@ import {
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { COLORS } from '@/lib/colors';
-import { useAudio } from '@/contexts/AudioContext';
+import { useAudioStore } from '@/lib/store';
 import { usePermissions } from '@/lib/useAuth';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -57,25 +57,23 @@ export default function MusicScreen() {
   const { isAdmin } = usePermissions();
 
   // Utiliser le contexte audio global
-  const {
-    currentTrack,
-    currentTrackIndex,
-    isPlaying,
-    isMuted,
-    position,
-    duration,
-    tracks,
-    repeatMode,
-    shuffleMode,
-    playTrack,
-    playPause,
-    nextTrack,
-    previousTrack,
-    toggleMute,
-    setRepeatMode,
-    toggleShuffle,
-    stop,
-  } = useAudio();
+  const tracks = useAudioStore((s) => s.tracks);
+  const currentTrackIndex = useAudioStore((s) => s.currentTrackIndex);
+  const currentTrack = tracks[currentTrackIndex] || null;
+  const isPlaying = useAudioStore((s) => s.isPlaying);
+  const isMuted = useAudioStore((s) => s.isMuted);
+  const position = useAudioStore((s) => s.position);
+  const duration = useAudioStore((s) => s.duration);
+  const repeatMode = useAudioStore((s) => s.repeatMode);
+  const shuffleMode = useAudioStore((s) => s.shuffleMode);
+  const playTrack = useAudioStore((s) => s.playTrack);
+  const playPause = useAudioStore((s) => s.playPause);
+  const nextTrack = useAudioStore((s) => s.nextTrack);
+  const previousTrack = useAudioStore((s) => s.previousTrack);
+  const toggleMute = useAudioStore((s) => s.toggleMute);
+  const setRepeatMode = useAudioStore((s) => s.setRepeatMode);
+  const toggleShuffle = useAudioStore((s) => s.toggleShuffle);
+  const stop = useAudioStore((s) => s.stop);
 
   // Animations
   const discRotation = useSharedValue(0);

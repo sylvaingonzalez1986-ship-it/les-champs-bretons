@@ -73,8 +73,7 @@ const ProductCard = ({ product, producer, onEdit }: { product: ProducerProduct; 
   const productHasPromo = !!(currentProduct.isOnPromo && currentProduct.promoPercent && currentProduct.promoPercent > 0);
 
   // Legacy promo system (promoProductsStore) - only used if product doesn't have its own promo
-  const promoProductsStore = usePromoProductsStore();
-  const promoProducts = promoProductsStore.promoProducts;
+  const promoProducts = usePromoProductsStore((s) => s.promoProducts);
 
   const storePromo = React.useMemo(() => {
     if (productHasPromo) return null; // Use product's own promo
@@ -109,7 +108,11 @@ const ProductCard = ({ product, producer, onEdit }: { product: ProducerProduct; 
     ? currentProduct.price * (1 - discountPercent / 100)
     : currentProduct.price;
 
-  const reviews = useProductReviewsStore((s) => s.reviews.filter((r) => r.productId === currentProduct.id));
+  const allReviews = useProductReviewsStore((s) => s.reviews);
+  const reviews = React.useMemo(
+    () => allReviews.filter((r) => r.productId === currentProduct.id),
+    [allReviews, currentProduct.id]
+  );
   const addReview = useProductReviewsStore((s) => s.addReview);
   const customerInfo = useCustomerInfoStore((s) => s.customerInfo);
 
@@ -505,7 +508,11 @@ const ProductCard = ({ product, producer, onEdit }: { product: ProducerProduct; 
 
 export const ProducerModal = ({ producer, visible, onClose }: ProducerModalProps) => {
   const insets = useSafeAreaInsets();
-  const itemCount = useCartStore((s) => s.items.reduce((sum, item) => sum + item.quantity, 0));
+  const cartItems = useCartStore((s) => s.items);
+  const itemCount = React.useMemo(
+    () => cartItems.reduce((sum, item) => sum + item.quantity, 0),
+    [cartItems]
+  );
   const [addProductVisible, setAddProductVisible] = useState(false);
   const [editingProduct, setEditingProduct] = useState<ProducerProduct | null>(null);
 

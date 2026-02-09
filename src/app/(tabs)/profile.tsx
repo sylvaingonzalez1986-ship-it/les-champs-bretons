@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Pressable, ScrollView, Image, Modal, Alert, ActivityIndicator } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +8,7 @@ import * as Clipboard from 'expo-clipboard';
 import { safeOpenExternalUrl } from '@/lib/safe-linking';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   useCollectionStore,
   useSubscriptionStore,
@@ -18,8 +19,8 @@ import {
   useReferralStore,
   useProducerStore,
 } from '@/lib/store';
-import { claimGiftedLotWithDetails, isSupabaseSyncConfigured, fetchOrders, fetchOrdersForProducer } from '@/lib/supabase-sync';
-import { fetchMyProducer, updateMyProducer, ProducerDB } from '@/lib/supabase-producer';
+import { claimGiftedLotWithDetails, isSupabaseSyncConfigured } from '@/lib/supabase-sync';
+import { updateMyProducer } from '@/lib/supabase-producer';
 import { RARITY_CONFIG, Rarity } from '@/lib/types';
 import { ImageCropper } from '@/components/ImageCropper';
 import { useAuth, useUserIdentity, usePermissions } from '@/lib/useAuth';
@@ -30,10 +31,12 @@ import { ProducerProfileForm } from '@/components/ProducerProfileForm';
 import { ProProfileForm } from '@/components/ProProfileForm';
 import { UserProfile } from '@/lib/supabase-auth';
 import { AdminDashboard } from '@/components/AdminDashboard';
-import { AdminProducerOrders } from '@/components/AdminProducerOrders';
 import { Toast, useToast } from '@/components/Toast';
+import { useAdminOrdersQuery, useMyProducerQuery, useProducerProOrdersQuery } from '@/api/orders';
+import { useLocalMarketOrdersInfinite } from '@/api/local-market';
 
 const PROFILE_IMAGE_KEY = 'user-profile-image';
+const SIGNAL_GROUP_URL = 'https://signal.group/#CjQKIL5CUggt4OrebPgc7zjsc_h_AzrSw8I6k3QPM2l4MTkAEhDN8aN4Rmj_6F7NA8Dkved1';
 
 interface MenuItemProps {
   icon: React.ReactNode;
@@ -62,7 +65,6 @@ export default function ProfileScreen() {
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [showInfoForm, setShowInfoForm] = useState(false);
   const [showOrders, setShowOrders] = useState(false);
-  const [showDirectSalesOrders, setShowDirectSalesOrders] = useState(false); // Commandes vente directe (ferme)
   const [showProducerProfile, setShowProducerProfile] = useState(false); // Fiche producteur
   const [copiedTrackingId, setCopiedTrackingId] = useState<string | null>(null);
 
@@ -99,7 +101,7 @@ export default function ProfileScreen() {
   const isProfileComplete = useCustomerInfoStore((s) => s.isProfileComplete);
 
   // Supabase Auth
-  const { isAuthenticated, user, profile, signOut, isSigningOut, isLoading: isLoadingAuth, updateProfile, isUpdatingProfile } = useAuth();
+  const { isAuthenticated, session, user, profile, signOut, isSigningOut, isLoading: isLoadingAuth, updateProfile, isUpdatingProfile } = useAuth();
   const { authMode, userCode: supabaseUserCode, role, fullName: authFullName, email: authEmail } = useUserIdentity();
   const { isPro, isProducer, isAdmin: isAuthAdmin } = usePermissions();
   const [showAuthSection, setShowAuthSection] = useState(false);
@@ -112,15 +114,17 @@ export default function ProfileScreen() {
   // Get producers to find the one linked to current user (for producer role)
   const producers = useProducerStore((s) => s.producers);
 
+  const queryClient = useQueryClient();
+
   // Producer linked to current user - fetched from Supabase for reliability
-  const [myProducer, setMyProducer] = useState<ProducerDB | null>(null);
+  const { data: myProducer } = useMyProducerQuery();
 
   // Check if producer profile is incomplete (missing key fields for farm sales)
   const isProducerProfileIncomplete = isProducer && profile && (
     !profile.company_name ||
     !profile.siret ||
     !profile.phone ||
-    !(profile as any).city
+    !profile.city
   );
 
   // Auto-open producer profile form if incomplete
@@ -130,19 +134,6 @@ export default function ProfileScreen() {
     }
   }, [isProducerProfileIncomplete]);
 
-  // Fetch producer from Supabase when user is authenticated as producer
-  useEffect(() => {
-    const loadMyProducer = async () => {
-      if (isProducer && isAuthenticated) {
-        const producer = await fetchMyProducer();
-        setMyProducer(producer);
-      } else {
-        setMyProducer(null);
-      }
-    };
-    loadMyProducer();
-  }, [isProducer, isAuthenticated]);
-
   // Fallback: find producer in local store by email (for display in stats)
   const linkedProducerFromStore = isProducer && authEmail
     ? producers.find((p) => p.email?.toLowerCase() === authEmail.toLowerCase())
@@ -151,7 +142,53 @@ export default function ProfileScreen() {
   // Orders - different logic for producers vs clients/pros
   const allOrders = useOrdersStore((s) => s.orders);
   const setOrders = useOrdersStore((s) => s.setOrders);
-  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [isManualRefresh, setIsManualRefresh] = useState(false);
+  const ordersEnabled = showOrders && isSupabaseSyncConfigured();
+  const producerIdForOrders = ordersEnabled && isProducer ? myProducer?.id ?? '' : '';
+
+  const {
+    data: userOrders,
+    isFetching: isUserOrdersFetching,
+    refetch: refetchUserOrders,
+  } = useAdminOrdersQuery(ordersEnabled && !isProducer);
+
+  const {
+    data: producerOrders,
+    isFetching: isProducerOrdersFetching,
+    refetch: refetchProducerOrders,
+  } = useProducerProOrdersQuery(producerIdForOrders);
+
+  const { refetch: refetchLocalMarketOrders } = useLocalMarketOrdersInfinite(
+    ordersEnabled ? session?.user?.id : undefined,
+    ordersEnabled ? session?.access_token : undefined,
+    10
+  );
+
+  const ordersLoading = isManualRefresh || isUserOrdersFetching || isProducerOrdersFetching;
+
+  const ordersFromQuery = useMemo(() => {
+    if (isProducer) {
+      return producerOrders ?? [];
+    }
+    return userOrders ?? [];
+  }, [isProducer, producerOrders, userOrders]);
+
+  useEffect(() => {
+    if (!ordersEnabled) {
+      return;
+    }
+
+    if (isProducer) {
+      if (!producerOrders) {
+        return;
+      }
+    } else if (!userOrders) {
+      return;
+    }
+
+    const sortedOrders = [...ordersFromQuery].sort((a, b) => b.createdAt - a.createdAt);
+    setOrders(sortedOrders);
+  }, [ordersEnabled, isProducer, producerOrders, userOrders, ordersFromQuery, setOrders]);
 
   // RLS gère déjà le filtrage côté serveur - on affiche toutes les commandes reçues
   // Pour les producteurs: filtrer par leurs produits (toutes les commandes, pas seulement PRO)
@@ -162,105 +199,63 @@ export default function ProfileScreen() {
       )
     : allOrders; // RLS filtre déjà par user_id
 
-  // État pour savoir si c'est un refresh manuel ou auto
-  const [isManualRefresh, setIsManualRefresh] = useState(false);
-
-  // Fonction de synchronisation des commandes - CORRIGÉE pour éviter les closures stales
-  // On passe explicitement le producerId pour éviter les problèmes de timing
-  const syncOrdersFromSupabase = useCallback(async (manual: boolean, producerIdToUse: string | null) => {
+  const handleManualRefresh = useCallback(async () => {
     if (!isSupabaseSyncConfigured()) {
       return;
     }
 
-    // PROTECTION CRITIQUE: Pour les producteurs, on DOIT avoir un producerId
-    // Sinon on ne fait RIEN pour éviter d'écraser les commandes existantes
-    if (isProducer) {
-      if (!producerIdToUse) {
-        return;
-      }
+    if (isProducer && !producerIdForOrders) {
+      return;
     }
 
-    setOrdersLoading(true);
-    if (manual) {
-      setIsManualRefresh(true);
-    }
+    setIsManualRefresh(true);
 
     try {
-      let supabaseOrders: typeof allOrders = [];
+      let refreshedOrdersCount = 0;
 
-      if (isProducer && producerIdToUse) {
-        // Producteur: récupérer les commandes contenant ses produits
-        supabaseOrders = await fetchOrdersForProducer(producerIdToUse);
-      } else if (!isProducer) {
-        // Client/Pro: récupérer ses propres commandes (RLS filtre par user_id)
-        supabaseOrders = await fetchOrders();
+      if (isProducer) {
+        const result = await refetchProducerOrders();
+        refreshedOrdersCount = result.data?.length ?? 0;
+      } else {
+        const [ordersResult] = await Promise.all([
+          refetchUserOrders(),
+          refetchLocalMarketOrders(),
+        ]);
+        refreshedOrdersCount = ordersResult.data?.length ?? 0;
       }
 
-      // PROTECTION: Ne jamais écraser avec un tableau vide pour les producteurs
-      // sauf si c'est vraiment le résultat de la requête avec un producerId valide
-      if (isProducer && supabaseOrders.length === 0 && !producerIdToUse) {
-        return;
-      }
-
-      // Trier et mettre à jour le store
-      const sortedOrders = [...supabaseOrders].sort((a, b) => b.createdAt - a.createdAt);
-      setOrders(sortedOrders);
-
-      // Feedback uniquement pour refresh manuel
-      if (manual) {
-        showToast(`${supabaseOrders.length} commande${supabaseOrders.length > 1 ? 's' : ''} mise${supabaseOrders.length > 1 ? 's' : ''} à jour`, 'success');
-      }
+      showToast(
+        `${refreshedOrdersCount} commande${refreshedOrdersCount > 1 ? 's' : ''} mise${refreshedOrdersCount > 1 ? 's' : ''} à jour`,
+        'success'
+      );
     } catch (error) {
-      console.error('[Profile] Error syncing orders:', error);
-      if (manual) {
-        showToast('Erreur lors de l\'actualisation des commandes', 'error');
-      }
+      console.error('[Profile] Error refreshing orders:', error);
+      showToast('Erreur lors de l\'actualisation des commandes', 'error');
     } finally {
-      setOrdersLoading(false);
       setIsManualRefresh(false);
     }
-  }, [isProducer, setOrders, showToast]); // Note: myProducer n'est PAS dans les dépendances car on le passe en paramètre
+  }, [
+    isProducer,
+    producerIdForOrders,
+    refetchProducerOrders,
+    refetchUserOrders,
+    refetchLocalMarketOrders,
+    showToast,
+  ]);
 
-  // Fonction de refresh manuelle - passe explicitement l'ID du producteur actuel
-  const handleManualRefresh = useCallback(() => {
-    const currentProducerId = myProducer?.id ?? null;
-    syncOrdersFromSupabase(true, currentProducerId);
-  }, [syncOrdersFromSupabase, myProducer]);
-
-  // Sync orders from Supabase when:
-  // 1. showOrders devient true ET
-  // 2. Pour les producteurs: myProducer est chargé
   useEffect(() => {
-    // Condition 1: La section commandes doit être ouverte
-    if (!showOrders) {
+    if (!showOrders || !isProducer || !producerIdForOrders) {
       return;
     }
 
-    if (!isSupabaseSyncConfigured()) {
-      return;
-    }
-
-    // Condition 2: Pour les producteurs, attendre que myProducer soit chargé
-    if (isProducer && !myProducer) {
-      return; // Le useEffect se re-déclenchera quand myProducer sera chargé
-    }
-
-    // Maintenant on peut sync - on passe explicitement l'ID pour éviter les closures stales
-    const producerIdToUse = isProducer ? myProducer?.id ?? null : null;
-
-    syncOrdersFromSupabase(false, producerIdToUse);
-
-    // Auto-refresh every 30 seconds when orders section is open
     const interval = setInterval(() => {
-      // Important: relire myProducer?.id à chaque tick pour avoir la valeur actuelle
-      const currentProducerId = isProducer ? myProducer?.id ?? null : null;
-      syncOrdersFromSupabase(false, currentProducerId);
+      refetchProducerOrders();
     }, 30000);
 
     return () => {
       clearInterval(interval);
     };
-  }, [showOrders, isProducer, myProducer, syncOrdersFromSupabase]);
+  }, [showOrders, isProducer, producerIdForOrders, refetchProducerOrders]);
 
   // Subscription
   const tickets = useSubscriptionStore((s) => s.tickets);
@@ -321,6 +316,13 @@ export default function ProfileScreen() {
       console.warn('Error saving image:', error);
     }
   };
+
+  const handleOpenSignalGroup = useCallback(async () => {
+    const opened = await safeOpenExternalUrl(SIGNAL_GROUP_URL);
+    if (!opened) {
+      showToast('Impossible d\'ouvrir le lien Signal', 'error');
+    }
+  }, [showToast]);
 
   // Generate user code on mount if not exists
   useEffect(() => {
@@ -1387,10 +1389,7 @@ export default function ProfileScreen() {
                             siret: data.siret || null,
                           });
                           // Rafraîchir les données du producteur
-                          const updatedProducer = await fetchMyProducer();
-                          if (updatedProducer) {
-                            setMyProducer(updatedProducer);
-                          }
+                          await queryClient.invalidateQueries({ queryKey: ['producer'] });
                         } catch (err) {
                           console.warn('[Profile] Error updating producer:', err);
                         }
@@ -1493,30 +1492,6 @@ export default function ProfileScreen() {
                       </Text>
                     </Pressable>
                   )}
-                </View>
-              )}
-
-              {/* Vente directe (Ferme) */}
-              <Pressable
-                onPress={() => setShowDirectSalesOrders(!showDirectSalesOrders)}
-                className="flex-row items-center py-2.5 px-3 bg-amber-600/15 rounded-xl mb-2 active:opacity-70"
-                style={{ borderWidth: 1, borderColor: '#F59E0B25' }}
-              >
-                <View className="w-8 h-8 rounded-full bg-amber-600/25 items-center justify-center">
-                  <Home size={16} color="#F59E0B" />
-                </View>
-                <Text className="text-white text-sm font-medium ml-2.5 flex-1">Vente directe</Text>
-                {showDirectSalesOrders ? (
-                  <ChevronUp size={16} color="#F59E0B" />
-                ) : (
-                  <ChevronDown size={16} color="#F59E0B" />
-                )}
-              </Pressable>
-
-              {/* Liste Vente directe (collapsible) */}
-              {showDirectSalesOrders && (
-                <View className="mb-2 bg-amber-900/20 rounded-xl p-3 border border-amber-700/30">
-                  <AdminProducerOrders />
                 </View>
               )}
 
@@ -1741,6 +1716,13 @@ export default function ProfileScreen() {
 
         {/* Menu Items */}
         <View className="mx-6 mb-8">
+          {isProUser && (
+            <MenuItem
+              icon={<Users size={20} color="#10B981" />}
+              label="Rejoindre le groupe Signal"
+              onPress={handleOpenSignalGroup}
+            />
+          )}
           <MenuItem
             icon={<Settings size={20} color="#0D9488" />}
             label="Paramètres"

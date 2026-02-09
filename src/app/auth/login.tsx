@@ -19,6 +19,7 @@ import {
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { useAuth } from '@/lib/useAuth';
+import type { UserProfile } from '@/lib/supabase-auth';
 import { PENDING_SIGNUP_ROLE_KEY, PENDING_SIGNUP_EMAIL_KEY } from './signup';
 import { AuthErrorBanner, canRetryAuthError, getAuthErrorType } from '@/components/AuthErrorBanner';
 
@@ -87,7 +88,7 @@ export default function LoginScreen() {
       if (pendingRole && pendingEmail && pendingEmail === normalizedEmail) {
         try {
           // Si c'est un compte pro, définir pro_status à 'pending'
-          const profileUpdate: { role: 'client' | 'pro' | 'producer'; pro_status?: string } = {
+          const profileUpdate: Partial<UserProfile> = {
             role: pendingRole as 'client' | 'pro' | 'producer'
           };
           if (pendingRole === 'pro') {

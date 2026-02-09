@@ -34,11 +34,12 @@ import {
 import { router } from 'expo-router';
 import { COLORS, withOpacity } from '@/lib/colors';
 import { useOrdersStore, Order, ORDER_STATUS_CONFIG } from '@/lib/store';
-import { useLocalMarketOrders, LocalMarketOrder, getStatusLabel, getStatusColor } from '@/lib/local-market-orders';
+import { getStatusLabel, getStatusColor } from '@/lib/local-market-orders';
 import { usePermissions, useAuth } from '@/lib/useAuth';
-import { ProducerDB, fetchMyProducer } from '@/lib/supabase-producer';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase-auth';
-import { fetchOrdersForProducer as fetchProOrdersForProducer } from '@/lib/supabase-sync';
+import { useQueryClient } from '@tanstack/react-query';
+import { useMyProducerQuery, useProducerLocalOrdersQuery, useProducerProOrdersQuery } from '@/api/orders';
+import { useLocalMarketOrdersInfinite } from '@/api/local-market';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Sharing from 'expo-sharing';
@@ -66,7 +67,7 @@ export default function GestionCommandesScreen() {
   const ordersFromStore = useOrdersStore((s) => s.orders);
   const setOrders = useOrdersStore((s) => s.setOrders);
   const updateOrderStatus = useOrdersStore((s) => s.updateOrderStatus);
-  const { orders: localMarketOrders, loadOrders: loadLocalMarketOrders, loadOrdersForProducer } = useLocalMarketOrders();
+  const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodFilter>('all');
@@ -74,54 +75,37 @@ export default function GestionCommandesScreen() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isRequestingPaymentLink, setIsRequestingPaymentLink] = useState(false);
-  const [myProducer, setMyProducer] = useState<ProducerDB | null>(null);
-  const [producerLocalOrders, setProducerLocalOrders] = useState<LocalMarketOrder[]>([]);
-  const [producerProOrders, setProducerProOrders] = useState<Order[]>([]);
-  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
+  const { data: myProducer } = useMyProducerQuery();
+  const producerId = myProducer?.id ?? '';
+  const {
+    data: producerProOrders = [],
+    isLoading: isLoadingProOrders,
+  } = useProducerProOrdersQuery(producerId);
+  const {
+    data: producerLocalOrders = [],
+    isLoading: isLoadingLocalOrders,
+  } = useProducerLocalOrdersQuery(producerId, session?.access_token ?? '');
+
+  const {
+    data: localMarketPages,
+    isFetching: isLocalMarketFetching,
+  } = useLocalMarketOrdersInfinite(
+    isAdmin || isPro ? session?.user?.id : undefined,
+    isAdmin || isPro ? session?.access_token : undefined,
+    200
+  );
+
+  const localMarketOrders = useMemo(
+    () => localMarketPages?.pages.flat() ?? [],
+    [localMarketPages]
+  );
 
   // Vérifier les permissions
   const hasAccess = isAdmin || isPro || isProducer;
 
-  // Charger le producteur lié à l'utilisateur connecté (pour les producteurs)
-  useEffect(() => {
-    const loadProducer = async () => {
-      if (isProducer && session?.access_token) {
-        const producer = await fetchMyProducer();
-        setMyProducer(producer);
-      }
-    };
-    loadProducer();
-  }, [isProducer, session?.access_token]);
-
-  // Charger les commandes selon le rôle
-  useEffect(() => {
-    const loadAllOrders = async () => {
-      if (!session?.user?.id || !session?.access_token) return;
-
-      setIsLoadingOrders(true);
-
-      if (isProducer && myProducer?.id) {
-        // Producteur: charger les commandes PRO ET les commandes marché local
-        // 1. Charger les commandes PRO (boutique)
-        try {
-          const proOrders = await fetchProOrdersForProducer(myProducer.id);
-          setProducerProOrders(proOrders);
-        } catch (err) {
-        }
-
-        // 2. Charger les commandes marché local
-        const localOrders = await loadOrdersForProducer(myProducer.id, session.access_token);
-        setProducerLocalOrders(localOrders);
-      } else if (isAdmin) {
-        // Admin: charger ses propres commandes (customer_id) - il a aussi accès à tout via le dashboard
-        loadLocalMarketOrders(session.user.id, session.access_token);
-      }
-
-      setIsLoadingOrders(false);
-    };
-
-    loadAllOrders();
-  }, [isAdmin, isProducer, myProducer?.id, session?.user?.id, session?.access_token]);
+  const isLoadingOrders = isProducer
+    ? isLoadingProOrders || isLoadingLocalOrders
+    : isLocalMarketFetching;
 
   // Combiner les commandes boutique et marché local
   const allOrders = useMemo(() => {
@@ -828,7 +812,11 @@ export default function GestionCommandesScreen() {
 
   const markPaymentLinkSent = (orderId: string) => {
     updateOrderStatus(orderId, 'payment_sent');
-    setProducerProOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: 'payment_sent' } : o)));
+    if (isProducer && producerId) {
+      queryClient.setQueryData<Order[]>(['orders', 'pro', producerId], (prev) =>
+        prev ? prev.map((o) => (o.id === orderId ? { ...o, status: 'payment_sent' } : o)) : prev
+      );
+    }
     setSelectedOrder((prev) => (prev && prev.id === orderId ? { ...prev, status: 'payment_sent' } : prev));
   };
 

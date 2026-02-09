@@ -3,7 +3,7 @@
  * Affiche l'historique des commandes directes auprès des producteurs locaux
  */
 
-import React, { useEffect, useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
   View,
   ScrollView,
@@ -16,63 +16,56 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowLeft, Package, MapPin, Clock, Phone, Mail, AlertCircle, Check, X, RefreshCw } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 import { COLORS } from '@/lib/colors';
 import { useLocalMarketOrders, LocalMarketOrder, getStatusLabel, getStatusColor } from '@/lib/local-market-orders';
 import { useAuth } from '@/lib/useAuth';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import { useLocalMarketOrdersInfinite } from '@/api/local-market';
 
 export default function MesCommandesMarcheLocal() {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
-  const { orders, loading, error, loadOrders, cancelOrder } = useLocalMarketOrders();
+  const cancelOrder = useLocalMarketOrders((s) => s.cancelOrder);
+  const queryClient = useQueryClient();
 
   const [refreshing, setRefreshing] = React.useState(false);
   const [cancellingId, setCancellingId] = React.useState<string | null>(null);
-  const [isLoadingMore, setIsLoadingMore] = React.useState(false);
-  const [hasMore, setHasMore] = React.useState(true);
-  const [page, setPage] = React.useState(0);
   const PAGE_SIZE = 20;
 
-  // Charger les commandes au focus
-  useFocusEffect(
-    useCallback(() => {
-      if (session?.user?.id && session?.access_token) {
-        setPage(0);
-        setHasMore(true);
-        loadOrders(session.user.id, session.access_token, { limit: PAGE_SIZE, offset: 0, append: false })
-          .then((data) => {
-            setHasMore(data.length === PAGE_SIZE);
-            setPage(1);
-          });
-      }
-    }, [session?.user?.id, session?.access_token])
+  const {
+    data,
+    isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+    error,
+  } = useLocalMarketOrdersInfinite(session?.user?.id, session?.access_token, PAGE_SIZE);
+
+  const orders = useMemo(
+    () => data?.pages.flat() ?? [],
+    [data]
   );
 
+  const errorMessage = useMemo(() => {
+    if (!error) return null;
+    return error instanceof Error ? error.message : 'Erreur de connexion au serveur';
+  }, [error]);
+
   const onRefresh = async () => {
-    if (!session?.user?.id || !session?.access_token) return;
     setRefreshing(true);
-    setPage(0);
-    setHasMore(true);
-    const data = await loadOrders(session.user.id, session.access_token, { limit: PAGE_SIZE, offset: 0, append: false });
-    setHasMore(data.length === PAGE_SIZE);
-    setPage(1);
+    if (session?.user?.id) {
+      queryClient.resetQueries({ queryKey: ['local-market-orders', session.user.id] });
+    }
+    await refetch();
     setRefreshing(false);
   };
 
   const onLoadMore = async () => {
-    if (!session?.user?.id || !session?.access_token || isLoadingMore || !hasMore) return;
-    setIsLoadingMore(true);
-    const offset = page * PAGE_SIZE;
-    const data = await loadOrders(session.user.id, session.access_token, {
-      limit: PAGE_SIZE,
-      offset,
-      append: true,
-    });
-    setHasMore(data.length === PAGE_SIZE);
-    setPage((prev) => prev + 1);
-    setIsLoadingMore(false);
+    if (!hasNextPage || isFetchingNextPage) return;
+    await fetchNextPage();
   };
 
   const handleCancelOrder = async (orderId: string) => {
@@ -94,7 +87,7 @@ export default function MesCommandesMarcheLocal() {
   const readyOrders = orders.filter(o => o.status === 'ready');
   const completedOrders = orders.filter(o => o.status === 'completed' || o.status === 'cancelled');
 
-  if (loading && orders.length === 0) {
+  if (isLoading && orders.length === 0) {
     return (
       <LinearGradient
         colors={[COLORS.background.nightSky, COLORS.background.mediumBlue]}
@@ -148,17 +141,17 @@ export default function MesCommandesMarcheLocal() {
         </View>
 
         {/* Erreur */}
-        {error && (
+        {errorMessage && (
           <View className="mx-4 mb-4 p-3 rounded-xl flex-row items-center" style={{ backgroundColor: `${COLORS.accent.red}20` }}>
             <AlertCircle size={18} color={COLORS.accent.red} />
             <Text className="ml-2 flex-1" style={{ color: COLORS.accent.red }}>
-              {error}
+              {errorMessage}
             </Text>
           </View>
         )}
 
         {/* Aucune commande */}
-        {orders.length === 0 && !loading && (
+        {orders.length === 0 && !isLoading && (
           <View className="flex-1 items-center justify-center px-4 py-12">
             <Package size={48} color={COLORS.text.muted} strokeWidth={1.5} />
             <Text className="text-center mt-4 text-lg font-semibold" style={{ color: COLORS.text.lightGray }}>
@@ -211,16 +204,16 @@ export default function MesCommandesMarcheLocal() {
           />
         )}
 
-        {hasMore && (
+        {hasNextPage && (
           <View className="items-center my-6">
             <Pressable
               onPress={onLoadMore}
-              disabled={isLoadingMore}
+              disabled={isFetchingNextPage}
               className="px-4 py-2 rounded-full"
               style={{ backgroundColor: `${COLORS.text.white}10` }}
             >
               <Text style={{ color: COLORS.text.lightGray }}>
-                {isLoadingMore ? 'Chargement...' : 'Charger plus'}
+                {isFetchingNextPage ? 'Chargement...' : 'Charger plus'}
               </Text>
             </Pressable>
           </View>

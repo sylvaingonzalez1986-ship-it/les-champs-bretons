@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   ScrollView,
@@ -832,9 +832,14 @@ export default function ShopScreen() {
     ? producerReviews.reduce((sum, r) => sum + r.rating, 0) / producerReviews.length
     : 0;
 
-  const itemCount = useCartStore((s) => s.items.reduce((sum, item) => sum + item.quantity, 0));
-  const cartTotal = useCartStore((s) =>
-    s.items.reduce((sum, item) => sum + (item.product.price ?? 0) * item.quantity, 0)
+  const cartItems = useCartStore((s) => s.items);
+  const itemCount = useMemo(
+    () => cartItems.reduce((sum, item) => sum + item.quantity, 0),
+    [cartItems]
+  );
+  const cartTotal = useMemo(
+    () => cartItems.reduce((sum, item) => sum + (item.product.price ?? 0) * item.quantity, 0),
+    [cartItems]
   );
   const addToCart = useCartStore((s) => s.addToCart);
 

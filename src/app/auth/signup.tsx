@@ -26,6 +26,7 @@ import {
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { useAuth } from '@/lib/useAuth';
+import { UserProfile } from '@/lib/supabase-auth';
 import {
   UserCategory,
   USER_CATEGORY_LABELS,
@@ -226,7 +227,7 @@ export default function SignupScreen() {
     try {
       // Ensure role is explicitly set
       // Pour les pros et producteurs, définir pro_status à 'pending' pour validation admin
-      const profileData = {
+      const profileData: Partial<UserProfile> = {
         full_name: fullName,
         phone: phone || null,
         category,
@@ -238,7 +239,7 @@ export default function SignupScreen() {
         ...((selectedRole === 'pro' || selectedRole === 'producer') ? { pro_status: 'pending' } : {}),
       };
 
-      const result = await updateProfile(profileData as any);
+      const result = await updateProfile(profileData);
 
       if (!result) {
         throw new Error('Profile not returned from updateProfile');

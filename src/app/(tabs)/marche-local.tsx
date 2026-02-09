@@ -35,6 +35,7 @@ import { getImageSource } from '@/lib/asset-images';
 import { optimizeImageSource, optimizeImageUrl } from '@/lib/image-utils';
 import { CultureTypeIcons } from '@/components/CultureTypeIcons';
 import { PRODUCT_TYPE_COLORS } from '@/lib/producers';
+import { getSignedProductImageUrl } from '@/lib/supabase-product-images';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH - 80;
@@ -369,7 +370,27 @@ export default function MarcheLocal() {
       const result = await response.json();
       const producersList: DirectSalesProducer[] = Array.isArray(result?.producers) ? result.producers : [];
 
-      const uniqueProducers = producersList.filter(
+      const producersWithSignedImages = await Promise.all(
+        producersList.map(async (producer) => {
+          const signedProducerImage = await getSignedProductImageUrl(producer.image);
+          const signedProducts = producer.products
+            ? await Promise.all(
+              producer.products.map(async (product) => ({
+                ...product,
+                image: await getSignedProductImageUrl(product.image),
+              }))
+            )
+            : [];
+
+          return {
+            ...producer,
+            image: signedProducerImage,
+            products: signedProducts,
+          };
+        })
+      );
+
+      const uniqueProducers = producersWithSignedImages.filter(
         (producer: DirectSalesProducer, index: number, self: DirectSalesProducer[]) =>
           index === self.findIndex((p) => p.id === producer.id)
       );
@@ -450,23 +471,7 @@ export default function MarcheLocal() {
     }
   }, [carouselIndex, carouselProducers.length]);
 
-  if (loading) {
-    return (
-      <LinearGradient
-        colors={[COLORS.background.nightSky, COLORS.background.mediumBlue]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
-      >
-        <ActivityIndicator size="large" color={COLORS.primary.gold} />
-        <Text className="mt-4" style={{ color: COLORS.text.lightGray }}>
-          Chargement des producteurs...
-        </Text>
-      </LinearGradient>
-    );
-  }
-
-  // Render header component for FlashList
+  // Render header component for FlashList (must be before conditional return)
   const renderHeader = useCallback(() => (
     <View style={{ paddingTop: insets.top + 16 }} className="px-4 mb-6 flex-row items-center justify-between">
       <View className="flex-1">
@@ -493,7 +498,7 @@ export default function MarcheLocal() {
     </View>
   ), [insets.top]);
 
-  // Render department item for FlashList
+  // Render department item for FlashList (must be before conditional return)
   const renderDepartmentItem = useCallback(({ item: group }: { item: DepartmentGroup }) => (
     <View className="px-4">
       <DepartmentCard
@@ -505,7 +510,7 @@ export default function MarcheLocal() {
     </View>
   ), [toggleDepartment]);
 
-  // Render footer component for FlashList
+  // Render footer component for FlashList (must be before conditional return)
   const renderFooter = useCallback(() => {
     if (!producersHasMore) return null;
     return (
@@ -524,7 +529,7 @@ export default function MarcheLocal() {
     );
   }, [producersHasMore, producersLoadingMore, onLoadMore]);
 
-  // Render empty component for FlashList
+  // Render empty component for FlashList (must be before conditional return)
   const renderEmpty = useCallback(() => (
     <View className="flex-1 items-center justify-center px-4 py-12">
       <Store size={48} color={COLORS.text.muted} strokeWidth={1.5} />
@@ -533,6 +538,22 @@ export default function MarcheLocal() {
       </Text>
     </View>
   ), []);
+
+  if (loading) {
+    return (
+      <LinearGradient
+        colors={[COLORS.background.nightSky, COLORS.background.mediumBlue]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
+      >
+        <ActivityIndicator size="large" color={COLORS.primary.gold} />
+        <Text className="mt-4" style={{ color: COLORS.text.lightGray }}>
+          Chargement des producteurs...
+        </Text>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient

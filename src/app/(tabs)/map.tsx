@@ -23,7 +23,7 @@ import { useProducerStore, useSupabaseSyncStore, useProductReviewsStore } from '
 import { COLORS } from '@/lib/colors';
 import { fetchAllProducersWithProducts, isSupabaseSyncConfigured } from '@/lib/supabase-sync';
 import { getImageSource } from '@/lib/asset-images';
-import { useAudio } from '@/contexts/AudioContext';
+import { useAudioStore } from '@/lib/store';
 import { CultureTypeIcons } from '@/components/CultureTypeIcons';
 import { usePermissions } from '@/lib/useAuth';
 import { CompactCacheStatus } from '@/components/CacheStatusBanner';
@@ -509,7 +509,9 @@ export default function MapScreen() {
   const currentOffsetRef = useRef(0);
 
   // Utiliser le contexte audio global
-  const { isMuted, toggleMute, nextTrack: skipToNextTrack } = useAudio();
+  const isMuted = useAudioStore((s) => s.isMuted);
+  const toggleMute = useAudioStore((s) => s.toggleMute);
+  const skipToNextTrack = useAudioStore((s) => s.nextTrack);
 
   const customProducers = useProducerStore((s) => s.producers);
   const { isAdmin } = usePermissions();

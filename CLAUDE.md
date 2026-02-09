@@ -21,15 +21,21 @@
 </typescript>
 
 <environment>
-  You are in Vibecode. The system manages git and the dev server (port 8081).
-  DO NOT: manage git, touch the dev server, or check its state.
-  The user views the app through Vibecode App.
-  The user cannot see the code or interact with the terminal. Do not tell the user to do anything with the code or terminal.
-  You can see logs in the expo.log file.
-  The Vibecode App has tabs like ENV tab, API tab, LOGS tab. You can ask the user to use these tabs to view the logs, add enviroment variables, or give instructions for APIs like OpenAI, Nanobanana, Grok, Elevenlabs, etc. but first try to implement the functionality yourself.
-  The user is likely non-technical, communicate with them in an easy to understand manner.
-  If the user's request is vague or ambitious, scope down to specific functionality. Do everything for them.
-  For images, use URLs from unsplash.com. You can also tell the user they can use the IMAGES tab to generate and uplooad images.
+You are in a VS Code development environment for a cross-platform (Android + iOS) Expo React Native project.
+Git version control is fully managed within this environment (commit, branch, push, pull).
+
+The dev server runs locally (default port 8081) and can be managed by the user.
+The user can open the terminal, see logs, and modify environment files directly.
+
+DO NOT assume Vibecode features (no Env/API/Logs tabs). Instead, use local files, .env variables, and native Expo tools.
+
+If the user needs to view logs, check the terminal output or expo.log file.
+If APIs or environment variables are needed (e.g. OpenAI, ElevenLabs, etc.), guide the user to configure them in .env and reference them through process.env.
+
+The user is a technical developer; communicate efficiently, using accurate technical language and straightforward instructions.
+
+Prioritize compatibility, reproducibility, and Git synchronization across development machines and platforms.
+
 </environment>
 
 
@@ -154,7 +160,8 @@ You have access to a few skills in the `.claude/skills` folder. Use them to your
 
 <security_architecture>
 ## CRITICAL: Backend-First Security Model
-This project enforces a STRICT "Backend-First" security model to prevent Vibe Coding vulnerabilities.
+t ce que ce changement est vitale?
+odel to prevent Vibe Coding vulnerabilities.
 
 ### 1. NEVER Trust the Client
 - **NEVER** write business logic in Client Components.
@@ -235,58 +242,3 @@ Before generating any code that accesses data, ask:
 - File upload validation in `database/migrations/validate_file_uploads.sql`
 - RGPD compliance functions with proper access controls
 </security_architecture>
-
-<hemptycoon_integration>
-## 🎮 Intégration HempTycoon (Jeu RPG)
-
-Cette app partage son backend Supabase avec **HempTycoon**, un jeu mobile RPG de culture de chanvre.
-
-### Principe
-```
-HempTycoon (Jeu) ←→ Supabase (Partagé) ←→ Les Chanvriers (Boutique)
-                         ↓
-                   Tickets partagés
-                         ↓
-            1 ticket jeu = 1 ticket boutique = 1 tirage
-```
-
-### Système de Tickets Centralisé
-Les tickets ne sont plus stockés localement (Zustand). Ils sont maintenant dans Supabase.
-
-**Tables à créer :**
-```sql
--- Voir supabase/migrations/YYYYMMDD_tickets_centralized.sql
--- user_tickets : Solde de tickets par user
--- ticket_transactions : Historique des gains/dépenses
-```
-
-**Migration du store local :**
-Le `useSubscriptionStore` doit lire/écrire depuis Supabase au lieu de AsyncStorage.
-
-### Sources de Tickets
-| Source | Déclencheur | Quantité |
-|--------|-------------|----------|
-| Achat boutique | 25€ dépensés | 1 ticket |
-| Abonnement | Mensuel | 1-3 selon tier |
-| HempTycoon | Classement hebdo | 1-10 selon rang |
-| HempTycoon | Classement saison | 5-50 selon rang |
-| HempTycoon | Achievements | 1-10 |
-
-### Edge Function `award-tickets`
-Seul moyen d'ajouter des tickets. Jamais le client directement.
-- Vérifie signature HMAC
-- Valide les règles métier
-- Transaction atomique (balance + log)
-
-### Modifications requises dans cette app
-1. **Migrer `useSubscriptionStore.tickets`** vers requête Supabase
-2. **Créer hook `useTicketBalance()`** qui fetch depuis `user_tickets`
-3. **Modifier le tirage** pour appeler une Edge Function qui décrémente les tickets
-4. **Deep linking** : `chanvriers://rewards?source=hemptycoon`
-
-### Sécurité Cross-App
-- Le jeu ne peut PAS attribuer de tickets directement
-- Toute attribution passe par Edge Function avec signature HMAC
-- Les replays de jeu sont stockés pour audit si contestation
-- Top 10 du classement = review manuel avant attribution
-</hemptycoon_integration>

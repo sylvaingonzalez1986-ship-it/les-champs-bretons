@@ -102,7 +102,7 @@ export function ProProductDetailModal({
   if (!product || !producer) return null;
 
   // Prix pro avec paliers - utilise uniquement les paliers pro
-  const baseProPrice = (product as any).pricePro ?? product.price ?? 0;
+  const baseProPrice = product.pricePro ?? product.price ?? 0;
   const originalPrice = product.price ?? 0;
 
   // Obtenir le prix selon la quantité (avec paliers pro)

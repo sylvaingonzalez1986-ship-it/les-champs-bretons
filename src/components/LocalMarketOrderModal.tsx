@@ -21,7 +21,7 @@ import { COLORS } from '@/lib/colors';
 import { useLocalMarketOrders, CreateLocalOrderParams } from '@/lib/local-market-orders';
 import { useAuth } from '@/lib/useAuth';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase-auth';
-import { PriceTier, getPriceForQuantity, getNextPriceTier } from '@/lib/producers';
+import { PriceTier, getPriceForQuantity, getNextPriceTier, type PricingProduct } from '@/lib/producers';
 import * as Haptics from 'expo-haptics';
 
 interface ProductInfo {
@@ -130,12 +130,13 @@ export default function LocalMarketOrderModal({
   };
 
   // Calculer le prix unitaire selon la quantité (avec paliers)
+  const pricingProduct: PricingProduct = {
+    price: product.price_public,
+    priceTiers: product.price_tiers,
+  };
+
   const unitPrice = product.price_tiers && product.price_tiers.length > 0
-    ? getPriceForQuantity(
-        { price: product.price_public, priceTiers: product.price_tiers } as any,
-        quantity,
-        false
-      )
+    ? getPriceForQuantity(pricingProduct, quantity, false)
     : product.price_public;
 
   const totalPrice = quantity * unitPrice;
@@ -143,11 +144,7 @@ export default function LocalMarketOrderModal({
 
   // Calculer le prochain palier pour afficher les économies potentielles
   const nextTier = product.price_tiers && product.price_tiers.length > 0
-    ? getNextPriceTier(
-        { price: product.price_public, priceTiers: product.price_tiers } as any,
-        quantity,
-        false
-      )
+    ? getNextPriceTier(pricingProduct, quantity, false)
     : null;
 
   const handleQuantityChange = (delta: number) => {

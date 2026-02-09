@@ -4,9 +4,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { View, Pressable, ActivityIndicator, Switch } from 'react-native';
+import { View, Pressable, ActivityIndicator } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
-import { useRouter } from 'expo-router';
 import {
   User,
   Mail,
@@ -17,10 +16,6 @@ import {
   FileText,
   Check,
   AlertCircle,
-  ChevronRight,
-  Store,
-  Clock,
-  Info,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { UserProfile } from '@/lib/supabase-auth';
@@ -33,8 +28,6 @@ interface ProducerProfileFormProps {
 }
 
 export function ProducerProfileForm({ profile, email, onSave, isSaving }: ProducerProfileFormProps) {
-  const router = useRouter();
-
   // Form state
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -45,12 +38,6 @@ export function ProducerProfileForm({ profile, email, onSave, isSaving }: Produc
   const [city, setCity] = useState('');
   const [siret, setSiret] = useState('');
 
-  // Direct farm sales state
-  const [venteDirecteFerme, setVenteDirecteFerme] = useState(false);
-  const [adresseRetrait, setAdresseRetrait] = useState('');
-  const [horairesRetrait, setHorairesRetrait] = useState('');
-  const [instructionsRetrait, setInstructionsRetrait] = useState('');
-
   // Validation errors
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successMessage, setSuccessMessage] = useState('');
@@ -60,20 +47,14 @@ export function ProducerProfileForm({ profile, email, onSave, isSaving }: Produc
     if (profile) {
       // Parse full_name into first/last name
       const nameParts = (profile.full_name || '').split(' ');
-      setFirstName((profile as any).first_name || nameParts[0] || '');
-      setLastName((profile as any).last_name || nameParts.slice(1).join(' ') || '');
+      setFirstName(profile.first_name || nameParts[0] || '');
+      setLastName(profile.last_name || nameParts.slice(1).join(' ') || '');
       setCompanyName(profile.company_name || '');
       setPhone(profile.phone || '');
-      setAddress((profile as any).address || '');
-      setPostalCode((profile as any).postal_code || '');
-      setCity((profile as any).city || '');
+      setAddress(profile.address || '');
+      setPostalCode(profile.postal_code || '');
+      setCity(profile.city || '');
       setSiret(profile.siret || '');
-
-      // Load direct farm sales data
-      setVenteDirecteFerme(profile.vente_directe_ferme || false);
-      setAdresseRetrait(profile.adresse_retrait || '');
-      setHorairesRetrait(profile.horaires_retrait || '');
-      setInstructionsRetrait(profile.instructions_retrait || '');
     }
   }, [profile]);
 
@@ -122,13 +103,6 @@ export function ProducerProfileForm({ profile, email, onSave, isSaving }: Produc
       newErrors.siret = 'SIRET requis';
     }
 
-    // Validate direct farm sales fields if enabled
-    if (venteDirecteFerme) {
-      if (!adresseRetrait.trim()) {
-        newErrors.adresseRetrait = 'Adresse de retrait requise';
-      }
-    }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -148,23 +122,13 @@ export function ProducerProfileForm({ profile, email, onSave, isSaving }: Produc
         postal_code: postalCode,
         city,
         siret: siret.replace(/\s/g, ''),
-        // Direct farm sales fields
-        vente_directe_ferme: venteDirecteFerme,
-        adresse_retrait: venteDirecteFerme ? adresseRetrait : null,
-        horaires_retrait: venteDirecteFerme ? horairesRetrait || null : null,
-        instructions_retrait: venteDirecteFerme ? instructionsRetrait || null : null,
-      } as any);
+      });
 
       setSuccessMessage('Profil enregistré !');
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
       console.error('Error saving profile:', error);
     }
-  };
-
-  // Navigate to producer page
-  const handleGoToProducerPage = () => {
-    router.push('/producer-profile');
   };
 
   return (
@@ -488,125 +452,7 @@ export function ProducerProfileForm({ profile, email, onSave, isSaving }: Produc
         )}
       </View>
 
-      {/* DIRECT FARM SALES SECTION */}
-      <View className="mb-6 rounded-xl p-4" style={{ backgroundColor: `${COLORS.accent.hemp}10`, borderWidth: 1, borderColor: `${COLORS.accent.hemp}30` }}>
-        <View className="flex-row items-center mb-4">
-          <Store size={20} color={COLORS.accent.hemp} style={{ marginRight: 8 }} />
-          <Text style={{ color: COLORS.text.white }} className="font-semibold text-base flex-1">
-            Vente directe à la ferme
-          </Text>
-          <Switch
-            value={venteDirecteFerme}
-            onValueChange={setVenteDirecteFerme}
-            trackColor={{ false: COLORS.text.muted, true: COLORS.accent.hemp }}
-            thumbColor={venteDirecteFerme ? COLORS.accent.hemp : COLORS.text.lightGray}
-          />
-        </View>
-
-        {venteDirecteFerme && (
-          <View>
-            {/* Pickup Address */}
-            <View className="mb-4">
-              <Text style={{ color: COLORS.text.lightGray }} className="text-xs mb-1">
-                Adresse de retrait des commandes *
-              </Text>
-              <View
-                className="flex-row items-start rounded-xl overflow-hidden"
-                style={{
-                  backgroundColor: `${COLORS.text.white}05`,
-                  borderWidth: 1,
-                  borderColor: errors.adresseRetrait ? COLORS.accent.red : `${COLORS.primary.paleGold}20`,
-                  minHeight: 100,
-                  paddingTop: 12,
-                }}
-              >
-                <View className="px-3 pt-1">
-                  <MapPin size={18} color={COLORS.text.muted} />
-                </View>
-                <TextInput
-                  value={adresseRetrait}
-                  onChangeText={(text) => {
-                    setAdresseRetrait(text);
-                    if (errors.adresseRetrait) setErrors((e) => ({ ...e, adresseRetrait: '' }));
-                  }}
-                  placeholder="123 Rue de la Ferme, 75001 Paris"
-                  placeholderTextColor={COLORS.text.muted}
-                  multiline
-                  numberOfLines={3}
-                  className="flex-1 py-3 pr-3"
-                  style={{ color: COLORS.text.white }}
-                />
-              </View>
-              {errors.adresseRetrait && (
-                <View className="flex-row items-center mt-1">
-                  <AlertCircle size={14} color={COLORS.accent.red} />
-                  <Text style={{ color: COLORS.accent.red }} className="text-xs ml-1">
-                    {errors.adresseRetrait}
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            {/* Opening Hours */}
-            <View className="mb-4">
-              <Text style={{ color: COLORS.text.lightGray }} className="text-xs mb-1">
-                Horaires de retrait (ex: Lun-Ven 14h-18h)
-              </Text>
-              <View
-                className="flex-row items-center rounded-xl overflow-hidden"
-                style={{
-                  backgroundColor: `${COLORS.text.white}05`,
-                  borderWidth: 1,
-                  borderColor: `${COLORS.primary.paleGold}20`,
-                }}
-              >
-                <View className="px-3">
-                  <Clock size={18} color={COLORS.text.muted} />
-                </View>
-                <TextInput
-                  value={horairesRetrait}
-                  onChangeText={setHorairesRetrait}
-                  placeholder="Lundi-Vendredi 14h-18h, Samedi 9h-12h"
-                  placeholderTextColor={COLORS.text.muted}
-                  className="flex-1 py-3 pr-3"
-                  style={{ color: COLORS.text.white }}
-                />
-              </View>
-            </View>
-
-            {/* Instructions */}
-            <View className="mb-4">
-              <Text style={{ color: COLORS.text.lightGray }} className="text-xs mb-1">
-                Instructions complémentaires (accès, parking, etc.)
-              </Text>
-              <View
-                className="flex-row items-start rounded-xl overflow-hidden"
-                style={{
-                  backgroundColor: `${COLORS.text.white}05`,
-                  borderWidth: 1,
-                  borderColor: `${COLORS.primary.paleGold}20`,
-                  minHeight: 80,
-                  paddingTop: 12,
-                }}
-              >
-                <View className="px-3 pt-1">
-                  <Info size={18} color={COLORS.text.muted} />
-                </View>
-                <TextInput
-                  value={instructionsRetrait}
-                  onChangeText={setInstructionsRetrait}
-                  placeholder="Ex: Accès par la cour intérieure, parking gratuit"
-                  placeholderTextColor={COLORS.text.muted}
-                  multiline
-                  numberOfLines={3}
-                  className="flex-1 py-3 pr-3"
-                  style={{ color: COLORS.text.white }}
-                />
-              </View>
-            </View>
-          </View>
-        )}
-      </View>
+      {/* Save Button */}
       <Pressable
         onPress={handleSave}
         disabled={isSaving}
@@ -623,22 +469,6 @@ export function ProducerProfileForm({ profile, email, onSave, isSaving }: Produc
             Enregistrer
           </Text>
         )}
-      </Pressable>
-
-      {/* Producer Page Button */}
-      <Pressable
-        onPress={handleGoToProducerPage}
-        className="mt-4 rounded-xl py-4 flex-row items-center justify-center active:opacity-80"
-        style={{
-          backgroundColor: `${COLORS.accent.hemp}15`,
-          borderWidth: 1,
-          borderColor: `${COLORS.accent.hemp}40`,
-        }}
-      >
-        <Text style={{ color: COLORS.accent.hemp }} className="font-medium">
-          Accéder à ma fiche producteur
-        </Text>
-        <ChevronRight size={20} color={COLORS.accent.hemp} style={{ marginLeft: 8 }} />
       </Pressable>
     </View>
   );

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { View, ScrollView, Pressable, Image, Modal, Dimensions } from 'react-native';
+import { View, ScrollView, Pressable, Image, Modal, Dimensions, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -67,7 +67,7 @@ const ProductDetailModal = ({ visible, onClose, promoProduct, product, producer,
     }, 1500);
   };
 
-  const handleScroll = (event: any) => {
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const offsetX = event.nativeEvent.contentOffset.x;
     const index = Math.round(offsetX / SCREEN_WIDTH);
     setCurrentImageIndex(index);

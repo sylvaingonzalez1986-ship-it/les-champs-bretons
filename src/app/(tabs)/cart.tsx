@@ -91,7 +91,8 @@ export default function CartScreen() {
   const addTickets = useSubscriptionStore((s) => s.addTickets);
 
   // Stock inventory for updating quantities on order
-  const stockInventory = useStockInventoryStore();
+  const stockItems = useStockInventoryStore((s) => s.stock);
+  const decrementStockQuantity = useStockInventoryStore((s) => s.decrementQuantity);
   const decrementProductStock = useProducerStore((s) => s.decrementProductStock);
   const producers = useProducerStore((s) => s.producers);
 
@@ -367,7 +368,6 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
 
   // Accès au store de file d'attente
   const addPendingOrder = useOrderQueueStore((s) => s.addPendingOrder);
-  const pendingOrdersCount = useOrderQueueStore((s) => s.getPendingCount());
 
   const saveOrder = async (syncToSupabase: boolean = false) => {
     const orderItems = items.map((item) => ({
@@ -404,6 +404,7 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
 
     // Ajouter au store local d'abord (toujours)
     addOrder({
+      id: orderId,
       customerInfo,
       items: orderItems,
       subtotal,
@@ -418,6 +419,7 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
     }
 
     // Sync to Supabase SEULEMENT si demandé (après confirmation email)
+    let syncedOrderId = orderId;
     if (syncToSupabase && isSupabaseSyncConfigured()) {
       try {
         await syncOrderToSupabase(newOrder);
@@ -433,7 +435,7 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
 
     // Retourner les données de commande pour le récapitulatif
     return {
-      orderId,
+      orderId: syncedOrderId,
       customerInfo,
       items: orderItems,
       subtotal,
@@ -465,11 +467,11 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
       decrementProductStock(item.producerId, item.product.id, item.quantity);
 
       // Aussi décrémenter dans l'ancien système stockInventory si présent
-      const stockItem = stockInventory.stock.find(
+      const stockItem = stockItems.find(
         (s) => s.productId === item.product.id && s.producerId === item.producerId
       );
       if (stockItem) {
-        stockInventory.decrementQuantity(stockItem.id, item.quantity);
+        decrementStockQuantity(stockItem.id, item.quantity);
       }
 
       // Synchroniser avec Supabase

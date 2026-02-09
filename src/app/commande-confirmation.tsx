@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { View, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CheckCircle, ArrowRight, MapPin, Clock } from 'lucide-react-native';
 import { useLocalSearchParams, router } from 'expo-router';
+import { useQuery } from '@tanstack/react-query';
 import { COLORS } from '@/lib/colors';
 import { useAuth } from '@/lib/useAuth';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase-auth';
@@ -24,79 +25,90 @@ interface ProducerData {
   name: string;
 }
 
+function useDirectSaleOrdersByIds(orderIds: string[]) {
+  const { session } = useAuth();
+  const sortedOrderIds = useMemo(() => {
+    const uniqueIds = Array.from(new Set(orderIds.map((id) => id.trim()).filter(Boolean)));
+    return uniqueIds.sort();
+  }, [orderIds]);
+
+  return useQuery<(OrderData & { producer_name: string })[]>({
+    queryKey: ['direct-sale-orders', sortedOrderIds],
+    enabled: sortedOrderIds.length > 0 && !!session?.access_token,
+    queryFn: async () => {
+      if (!session?.access_token || sortedOrderIds.length === 0) {
+        return [];
+      }
+
+      const idsFilter = sortedOrderIds.map((id) => encodeURIComponent(id)).join(',');
+      const ordersResponse = await fetch(
+        `${SUPABASE_URL}/rest/v1/commandes_vente_directe?id=in.(${idsFilter})`,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        }
+      );
+
+      if (!ordersResponse.ok) {
+        return [];
+      }
+
+      const ordersData = (await ordersResponse.json()) as OrderData[];
+      if (!Array.isArray(ordersData) || ordersData.length === 0) {
+        return [];
+      }
+
+      const producerIds = Array.from(new Set(ordersData.map((order) => order.producer_id).filter(Boolean)));
+      let producersById = new Map<string, string>();
+
+      if (producerIds.length > 0) {
+        const producersFilter = producerIds.map((id) => encodeURIComponent(id)).join(',');
+        const producersResponse = await fetch(
+          `${SUPABASE_URL}/rest/v1/producers?id=in.(${producersFilter})&select=id,name`,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          }
+        );
+
+        if (producersResponse.ok) {
+          const producersData = (await producersResponse.json()) as ProducerData[];
+          if (Array.isArray(producersData)) {
+            producersById = new Map(
+              producersData.map((producer) => [producer.id, producer.name ?? 'Unknown Producer'])
+            );
+          }
+        }
+      }
+
+      return ordersData.map((order) => ({
+        ...order,
+        producer_name: producersById.get(order.producer_id) ?? 'Unknown Producer',
+      }));
+    },
+  });
+}
+
 export default function CommandeConfirmation() {
   const insets = useSafeAreaInsets();
   const { orderIds: orderIdsParam } = useLocalSearchParams();
-  const { session } = useAuth();
-  const [orders, setOrders] = useState<(OrderData & { producer_name: string })[]>([]);
-  const [loading, setLoading] = useState(true);
+  const orderIds = useMemo(() => {
+    if (typeof orderIdsParam !== 'string') {
+      return [];
+    }
 
-  const orderIds = typeof orderIdsParam === 'string' ? orderIdsParam.split(',') : [];
+    return orderIdsParam.split(',').map((id) => id.trim()).filter(Boolean);
+  }, [orderIdsParam]);
 
-  useEffect(() => {
-    const loadOrders = async () => {
-      if (!session?.access_token || orderIds.length === 0) {
-        setLoading(false);
-        return;
-      }
+  const { data: orders = [], isLoading } = useDirectSaleOrdersByIds(orderIds);
 
-      try {
-        const ordersData: (OrderData & { producer_name: string })[] = [];
-
-        for (const orderId of orderIds) {
-          // Fetch order details
-          const orderResponse = await fetch(
-            `${SUPABASE_URL}/rest/v1/commandes_vente_directe?id=eq.${orderId}`,
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                apikey: SUPABASE_ANON_KEY,
-                Authorization: `Bearer ${session.access_token}`,
-              },
-            }
-          );
-
-          if (!orderResponse.ok) continue;
-
-          const [orderData] = await orderResponse.json();
-          if (!orderData) continue;
-
-          // Fetch producer info
-          const producerResponse = await fetch(
-            `${SUPABASE_URL}/rest/v1/producers?id=eq.${orderData.producer_id}&select=id,name`,
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                apikey: SUPABASE_ANON_KEY,
-                Authorization: `Bearer ${session.access_token}`,
-              },
-            }
-          );
-
-          let producerName = 'Unknown Producer';
-          if (producerResponse.ok) {
-            const [producer] = await producerResponse.json();
-            producerName = producer?.name || 'Unknown Producer';
-          }
-
-          ordersData.push({
-            ...orderData,
-            producer_name: producerName,
-          });
-        }
-
-        setOrders(ordersData);
-      } catch (error) {
-        console.error('Error loading orders:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadOrders();
-  }, [session?.access_token, orderIds.length]);
-
-  if (loading) {
+  if (isLoading) {
     return (
       <LinearGradient
         colors={[COLORS.background.nightSky, COLORS.background.mediumBlue]}

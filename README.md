@@ -2,6 +2,28 @@
 
 Application de tirage au sort de produits chanvre français. Les utilisateurs peuvent ouvrir des box mystères pour recevoir des produits aléatoires de producteurs français, avec un systeme de rarete.
 
+Derniere mise a jour: 2026-02-07
+
+## Liens utiles
+- Docs securite: [docs/SECURITY.md](docs/SECURITY.md)
+- Docs reseau pro: [docs/PRO_RESOURCES.md](docs/PRO_RESOURCES.md)
+- Audit securite: [docs/SECURITY_AUDIT_REPORT.md](docs/SECURITY_AUDIT_REPORT.md)
+- RLS policies: [database/RLS_DOCUMENTATION.md](database/RLS_DOCUMENTATION.md)
+
+## Vue d'ensemble technique (2026)
+- Stack: Expo SDK 53, React Native 0.76.7, React Query, Zustand, Supabase
+- Donnees sensibles: mutations via Edge Functions uniquement (pas de writes directes en client)
+- Stockage: buckets prives + URLs signees a l'acces
+- Rate limiting applique aux fonctions publiques
+- SSL pinning sur les appels Supabase critiques
+
+## Fonctionnalites majeures
+- Tirage / box mysteres
+- Boutique + marche local
+- Reseau Pro (ressources producteurs)
+- Admin: gestion produits, ressources pro, commandes
+- Audio / musique integrée
+
 ## Phase 5.5 - Tarifs dégressifs sur le Marché Local (2026-01-25)
 
 ### Amélioration : Tarifs dégressifs visibles sur le Marché Local
@@ -259,7 +281,6 @@ Système complet de gestion des commandes pour admin, pro et producteur.
 Protection contre les attaques Man-in-the-Middle sur les reseaux WiFi publics.
 
 #### Fichiers crees
-- `src/lib/ssl-cert-hash.ts` - Configuration du certificat SSL Supabase
 - `src/lib/ssl-pinning.ts` - Implementation secureFetch avec timeout
 - `assets/supabase-cert.pem` - Certificat DigiCert Global G2
 
@@ -1413,69 +1434,6 @@ Les producteurs peuvent gérer leurs commandes vente directe depuis l'onglet Adm
 5. Effectue une action (confirmer, prête, récupérée, annuler)
 6. Le statut est mis à jour en base + email envoyé au client
 
-### Chat Producteurs
-
-Un onglet "Chat" est disponible uniquement pour les utilisateurs avec `role = 'producer'` ou `role = 'admin'`.
-
-**Concept:** Espace de discussion communautaire exclusif aux producteurs partenaires, style WhatsApp.
-
-#### Fonctionnalités
-
-- **Messages en temps réel**: Supabase Realtime pour recevoir instantanément les nouveaux messages
-- **Interface WhatsApp-style**: Bulles de messages avec avatars colorés basés sur le nom
-- **Optimistic UI**: Les messages s'affichent immédiatement avant confirmation serveur
-- **Animations**: Slide-in pour les nouveaux messages, séparateurs de date animés
-- **Haptic feedback**: Vibration à l'envoi et réception de messages
-- **Limite de caractères**: 500 caractères max avec compteur visuel
-- **Liens cliquables**: Détection automatique des URLs
-- **Pull-to-refresh**: Tirer vers le bas pour actualiser
-- **Indicateur en ligne**: Nombre de producteurs connectés
-- **Typing indicator**: Animation de saisie (préparé pour future implémentation)
-- **Loading skeleton**: Animation de chargement élégante
-- **Modal règles**: Affiche les règles du chat et statistiques
-
-#### Composants modulaires
-
-Les composants du chat sont réutilisables et situés dans `src/components/chat/`:
-
-- `MessageBubble.tsx`: Bulle de message avec avatar, nom, contenu, heure et liens cliquables
-- `DateSeparator.tsx`: Séparateur de date entre les jours (Aujourd'hui, Hier, dates complètes)
-- `ChatInput.tsx`: Input de saisie avec compteur de caractères et bouton d'envoi
-- `OnlineIndicator.tsx`: Indicateur du nombre de producteurs en ligne avec animation pulse
-- `TypingIndicator.tsx`: Animation de saisie (3 points animés)
-- `ChatRules.tsx`: Modal avec règles du chat et statistiques de la communauté
-- `MessageSkeleton.tsx`: Skeleton loader pendant le chargement initial
-
-#### Table Supabase pour le chat
-
-```sql
-CREATE TABLE producer_chat_messages (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  sender_id text NOT NULL,
-  sender_name text NOT NULL,
-  sender_email text NOT NULL,
-  sender_avatar text,
-  content text NOT NULL,
-  created_at timestamptz DEFAULT now()
-);
-
--- Activer RLS
-ALTER TABLE producer_chat_messages ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "chat_select" ON producer_chat_messages FOR SELECT USING (true);
-CREATE POLICY "chat_insert" ON producer_chat_messages FOR INSERT WITH CHECK (true);
-
--- Activer Realtime
-ALTER PUBLICATION supabase_realtime ADD TABLE producer_chat_messages;
-```
-
-#### Fichiers associés
-
-- `src/app/(tabs)/chat-producteurs.tsx`: Écran principal du chat
-- `src/components/chat/`: Composants modulaires du chat
-- `src/lib/supabase-sync.ts`: Fonctions API (sendChatMessage, fetchChatMessages, subscribeToMessages)
-- `src/lib/store.ts`: Store Zustand `useProducerChatStore` pour le compteur de non-lus
-
 ### Ma Boutique (Producteurs)
 
 Un onglet "Boutique" est disponible uniquement pour les utilisateurs avec `role = 'producer'` ou `role = 'admin'`.
@@ -1835,28 +1793,22 @@ CREATE POLICY "music_tracks_delete" ON music_tracks FOR DELETE USING (true);
 - `src/app/(tabs)/profile.tsx` - Bouton refresh commandes + Toast + lien vers edit-profile
 - `src/lib/store.ts` - Fonction `getMissingFields()` ajoutée
 
-### Corrections Critiques Appliquées
+### Corrections Critiques Appliqu?es
 
-1. **RLS Chat Messages** - Ajout de la migration SQL `database/migrations/fix_chat_messages_rls.sql` pour corriger les politiques INSERT sur la table `chat_messages`
-
-2. **Bouton Panier Marché Local** - Implémentation complète du bouton d'ajout au panier dans l'écran Marché Local avec:
+1. **Bouton Panier March? Local** - Impl?mentation compl?te du bouton d'ajout au panier dans l'?cran March? Local avec:
    - Feedback visuel (spinner, checkmark)
    - Retour haptique
-   - Vérification de l'authentification avant ajout
+   - V?rification de l'authentification avant ajout
 
-3. **Vérification Stock Avant Commande** - Ajout de la fonction `checkStockAvailability()` dans cart.tsx qui vérifie que le stock est suffisant avant de passer commande
+2. **V?rification Stock Avant Commande** - Ajout de la fonction `checkStockAvailability()` dans cart.tsx qui v?rifie que le stock est suffisant avant de passer commande
 
-4. **Protection Double-clic** - État `isProcessingOrder` qui empêche les soumissions multiples du bouton "Commander"
+3. **Protection Double-clic** - ?tat `isProcessingOrder` qui emp?che les soumissions multiples du bouton "Commander"
 
-5. **Décrémentation Stock Corrigée** - Le stock n'est maintenant décrémenté qu'APRÈS l'envoi réussi de l'email de commande (pas avant)
-
-6. **Messages Optimistes Chat** - En cas d'erreur d'envoi, le message optimiste est maintenant correctement retiré de la liste au lieu d'être conservé
+4. **D?cr?mentation Stock Corrig?e** - Le stock n'est maintenant d?cr?ment? qu'APR?S l'envoi r?ussi de l'email de commande (pas avant)
 
 ### Fichiers Modifiés
 - `src/app/(tabs)/cart.tsx` - Vérification stock, protection double-clic, décrémentation différée
 - `src/app/(tabs)/marche-local.tsx` - Bouton ajout panier fonctionnel
-- `src/app/(tabs)/chat-producteurs.tsx` - Gestion erreur messages optimistes
-- `database/migrations/fix_chat_messages_rls.sql` - Nouvelle migration RLS
 
 ### Améliorations de Robustesse Réseau (Session 3)
 
@@ -1887,12 +1839,8 @@ Suite à l'audit de robustesse, plusieurs améliorations ont été implémentée
 - Si email annulé/échoué: aucune commande créée, stock intact
 - Fichier: `src/app/(tabs)/cart.tsx`
 
-#### 5. Chat WebSocket avec Reconnexion Automatique
-- Reconnexion auto avec backoff exponentiel (jusqu'à 10 tentatives)
 - File d'attente pour messages envoyés hors-ligne
 - Indicateur visuel d'état de connexion
-- Messages: "Connexion au chat perdue. Reconnexion en cours..."
-- Composant: `src/components/ChatConnectionBanner.tsx`
 - Fichier: `src/lib/supabase-sync.ts`
 
 #### 6. Upload d'Images Résilient
@@ -1910,21 +1858,18 @@ Suite à l'audit de robustesse, plusieurs améliorations ont été implémentée
 | Timeout API | "Le serveur met du temps à répondre. Nouvelle tentative..." |
 | Échec final | "Impossible de contacter le serveur. Vérifiez votre connexion." |
 | Sync produits échoue | "Impossible de charger les produits. Affichage des données en cache." |
-| Chat déconnecté | "Connexion au chat perdue. Reconnexion en cours..." |
 | Upload image échoue | "L'image n'a pas pu être envoyée. Réessayez." |
 
 #### Scénarios de Test
 
 1. **Réseau OK** - Tout fonctionne normalement
 2. **Réseau lent** - Retry automatique visible, messages de patience
-3. **Réseau coupé** - Bannière offline, données cache, chat en file d'attente
 4. **Reprise connexion** - Message "Connexion rétablie", sync automatique
 
 ### Fichiers Modifiés
 - `src/lib/fetch-with-retry.ts` - NOUVEAU
 - `src/lib/network-context.tsx` - NOUVEAU
 - `src/components/NetworkBanner.tsx` - NOUVEAU
-- `src/components/ChatConnectionBanner.tsx` - NOUVEAU
 - `src/lib/supabase-sync.ts` - fetchWithRetry + WebSocket reconnexion
 - `src/lib/supabase-auth.ts` - fetchWithRetry
 - `src/lib/useDataSync.ts` - Mode offline-first
@@ -1934,7 +1879,6 @@ Suite à l'audit de robustesse, plusieurs améliorations ont été implémentée
 
 ### À Exécuter dans Supabase
 ```sql
--- Exécuter le contenu de database/migrations/fix_chat_messages_rls.sql
 -- pour corriger les politiques RLS de la table chat_messages
 ```
 
@@ -1969,7 +1913,6 @@ Quand l'app est hors-ligne:
 | Écran | Action | Composant modifié |
 |-------|--------|-------------------|
 | **Panier** | Bouton "Commander" | `src/app/(tabs)/cart.tsx` |
-| **Chat** | Envoi de messages | `src/components/chat/ChatInput.tsx` |
 | **Profil** | Sauvegarder modifications | `src/app/edit-profile.tsx` |
 | **Bourse** | Valider demande d'achat | `src/components/BourseProductDetailModal.tsx` |
 
@@ -1987,7 +1930,6 @@ Quand l'app est hors-ligne:
 - `src/lib/network-context.tsx` - Nouveaux hooks `useOfflineStatus`, `useWriteAction`
 - `src/components/OfflineDisabledButton.tsx` - NOUVEAU composant
 - `src/app/(tabs)/cart.tsx` - Bouton Commander avec `OfflineDisabledButton`
-- `src/components/chat/ChatInput.tsx` - Input désactivé + indicateur offline
 - `src/app/edit-profile.tsx` - Boutons sauvegarde désactivés
 - `src/components/BourseProductDetailModal.tsx` - Bouton commande désactivé
 

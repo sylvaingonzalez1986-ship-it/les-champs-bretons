@@ -24,7 +24,7 @@ export default function ProduitsScreen() {
   const canManageProducts = isAdmin || isProducer;
 
   // ID du producteur lié au profil (pour les producteurs)
-  const linkedProducerId = (profile as any)?.linked_producer_id ?? null;
+  const linkedProducerId = profile?.linked_producer_id ?? null;
 
   // Combine custom and sample producers, prioritizing custom versions
   const allProducers = useMemo(() => {

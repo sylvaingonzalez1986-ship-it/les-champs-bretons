@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Pressable, ActivityIndicator, Platform } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import {
   User,
   Mail,
@@ -42,14 +42,14 @@ export function ClientProfileForm({ profile, email, onSave, isSaving }: ClientPr
   useEffect(() => {
     if (profile) {
       const nameParts = (profile.full_name || '').split(' ');
-      setFirstName((profile as any).first_name || nameParts[0] || '');
-      setLastName((profile as any).last_name || nameParts.slice(1).join(' ') || '');
+      setFirstName(profile.first_name || nameParts[0] || '');
+      setLastName(profile.last_name || nameParts.slice(1).join(' ') || '');
       setPhone(profile.phone || '');
-      setAddress((profile as any).address || '');
-      setPostalCode((profile as any).postal_code || '');
-      setCity((profile as any).city || '');
-      if ((profile as any).birth_date) {
-        setBirthDate(new Date((profile as any).birth_date));
+      setAddress(profile.address || '');
+      setPostalCode(profile.postal_code || '');
+      setCity(profile.city || '');
+      if (profile.birth_date) {
+        setBirthDate(new Date(profile.birth_date));
       }
     }
   }, [profile]);
@@ -93,7 +93,7 @@ export function ClientProfileForm({ profile, email, onSave, isSaving }: ClientPr
         address,
         postal_code: postalCode,
         city,
-      } as any);
+      });
       setSuccessMessage('Profil enregistre !');
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
@@ -110,7 +110,7 @@ export function ClientProfileForm({ profile, email, onSave, isSaving }: ClientPr
     });
   };
 
-  const onDateChange = (event: any, selectedDate?: Date) => {
+  const onDateChange = (event: DateTimePickerEvent, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
       setShowDatePicker(false);
     }

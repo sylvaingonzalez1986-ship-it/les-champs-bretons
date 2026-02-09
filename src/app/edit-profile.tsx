@@ -28,6 +28,7 @@ import {
   CheckCircle,
   Save,
   Sparkles,
+  Lock,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { useCustomerInfoStore, CustomerInfo } from '@/lib/store';
@@ -44,6 +45,7 @@ interface FormField {
   icon: React.ElementType;
   keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'numeric';
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  readOnly?: boolean;
 }
 
 const FORM_FIELDS: FormField[] = [
@@ -68,6 +70,7 @@ const FORM_FIELDS: FormField[] = [
     icon: Mail,
     keyboardType: 'email-address',
     autoCapitalize: 'none',
+    readOnly: true, // Email changes require auth flow (supabase.auth.updateUser)
   },
   {
     key: 'phone',
@@ -121,10 +124,11 @@ export default function EditProfileScreen() {
     setFormData(customerInfo);
   }, [customerInfo]);
 
-  // Check for changes
+  // Check for changes (exclude readOnly fields like email)
   useEffect(() => {
-    const changed = Object.keys(formData).some(
-      (key) => formData[key as keyof CustomerInfo] !== customerInfo[key as keyof CustomerInfo]
+    const editableFields = FORM_FIELDS.filter((f) => !f.readOnly);
+    const changed = editableFields.some(
+      (f) => formData[f.key] !== customerInfo[f.key]
     );
     setHasChanges(changed);
   }, [formData, customerInfo]);
@@ -148,11 +152,6 @@ export default function EditProfileScreen() {
     // Validation
     if (!formData.firstName.trim() || !formData.lastName.trim()) {
       showToast('Veuillez renseigner votre nom et prénom.', 'warning');
-      return;
-    }
-
-    if (!validateEmail(formData.email)) {
-      showToast('Veuillez entrer une adresse email valide.', 'warning');
       return;
     }
 
@@ -392,14 +391,26 @@ export default function EditProfileScreen() {
                     placeholderTextColor={COLORS.text.muted}
                     keyboardType={field.keyboardType || 'default'}
                     autoCapitalize={field.autoCapitalize || 'sentences'}
+                    editable={!field.readOnly}
                     className="flex-1 text-base"
-                    style={{ color: COLORS.text.cream }}
+                    style={{
+                      color: field.readOnly ? COLORS.text.muted : COLORS.text.cream,
+                      opacity: field.readOnly ? 0.7 : 1,
+                    }}
                   />
-                  {status === 'filled' && (
+                  {field.readOnly && (
+                    <Lock size={16} color={COLORS.text.muted} />
+                  )}
+                  {!field.readOnly && status === 'filled' && (
                     <CheckCircle size={18} color={COLORS.accent.hemp} />
                   )}
                 </View>
-                {status === 'error' && (
+                {field.readOnly && (
+                  <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1 ml-1">
+                    L'email ne peut être modifié que dans les paramètres du compte
+                  </Text>
+                )}
+                {!field.readOnly && status === 'error' && (
                   <Text style={{ color: COLORS.accent.red }} className="text-xs mt-1 ml-1">
                     {field.key === 'email'
                       ? 'Format email invalide'

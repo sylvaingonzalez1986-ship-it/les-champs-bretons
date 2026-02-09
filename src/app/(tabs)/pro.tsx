@@ -112,8 +112,8 @@ export default function ProScreen() {
       producer.products.forEach((product) => {
         // Filtrer par visible_for_pros (si le champ existe)
         // Pour la compatibilité, on considère tous les produits comme visibles par défaut
-        const isVisibleForPros = (product as any).visibleForPros !== false;
-        const isPublished = (product as any).status !== 'draft' && (product as any).status !== 'archived';
+        const isVisibleForPros = product.visibleForPros !== false;
+        const isPublished = product.status !== 'draft' && product.status !== 'archived';
 
         if (isVisibleForPros && isPublished) {
           products.push({ product, producer });
@@ -143,7 +143,7 @@ export default function ProScreen() {
       if (filters.productType && product.type !== filters.productType) return false;
 
       // Filtre prix
-      const price = (product as any).pricePro ?? product.price;
+      const price = product.pricePro ?? product.price;
       if (filters.minPrice !== null && price < filters.minPrice) return false;
       if (filters.maxPrice !== null && price > filters.maxPrice) return false;
 
@@ -160,7 +160,7 @@ export default function ProScreen() {
 
   // Helper pour obtenir le prix pro
   const getProPrice = (product: ProducerProduct) => {
-    return (product as any).pricePro ?? product.price ?? 0;
+    return product.pricePro ?? product.price ?? 0;
   };
 
   // Refresh

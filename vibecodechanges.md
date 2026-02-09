@@ -4,6 +4,117 @@ Below is the exact, step-by-step checklist to apply across apps. Each step has t
 
 ---
 
+## Chat Feature Removal (CRITICAL)
+**Goal:** Fully remove chat feature after UI deletion.
+
+**Where:**
+- supabase/migrations/20260207090000_complete_chat_removal.sql
+- src/lib/supabase-sync.chat.ts
+
+**Change:**
+- Drop chat tables/functions and remove unused sync code.
+
+**Status in this app:** ✅ Implemented.
+
+---
+
+## Step 7 — Signed URLs for Storage (CRITICAL)
+**Goal:** Stop using public storage URLs and resolve signed URLs at access time.
+
+**Where:**
+- src/lib/storage-utils.ts
+- supabase/functions/images-url/index.ts
+- supabase/functions/lab-analyses-url/index.ts
+- src/lib/image-upload.ts
+- src/lib/supabase-music.ts
+- src/contexts/AudioContext.tsx
+- src/app/admin-music.tsx
+- src/lib/supabase-sync.*
+- src/lib/validation.ts
+
+**Change:**
+- Store storage paths and resolve signed URLs for display/access.
+
+**Status in this app:** ✅ Implemented.
+
+---
+
+## Step 6 — Edge Function Rate Limiting (CRITICAL)
+**Goal:** Apply rate limiting to public and signed-URL functions.
+
+**Where:**
+- supabase/functions/public-catalog/index.ts
+- supabase/functions/images-url/index.ts
+- supabase/functions/lab-analyses-url/index.ts
+
+**Change:**
+- Rebuilt public-catalog handler and enforced rate limits.
+- Added rate limits to signed URL endpoints.
+
+**Status in this app:** ✅ Implemented.
+
+---
+
+## Step 8 — Remove Direct DB Mutations (CRITICAL)
+**Goal:** Route sensitive mutations through Edge Functions.
+
+**Where:**
+- supabase/functions/direct-sale-orders/index.ts
+- src/components/AdminProducerOrders.tsx
+- src/lib/supabase-auth.ts
+
+**Change:**
+- Added Edge Function for direct sale orders (list/details/update).
+- Profile updates and user code linking now call Edge Functions.
+
+**Status in this app:** ✅ Implemented.
+
+---
+
+## Step 5 — Remove HempTycoon Integration (HIGH)
+**Goal:** Remove HempTycoon-only fields and sources from ticket schema.
+
+**Where:**
+- supabase/migrations/20260207120000_remove_hemptycoon_from_tickets.sql
+
+**Change:**
+- Reclassify HempTycoon transactions to `admin` and drop HempTycoon-only columns.
+- Remove HempTycoon source from constraint and replace `award_tickets` signature.
+
+**Status in this app:** ✅ Implemented (migration added).
+
+---
+
+## Step 9 — Error Boundary Coverage (MEDIUM)
+**Goal:** Ensure navigation tree is protected with error boundaries.
+
+**Where:**
+- src/app/(tabs)/_layout.tsx
+
+**Change:**
+- Wrap tab navigator with `ErrorBoundary` to isolate tab-level crashes.
+
+**Status in this app:** ✅ Implemented.
+
+---
+
+## Step 3 — State Management Cleanup (MEDIUM)
+**Goal:** Remove duplicate state sources and keep a single source of truth.
+
+**Where:**
+- src/lib/stores/audio-store.ts
+- src/contexts/AudioContext.tsx
+- src/app/_layout.tsx
+- src/app/(tabs)/music.tsx
+- src/app/(tabs)/map.tsx
+- src/app/admin-music.tsx
+
+**Change:**
+- Migrated audio state from Context to Zustand store.
+- Removed AudioContext and wired audio initialization at app root.
+
+**Status in this app:** ✅ Implemented.
+
 ## Step 1 — Fix N+1 cart enrichment (CRITICAL)
 **Goal:** Reduce cart load to 1 request instead of 2N+1.
 
@@ -144,13 +255,12 @@ Below is the exact, step-by-step checklist to apply across apps. Each step has t
 - src/app/(tabs)/marche-local.tsx
 - src/app/(tabs)/marche-catalogue.tsx
 - src/app/(tabs)/ma-boutique.tsx (orders)
-- src/app/(tabs)/chat-producteurs.tsx
 
 **Change:**
 - Use React Query `useInfiniteQuery` or local page state.
 - Append results and request next page when user scrolls.
 
-**Status in this app:** ✅ Implemented (chat + marche-catalogue + ma-boutique orders + marche-local pagination added).
+**Status in this app:** ✅ Implemented (marche-catalogue + ma-boutique orders + marche-local pagination added).
 
 ---
 

@@ -173,7 +173,8 @@ export function PendingOrdersBanner({ style, onSyncComplete }: PendingOrdersBann
  * Variante compacte pour afficher dans les headers
  */
 export function CompactPendingOrdersIndicator({ style }: { style?: object }) {
-  const pendingCount = useOrderQueueStore((s) => s.getPendingCount());
+  const getPendingCount = useOrderQueueStore((s) => s.getPendingCount);
+  const pendingCount = getPendingCount();
   const isSyncing = useOrderQueueStore((s) => s.isSyncing);
 
   if (pendingCount === 0) return null;

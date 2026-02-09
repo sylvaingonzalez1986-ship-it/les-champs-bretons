@@ -9,6 +9,7 @@ import {
   Switch,
   Alert,
   ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
 import * as ImagePicker from 'expo-image-picker';
@@ -122,7 +123,6 @@ import {
   syncAllPromoProductsToSupabase,
   fetchAllPacksWithItems,
   fetchPromoProducts,
-  fetchOrders,
   syncOrderToSupabase,
   updateOrderInSupabase,
   deleteOrderFromSupabase,
@@ -152,8 +152,20 @@ import {
 } from '@/lib/supabase-users';
 import { usePermissions } from '@/lib/useAuth';
 import { AdminProducerOrders } from '@/components/AdminProducerOrders';
+import type { ProResource, ProResourceCategory } from '@/types/pro-resources';
+import {
+  fetchProResourcesAdmin,
+  addProResourceCategory,
+  updateProResourceCategory,
+  deleteProResourceCategory,
+  addProResource,
+  updateProResource,
+  deleteProResource,
+  isSupabaseConfigured as isProResourcesConfigured,
+} from '@/lib/supabase-pro-resources';
+import { useAdminOrdersQuery } from '@/api/orders';
 
-type TabType = 'orders' | 'users' | 'producers' | 'lots' | 'inventory' | 'promo-products' | 'codes' | 'regions' | 'soils' | 'climates' | 'products' | 'tabs' | 'produits-view' | 'supabase-data' | 'sync' | 'producer-orders';
+type TabType = 'orders' | 'users' | 'producers' | 'lots' | 'inventory' | 'promo-products' | 'codes' | 'regions' | 'soils' | 'climates' | 'products' | 'tabs' | 'produits-view' | 'supabase-data' | 'sync' | 'producer-orders' | 'pro-resources';
 
 // Edit Modal Component
 interface EditModalProps {
@@ -170,6 +182,7 @@ const EditModal = ({ visible, title, value, onSave, onClose, color, onColorChang
   const [inputValue, setInputValue] = useState(value);
   const [inputColor, setInputColor] = useState(color || '');
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
 
   React.useEffect(() => {
     if (visible) {
@@ -2663,6 +2676,7 @@ const SwipeableOrderCard = ({ order, onPress, onDelete }: SwipeableOrderCardProp
 // Main Admin Screen
 export default function AdminScreen() {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const { isAdmin, isProducer } = usePermissions();
   const [activeTab, setActiveTab] = useState<TabType>(isProducer && !isAdmin ? 'producer-orders' : 'orders');
   const [tabsSaveStatus, setTabsSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
@@ -2695,6 +2709,28 @@ export default function AdminScreen() {
   const [supabaseFormNom, setSupabaseFormNom] = useState('');
   const [supabaseFormDescription, setSupabaseFormDescription] = useState('');
   const [supabaseFormValeur, setSupabaseFormValeur] = useState('');
+
+  // Pro resources admin states
+  const [proResourceCategories, setProResourceCategories] = useState<ProResourceCategory[]>([]);
+  const [proResources, setProResources] = useState<ProResource[]>([]);
+  const [proResourcesLoading, setProResourcesLoading] = useState(false);
+  const [proResourcesError, setProResourcesError] = useState<string | null>(null);
+  const [proResourceFormVisible, setProResourceFormVisible] = useState(false);
+  const [proResourceEditing, setProResourceEditing] = useState<ProResource | null>(null);
+  const [proCategoryColor, setProCategoryColor] = useState('#6BB5D9');
+  const [proResourceName, setProResourceName] = useState('');
+  const [proResourceCategoryId, setProResourceCategoryId] = useState('');
+  const [proResourceDescription, setProResourceDescription] = useState('');
+  const [proResourceWebsite, setProResourceWebsite] = useState('');
+  const [proResourceEmail, setProResourceEmail] = useState('');
+  const [proResourcePhone, setProResourcePhone] = useState('');
+  const [proResourceCity, setProResourceCity] = useState('');
+  const [proResourceRegion, setProResourceRegion] = useState('');
+  const [proResourceLogo, setProResourceLogo] = useState('');
+  const [proResourceTags, setProResourceTags] = useState('');
+  const [proResourceFeatured, setProResourceFeatured] = useState(false);
+  const [proResourceActive, setProResourceActive] = useState(true);
+  const [proResourceSortOrder, setProResourceSortOrder] = useState('0');
 
   // Users management states
   const [usersData, setUsersData] = useState<UserProfile[]>([]);
@@ -2740,6 +2776,249 @@ export default function AdminScreen() {
       setSupabaseLoading(false);
     }
   }, []);
+
+  const slugify = (value: string) => value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+
+  const resetProResourceForm = () => {
+    setProResourceName('');
+    setProResourceCategoryId(proResourceCategories[0]?.id ?? '');
+    setProResourceDescription('');
+    setProResourceWebsite('');
+    setProResourceEmail('');
+    setProResourcePhone('');
+    setProResourceCity('');
+    setProResourceRegion('');
+    setProResourceLogo('');
+    setProResourceTags('');
+    setProResourceFeatured(false);
+    setProResourceActive(true);
+    setProResourceSortOrder('0');
+  };
+
+  const loadProResourcesAdmin = useCallback(async () => {
+    if (!isProResourcesConfigured()) {
+      setProResourcesError('Supabase non configuré. Ajoutez EXPO_PUBLIC_SUPABASE_URL et EXPO_PUBLIC_SUPABASE_ANON_KEY dans les variables ENV.');
+      return;
+    }
+    setProResourcesLoading(true);
+    setProResourcesError(null);
+    try {
+      const data = await fetchProResourcesAdmin();
+      setProResourceCategories(data.categories);
+      setProResources(data.resources);
+      if (!proResourceCategoryId && data.categories.length > 0) {
+        setProResourceCategoryId(data.categories[0].id);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erreur inconnue';
+      setProResourcesError(message);
+    } finally {
+      setProResourcesLoading(false);
+    }
+  }, [proResourceCategoryId]);
+
+  useEffect(() => {
+    if (activeTab === 'pro-resources') {
+      loadProResourcesAdmin();
+    }
+  }, [activeTab, loadProResourcesAdmin]);
+
+  const openProResourceForm = (resource?: ProResource) => {
+    if (resource) {
+      setProResourceEditing(resource);
+      setProResourceName(resource.name);
+      setProResourceCategoryId(resource.category_id);
+      setProResourceDescription(resource.description ?? '');
+      setProResourceWebsite(resource.website_url ?? '');
+      setProResourceEmail(resource.email ?? '');
+      setProResourcePhone(resource.phone ?? '');
+      setProResourceCity(resource.city ?? '');
+      setProResourceRegion(resource.region ?? '');
+      setProResourceLogo(resource.logo_url ?? '');
+      setProResourceTags(resource.tags.join(', '));
+      setProResourceFeatured(resource.featured);
+      setProResourceActive(resource.active);
+      setProResourceSortOrder(String(resource.sort_order));
+    } else {
+      setProResourceEditing(null);
+      resetProResourceForm();
+    }
+    setProResourceFormVisible(true);
+  };
+
+  const handleProResourceSave = async () => {
+    if (!proResourceName.trim()) {
+      setProResourcesError('Le nom est requis');
+      return;
+    }
+    if (!proResourceCategoryId) {
+      setProResourcesError('Selectionnez une categorie');
+      return;
+    }
+
+    setProResourcesLoading(true);
+    setProResourcesError(null);
+
+    const tags = proResourceTags
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+
+    const payload = {
+      category_id: proResourceCategoryId,
+      name: proResourceName.trim(),
+      description: proResourceDescription.trim() || null,
+      logo_url: proResourceLogo.trim() || null,
+      website_url: proResourceWebsite.trim() || null,
+      email: proResourceEmail.trim() || null,
+      phone: proResourcePhone.trim() || null,
+      city: proResourceCity.trim() || null,
+      region: proResourceRegion.trim() || null,
+      tags,
+      featured: proResourceFeatured,
+      active: proResourceActive,
+      sort_order: Number.isNaN(Number(proResourceSortOrder)) ? 0 : Number(proResourceSortOrder),
+    };
+
+    try {
+      if (proResourceEditing) {
+        await updateProResource(proResourceEditing.id, payload);
+      } else {
+        await addProResource(payload);
+      }
+      setProResourceFormVisible(false);
+      setProResourceEditing(null);
+      resetProResourceForm();
+      await loadProResourcesAdmin();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erreur inconnue';
+      setProResourcesError(message);
+    } finally {
+      setProResourcesLoading(false);
+    }
+  };
+
+  const openAddProCategory = () => {
+    setProCategoryColor('#6BB5D9');
+    setEditModal({
+      visible: true,
+      title: 'Ajouter une categorie',
+      value: '',
+      color: '#6BB5D9',
+      onSave: async (value) => {
+        const slug = slugify(value);
+        if (!slug) {
+          setProResourcesError('Nom de categorie invalide');
+          return;
+        }
+        try {
+          await addProResourceCategory({
+            name: value,
+            slug,
+            color: proCategoryColor,
+            active: true,
+          });
+          await loadProResourcesAdmin();
+          setEditModal((m) => ({ ...m, visible: false }));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Erreur inconnue';
+          setProResourcesError(message);
+        }
+      },
+      onColorChange: (color) => {
+        setProCategoryColor(color);
+        setEditModal((m) => ({ ...m, color }));
+      },
+    });
+  };
+
+  const openEditProCategory = (category: ProResourceCategory) => {
+    setProCategoryColor(category.color ?? '#6BB5D9');
+    setEditModal({
+      visible: true,
+      title: 'Modifier la categorie',
+      value: category.name,
+      color: category.color ?? '#6BB5D9',
+      onSave: async (value) => {
+        try {
+          await updateProResourceCategory(category.id, {
+            name: value,
+            color: proCategoryColor,
+          });
+          await loadProResourcesAdmin();
+          setEditModal((m) => ({ ...m, visible: false }));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Erreur inconnue';
+          setProResourcesError(message);
+        }
+      },
+      onColorChange: (color) => {
+        setProCategoryColor(color);
+        setEditModal((m) => ({ ...m, color }));
+      },
+    });
+  };
+
+  const handleProCategoryDelete = async (categoryId: string) => {
+    setProResourcesLoading(true);
+    setProResourcesError(null);
+    try {
+      await deleteProResourceCategory(categoryId);
+      await loadProResourcesAdmin();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erreur inconnue';
+      setProResourcesError(message);
+    } finally {
+      setProResourcesLoading(false);
+    }
+  };
+
+  const handleProCategoryToggle = async (category: ProResourceCategory, updates: Partial<ProResourceCategory>) => {
+    setProResourcesLoading(true);
+    setProResourcesError(null);
+    try {
+      await updateProResourceCategory(category.id, updates);
+      await loadProResourcesAdmin();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erreur inconnue';
+      setProResourcesError(message);
+    } finally {
+      setProResourcesLoading(false);
+    }
+  };
+
+  const handleProResourceDelete = async (resourceId: string) => {
+    setProResourcesLoading(true);
+    setProResourcesError(null);
+    try {
+      await deleteProResource(resourceId);
+      await loadProResourcesAdmin();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erreur inconnue';
+      setProResourcesError(message);
+    } finally {
+      setProResourcesLoading(false);
+    }
+  };
+
+  const handleProResourceToggle = async (resource: ProResource, updates: Partial<ProResource>) => {
+    setProResourcesLoading(true);
+    setProResourcesError(null);
+    try {
+      await updateProResource(resource.id, updates);
+      await loadProResourcesAdmin();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erreur inconnue';
+      setProResourcesError(message);
+    } finally {
+      setProResourcesLoading(false);
+    }
+  };
 
   // Auto-refresh every 5 seconds when on supabase-data tab
   useEffect(() => {
@@ -3069,6 +3348,7 @@ export default function AdminScreen() {
   const orders = useOrdersStore((s) => s.orders);
   const setOrders = useOrdersStore((s) => s.setOrders);
   const updateOrderStatus = useOrdersStore((s) => s.updateOrderStatus);
+  const updateOrderId = useOrdersStore((s) => s.updateOrderId);
   const updateOrderTrackingNumber = useOrdersStore((s) => s.updateOrderTrackingNumber);
   const deleteOrder = useOrdersStore((s) => s.deleteOrder);
   const validatePayment = useOrdersStore((s) => s.validatePayment);
@@ -3109,41 +3389,31 @@ export default function AdminScreen() {
   const [addStockVisible, setAddStockVisible] = useState(false);
   const [editingStock, setEditingStock] = useState<StockItem | null>(null);
 
-  // Orders sync state
-  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [isOrdersManualRefresh, setIsOrdersManualRefresh] = useState(false);
+  const isOrdersQueryEnabled = activeTab === 'orders' && isSupabaseSyncConfigured();
+  const {
+    data: supabaseOrders = [],
+    isLoading: isOrdersLoading,
+    refetch: refetchOrders,
+  } = useAdminOrdersQuery(isOrdersQueryEnabled);
 
-  // Load orders from Supabase (with optional loading indicator)
-  const loadOrdersFromSupabase = async (showLoading = true) => {
-    if (!isSupabaseSyncConfigured()) return;
-
-    if (showLoading) {
-      setOrdersLoading(true);
+  useEffect(() => {
+    if (!isOrdersQueryEnabled) return;
+    if (supabaseOrders.length > 0) {
+      const sortedOrders = [...supabaseOrders].sort((a, b) => b.createdAt - a.createdAt);
+      setOrders(sortedOrders);
     }
+  }, [isOrdersQueryEnabled, supabaseOrders, setOrders]);
+
+  const handleOrdersRefresh = async () => {
+    if (!isOrdersQueryEnabled) return;
+    setIsOrdersManualRefresh(true);
     try {
-      const supabaseOrders = await fetchOrders();
-      if (supabaseOrders.length > 0) {
-        // Simply replace with Supabase data (source of truth)
-        const sortedOrders = [...supabaseOrders].sort((a, b) => b.createdAt - a.createdAt);
-        setOrders(sortedOrders);
-      }
-    } catch (error) {
-      console.error('Erreur chargement commandes:', error);
+      await refetchOrders();
     } finally {
-      if (showLoading) {
-        setOrdersLoading(false);
-      }
+      setIsOrdersManualRefresh(false);
     }
   };
-
-  // Auto-load orders when tab is active
-  useEffect(() => {
-    if (activeTab === 'orders') {
-      loadOrdersFromSupabase(true); // Show loading on initial load
-      // Refresh every 30 seconds silently (no loading indicator)
-      const interval = setInterval(() => loadOrdersFromSupabase(false), 30000);
-      return () => clearInterval(interval);
-    }
-  }, [activeTab]);
 
   // Produits view state
   const [expandedProducers, setExpandedProducers] = useState<string[]>([]);
@@ -3183,13 +3453,22 @@ export default function AdminScreen() {
     }
     updateOrderStatus(orderId, newStatus);
 
-    // Sync to Supabase
+    // Sync to Supabase — only send the changed field to avoid triggering immutability constraints
     if (isSupabaseSyncConfigured()) {
       try {
         await updateOrderInSupabase(orderId, { status: newStatus });
       } catch (error) {
         if (error instanceof SessionExpiredError) {
           console.warn('Session expirée lors de la sync commande');
+          return;
+        }
+        // Order not yet in Supabase → full sync to create it
+        if (error instanceof Error && error.message.includes('introuvable')) {
+          try {
+            await syncOrderToSupabase({ ...order, status: newStatus, updatedAt: Date.now() });
+          } catch (syncError) {
+            console.warn('Erreur sync complète commande:', syncError);
+          }
           return;
         }
         console.warn('Erreur sync statut commande:', error);
@@ -3239,6 +3518,7 @@ export default function AdminScreen() {
       { id: 'inventory' as TabType, label: 'Stock', icon: <Boxes size={20} color={activeTab === 'inventory' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: lowStockCount > 0 ? lowStockCount : stockItems.length },
       { id: 'produits-view' as TabType, label: 'Produits', icon: <Layers size={20} color={activeTab === 'produits-view' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: totalProducts },
       { id: 'producers' as TabType, label: 'Producteurs', icon: <Users size={20} color={activeTab === 'producers' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: allProducers.length },
+      { id: 'pro-resources' as TabType, label: 'Reseau Pro', icon: <Briefcase size={20} color={activeTab === 'pro-resources' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: proResources.length },
       { id: 'lots' as TabType, label: 'Lots', icon: <Gift size={20} color={activeTab === 'lots' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: lots.length },
       { id: 'promo-products' as TabType, label: 'Promos', icon: <Tag size={20} color={activeTab === 'promo-products' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: promoProducts.length },
       { id: 'codes' as TabType, label: 'Codes', icon: <Percent size={20} color={activeTab === 'codes' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: promos.length },
@@ -3316,6 +3596,9 @@ export default function AdminScreen() {
           onColorChange: () => {},
         });
         break;
+      case 'pro-resources':
+        openProResourceForm();
+        break;
     }
   };
 
@@ -3329,7 +3612,7 @@ export default function AdminScreen() {
             {/* Sync status bar */}
             {isSupabaseSyncConfigured() && (
               <Pressable
-                onPress={() => loadOrdersFromSupabase(true)}
+                onPress={handleOrdersRefresh}
                 className="flex-row items-center justify-between rounded-xl p-3 mb-3"
                 style={{
                   backgroundColor: `${COLORS.accent.hemp}15`,
@@ -3343,7 +3626,7 @@ export default function AdminScreen() {
                     Synchronisation Supabase
                   </Text>
                 </View>
-                {ordersLoading ? (
+                {isOrdersLoading || isOrdersManualRefresh ? (
                   <ActivityIndicator size="small" color={COLORS.accent.hemp} />
                 ) : (
                   <Text style={{ color: COLORS.text.muted }} className="text-xs">
@@ -3788,10 +4071,10 @@ export default function AdminScreen() {
                       {(user.role === 'pro' || user.role === 'producer') && (
                         <View
                           className="px-2 py-1 rounded-full mt-1"
-                          style={{ backgroundColor: `${PRO_STATUS_COLORS[(user as any).pro_status] || PRO_STATUS_COLORS.pending}30` }}
+                          style={{ backgroundColor: `${PRO_STATUS_COLORS[user.pro_status ?? 'pending'] || PRO_STATUS_COLORS.pending}30` }}
                         >
-                          <Text style={{ color: PRO_STATUS_COLORS[(user as any).pro_status] || PRO_STATUS_COLORS.pending, fontSize: 10, fontWeight: '600' }}>
-                            {PRO_STATUS_LABELS[(user as any).pro_status] || PRO_STATUS_LABELS.pending}
+                          <Text style={{ color: PRO_STATUS_COLORS[user.pro_status ?? 'pending'] || PRO_STATUS_COLORS.pending, fontSize: 10, fontWeight: '600' }}>
+                            {PRO_STATUS_LABELS[user.pro_status ?? 'pending'] || PRO_STATUS_LABELS.pending}
                           </Text>
                         </View>
                       )}
@@ -3799,7 +4082,7 @@ export default function AdminScreen() {
                   </View>
 
                   {/* Bouton d'approbation pour les pros/producteurs en attente (y compris pro_status null) */}
-                  {(user.role === 'pro' || user.role === 'producer') && ((user as any).pro_status === 'pending' || (user as any).pro_status === null || (user as any).pro_status === undefined) && (
+                  {(user.role === 'pro' || user.role === 'producer') && (user.pro_status === 'pending' || user.pro_status === null || user.pro_status === undefined) && (
                     <View className="flex-row mt-3 pt-3" style={{ borderTopWidth: 1, borderTopColor: `${COLORS.text.white}10` }}>
                       <Pressable
                         onPress={async () => {
@@ -3840,7 +4123,7 @@ export default function AdminScreen() {
                   )}
 
                   {/* Bouton pour créer une boutique - seulement pour producteurs approuvés sans boutique liée */}
-                  {user.role === 'producer' && (user as any).pro_status === 'approved' && !Array.from(producersWithProfiles.values()).includes(user.id) && (
+                  {user.role === 'producer' && user.pro_status === 'approved' && !Array.from(producersWithProfiles.values()).includes(user.id) && (
                     <View className="mt-3 pt-3" style={{ borderTopWidth: 1, borderTopColor: `${COLORS.text.white}10` }}>
                       <Pressable
                         onPress={async () => {
@@ -4295,6 +4578,213 @@ export default function AdminScreen() {
             })}
           </View>
         );
+
+      case 'pro-resources': {
+        const categoryLookup = new Map(proResourceCategories.map((cat) => [cat.id, cat]));
+        return (
+          <View>
+            <View className="flex-row gap-2 mb-3">
+              <Pressable
+                onPress={() => openProResourceForm()}
+                className="flex-1 rounded-xl py-4 flex-row items-center justify-center active:opacity-80"
+                style={{ backgroundColor: COLORS.primary.gold }}
+              >
+                <Plus size={18} color={COLORS.text.white} />
+                <Text style={{ color: COLORS.text.white }} className="font-bold ml-2">
+                  Ajouter une ressource
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={openAddProCategory}
+                className="rounded-xl px-4 py-4 flex-row items-center justify-center active:opacity-80"
+                style={{ backgroundColor: `${COLORS.accent.hemp}20` }}
+              >
+                <Tag size={18} color={COLORS.accent.hemp} />
+              </Pressable>
+              <Pressable
+                onPress={loadProResourcesAdmin}
+                disabled={proResourcesLoading}
+                className="rounded-xl px-4 py-4 flex-row items-center justify-center active:opacity-80"
+                style={{ backgroundColor: `${COLORS.accent.sky}20` }}
+              >
+                {proResourcesLoading ? (
+                  <ActivityIndicator size="small" color={COLORS.accent.sky} />
+                ) : (
+                  <RefreshCw size={18} color={COLORS.accent.sky} />
+                )}
+              </Pressable>
+            </View>
+
+            {proResourcesError && (
+              <View
+                className="rounded-xl p-3 mb-4"
+                style={{
+                  backgroundColor: `${COLORS.accent.red}15`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.accent.red}30`,
+                }}
+              >
+                <Text style={{ color: COLORS.accent.red }}>{proResourcesError}</Text>
+              </View>
+            )}
+
+            {/* Categories */}
+            <View className="mb-4">
+              <Text style={{ color: COLORS.primary.paleGold }} className="text-lg font-bold mb-2">
+                Categories
+              </Text>
+              {proResourceCategories.length === 0 ? (
+                <View
+                  className="rounded-xl p-4 items-center"
+                  style={{
+                    backgroundColor: `${COLORS.text.white}05`,
+                    borderWidth: 1,
+                    borderColor: `${COLORS.text.white}10`,
+                  }}
+                >
+                  <Text style={{ color: COLORS.text.muted }}>Aucune categorie</Text>
+                </View>
+              ) : (
+                proResourceCategories.map((cat) => {
+                  const count = proResources.filter((r) => r.category_id === cat.id).length;
+                  return (
+                    <View
+                      key={cat.id}
+                      className="rounded-xl p-4 mb-3"
+                      style={{
+                        backgroundColor: `${COLORS.text.white}05`,
+                        borderWidth: 1,
+                        borderColor: `${cat.color ?? COLORS.primary.gold}40`,
+                      }}
+                    >
+                      <View className="flex-row items-center justify-between">
+                        <View className="flex-1 mr-3">
+                          <Text style={{ color: COLORS.text.white }} className="font-semibold">
+                            {cat.name}
+                          </Text>
+                          <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+                            {count} ressource{count !== 1 ? 's' : ''}
+                          </Text>
+                        </View>
+                        <Switch
+                          value={cat.active}
+                          onValueChange={(value) => handleProCategoryToggle(cat, { active: value })}
+                        />
+                        <Pressable onPress={() => openEditProCategory(cat)} className="ml-3">
+                          <Edit3 size={16} color={COLORS.primary.paleGold} />
+                        </Pressable>
+                        <Pressable onPress={() => handleProCategoryDelete(cat.id)} className="ml-3">
+                          <Trash2 size={16} color={COLORS.accent.red} />
+                        </Pressable>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+
+            {/* Resources */}
+            <View>
+              <Text style={{ color: COLORS.primary.paleGold }} className="text-lg font-bold mb-2">
+                Ressources
+              </Text>
+              {proResources.length === 0 ? (
+                <View
+                  className="rounded-xl p-4 items-center"
+                  style={{
+                    backgroundColor: `${COLORS.text.white}05`,
+                    borderWidth: 1,
+                    borderColor: `${COLORS.text.white}10`,
+                  }}
+                >
+                  <Text style={{ color: COLORS.text.muted }}>Aucune ressource</Text>
+                </View>
+              ) : (
+                proResources.map((resource) => {
+                  const category = categoryLookup.get(resource.category_id);
+                  return (
+                    <View
+                      key={resource.id}
+                      className="rounded-xl p-4 mb-3"
+                      style={{
+                        backgroundColor: `${COLORS.text.white}05`,
+                        borderWidth: 1,
+                        borderColor: resource.featured ? `${COLORS.primary.gold}40` : `${COLORS.text.white}10`,
+                      }}
+                    >
+                      <View className="flex-row items-start justify-between">
+                        <View className="flex-1 mr-3">
+                          <Text style={{ color: COLORS.text.white }} className="font-semibold" numberOfLines={1}>
+                            {resource.name}
+                          </Text>
+                          <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+                            {category?.name ?? 'Sans categorie'}
+                          </Text>
+                          {(resource.city || resource.region) && (
+                            <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+                              {[resource.city, resource.region].filter(Boolean).join(', ')}
+                            </Text>
+                          )}
+                        </View>
+                        <Pressable onPress={() => openProResourceForm(resource)} className="ml-2">
+                          <Edit3 size={16} color={COLORS.primary.paleGold} />
+                        </Pressable>
+                        <Pressable onPress={() => handleProResourceDelete(resource.id)} className="ml-3">
+                          <Trash2 size={16} color={COLORS.accent.red} />
+                        </Pressable>
+                      </View>
+
+                      <View className="flex-row items-center mt-3">
+                        <View className="flex-row items-center mr-4">
+                          <Text style={{ color: COLORS.text.muted }} className="text-xs mr-2">
+                            Actif
+                          </Text>
+                          <Switch
+                            value={resource.active}
+                            onValueChange={(value) => handleProResourceToggle(resource, { active: value })}
+                          />
+                        </View>
+                        <View className="flex-row items-center">
+                          <Text style={{ color: COLORS.text.muted }} className="text-xs mr-2">
+                            Mis en avant
+                          </Text>
+                          <Switch
+                            value={resource.featured}
+                            onValueChange={(value) => handleProResourceToggle(resource, { featured: value })}
+                          />
+                        </View>
+                      </View>
+
+                      <View className="flex-row gap-2 mt-3">
+                        <Pressable
+                          onPress={() => openProResourceForm(resource)}
+                          className="flex-1 rounded-xl py-2.5 flex-row items-center justify-center active:opacity-80"
+                          style={{ backgroundColor: `${COLORS.primary.gold}20` }}
+                        >
+                          <Edit3 size={14} color={COLORS.primary.brightYellow} />
+                          <Text style={{ color: COLORS.primary.brightYellow }} className="text-sm font-semibold ml-2">
+                            Modifier
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => handleProResourceDelete(resource.id)}
+                          className="flex-1 rounded-xl py-2.5 flex-row items-center justify-center active:opacity-80"
+                          style={{ backgroundColor: `${COLORS.accent.red}20` }}
+                        >
+                          <Trash2 size={14} color={COLORS.accent.red} />
+                          <Text style={{ color: COLORS.accent.red }} className="text-sm font-semibold ml-2">
+                            Supprimer
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+          </View>
+        );
+      }
 
       case 'lots':
         return (
@@ -5872,6 +6362,240 @@ export default function AdminScreen() {
         onClose={() => setEditModal((m) => ({ ...m, visible: false }))}
       />
 
+      {/* Pro Resource Modal */}
+      <Modal
+        visible={proResourceFormVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setProResourceFormVisible(false)}
+      >
+        <View className="flex-1" style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}>
+          <Pressable className="flex-1" onPress={() => setProResourceFormVisible(false)} />
+          <View
+            className="rounded-t-3xl"
+            style={{ backgroundColor: COLORS.background.dark, paddingBottom: insets.bottom + 20 }}
+          >
+            <View
+              className="flex-row items-center justify-between px-5 py-4"
+              style={{ borderBottomWidth: 1, borderBottomColor: `${COLORS.primary.paleGold}15` }}
+            >
+              <Text style={{ color: COLORS.text.white }} className="text-xl font-bold">
+                {proResourceEditing ? 'Modifier la ressource' : 'Ajouter une ressource'}
+              </Text>
+              <Pressable onPress={() => setProResourceFormVisible(false)} className="p-2">
+                <X size={22} color={COLORS.text.white} />
+              </Pressable>
+            </View>
+
+            <View style={{ maxHeight: Math.min(520, windowHeight * 0.6) }}>
+              <ScrollView
+                className="px-5"
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 24 }}
+              >
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Nom</Text>
+              <TextInput
+                value={proResourceName}
+                onChangeText={setProResourceName}
+                placeholder="Nom de la ressource"
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+              />
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Categorie</Text>
+              <View className="flex-row flex-wrap gap-2">
+                {proResourceCategories.map((cat) => (
+                  <Pressable
+                    key={cat.id}
+                    onPress={() => setProResourceCategoryId(cat.id)}
+                    className="px-3 py-2 rounded-full"
+                    style={{
+                      backgroundColor: proResourceCategoryId === cat.id
+                        ? `${cat.color ?? COLORS.primary.gold}35`
+                        : `${COLORS.text.white}08`,
+                      borderWidth: 1,
+                      borderColor: proResourceCategoryId === cat.id
+                        ? `${cat.color ?? COLORS.primary.gold}70`
+                        : `${COLORS.text.white}10`,
+                    }}
+                  >
+                    <Text style={{ color: proResourceCategoryId === cat.id ? cat.color ?? COLORS.primary.gold : COLORS.text.muted }} className="text-xs">
+                      {cat.name}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Description</Text>
+              <TextInput
+                value={proResourceDescription}
+                onChangeText={setProResourceDescription}
+                placeholder="Description courte"
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+                multiline
+              />
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Site web</Text>
+              <TextInput
+                value={proResourceWebsite}
+                onChangeText={setProResourceWebsite}
+                placeholder="https://"
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+              />
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Email</Text>
+              <TextInput
+                value={proResourceEmail}
+                onChangeText={setProResourceEmail}
+                placeholder="contact@..."
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+              />
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Telephone</Text>
+              <TextInput
+                value={proResourcePhone}
+                onChangeText={setProResourcePhone}
+                placeholder="+33 ..."
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+              />
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Ville</Text>
+              <TextInput
+                value={proResourceCity}
+                onChangeText={setProResourceCity}
+                placeholder="Ville"
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+              />
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Region</Text>
+              <TextInput
+                value={proResourceRegion}
+                onChangeText={setProResourceRegion}
+                placeholder="Region"
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+              />
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Logo URL</Text>
+              <TextInput
+                value={proResourceLogo}
+                onChangeText={setProResourceLogo}
+                placeholder="https://"
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+              />
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Tags (separes par des virgules)</Text>
+              <TextInput
+                value={proResourceTags}
+                onChangeText={setProResourceTags}
+                placeholder="formation, bio, qualite"
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+              />
+
+              <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mt-4 mb-2">Ordre</Text>
+              <TextInput
+                value={proResourceSortOrder}
+                onChangeText={setProResourceSortOrder}
+                placeholder="0"
+                placeholderTextColor={COLORS.text.muted}
+                className="rounded-xl px-4 py-3"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  color: COLORS.text.white,
+                }}
+                keyboardType="numeric"
+              />
+
+              <View className="flex-row items-center mt-4">
+                <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mr-3">Actif</Text>
+                <Switch value={proResourceActive} onValueChange={setProResourceActive} />
+              </View>
+              <View className="flex-row items-center mt-2 mb-6">
+                <Text style={{ color: COLORS.text.lightGray }} className="text-sm font-medium mr-3">Mis en avant</Text>
+                <Switch value={proResourceFeatured} onValueChange={setProResourceFeatured} />
+              </View>
+              </ScrollView>
+            </View>
+
+            <View className="px-5 pb-2">
+              <Pressable
+                onPress={handleProResourceSave}
+                className="rounded-xl py-4 flex-row items-center justify-center active:opacity-80"
+                style={{ backgroundColor: COLORS.primary.gold }}
+              >
+                <Check size={18} color={COLORS.text.white} />
+                <Text style={{ color: COLORS.text.white }} className="font-bold ml-2">
+                  Enregistrer
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Add/Edit Producer Modal */}
       <AddProducerModal
         visible={addProducerVisible}
@@ -6272,7 +6996,7 @@ export default function AdminScreen() {
                             status: 'paid',
                           });
 
-                          // Sync to Supabase
+                          // Sync to Supabase — only send changed fields
                           if (isSupabaseSyncConfigured()) {
                             try {
                               await updateOrderInSupabase(selectedOrder.id, {
@@ -6284,6 +7008,22 @@ export default function AdminScreen() {
                             } catch (error) {
                               if (error instanceof SessionExpiredError) {
                                 console.warn('Session expirée lors de la sync paiement');
+                                return;
+                              }
+                              // Order not yet in Supabase → full sync
+                              if (error instanceof Error && error.message.includes('introuvable')) {
+                                try {
+                                  await syncOrderToSupabase({
+                                    ...selectedOrder,
+                                    status: 'paid',
+                                    paymentValidated: true,
+                                    paymentValidatedAt: Date.now(),
+                                    ticketsDistributed: true,
+                                    updatedAt: Date.now(),
+                                  });
+                                } catch (syncError) {
+                                  console.warn('Erreur sync complète paiement:', syncError);
+                                }
                                 return;
                               }
                               console.warn('Error syncing payment validation to Supabase:', error);

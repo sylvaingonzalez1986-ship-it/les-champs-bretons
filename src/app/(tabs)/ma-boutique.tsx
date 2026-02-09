@@ -45,9 +45,12 @@ import {
   Mail,
   RefreshCw,
   Layers,
+  UserCircle,
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
+import { useRouter } from 'expo-router';
+import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { COLORS } from '@/lib/colors';
 import { PRODUCT_TYPE_LABELS, PRODUCT_TYPE_COLORS, PriceTier } from '@/lib/producers';
 import { usePermissions } from '@/lib/useAuth';
@@ -64,10 +67,15 @@ import {
 import { uploadProductImage, isProductImagesConfigured, getSignedProductImageUrl } from '@/lib/supabase-product-images';
 import { uploadLabAnalysis, isLabAnalysesConfigured } from '@/lib/supabase-lab-analyses';
 import { LabAnalysisUploader } from '@/components/LabAnalysisUploader';
+import { DirectSalesSettingsForm } from '@/components/DirectSalesSettingsForm';
 import { useOrdersStore, Order, OrderStatus, ORDER_STATUS_CONFIG } from '@/lib/store';
-import { isSupabaseSyncConfigured, fetchOrdersForProducer, updateOrderInSupabase, SessionExpiredError } from '@/lib/supabase-sync';
+import { isSupabaseSyncConfigured, updateOrderInSupabase, SessionExpiredError, syncOrderToSupabase } from '@/lib/supabase-sync';
 import { useLocalMarketOrders, LocalMarketOrder, getStatusLabel, getStatusColor } from '@/lib/local-market-orders';
 import { useAuth } from '@/lib/useAuth';
+import type { UserProfile } from '@/lib/supabase-auth';
+import { useProducerOrdersInfinite } from '@/api/orders';
+import { useOrdersRefresher } from '@/api/orders-refresh';
+import { useProducerLocalMarketOrdersInfinite } from '@/api/local-market';
 
 type TabType = 'products' | 'orders' | 'direct_sales';
 
@@ -140,7 +148,10 @@ const STATUS_OPTIONS = [
 export default function MaBoutiqueScreen() {
   const insets = useSafeAreaInsets();
   const { isProducer, isAdmin } = usePermissions();
-  const { session, signOut } = useAuth();
+  const { session, profile, updateProfile, isUpdatingProfile, signOut } = useAuth();
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const refreshOrders = useOrdersRefresher();
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabType>('products');
@@ -158,20 +169,11 @@ export default function MaBoutiqueScreen() {
   const setOrders = useOrdersStore((s) => s.setOrders);
   const updateOrderStatus = useOrdersStore((s) => s.updateOrderStatus);
   const updateOrderTrackingNumber = useOrdersStore((s) => s.updateOrderTrackingNumber);
-  const [ordersLoading, setOrdersLoading] = useState(false);
-  const [ordersLoadingMore, setOrdersLoadingMore] = useState(false);
-  const [ordersHasMore, setOrdersHasMore] = useState(true);
-  const [ordersPage, setOrdersPage] = useState(0);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const ORDERS_PAGE_SIZE = 20;
 
   // Direct sales (Local Market) state
-  const { loadOrdersForProducer, updateOrderStatus: updateLocalOrderStatus } = useLocalMarketOrders();
-  const [directSalesOrders, setDirectSalesOrders] = useState<LocalMarketOrder[]>([]);
-  const [directSalesLoading, setDirectSalesLoading] = useState(false);
-  const [directSalesLoadingMore, setDirectSalesLoadingMore] = useState(false);
-  const [directSalesHasMore, setDirectSalesHasMore] = useState(true);
-  const [directSalesPage, setDirectSalesPage] = useState(0);
+  const { updateOrderStatus: updateLocalOrderStatus } = useLocalMarketOrders();
   const DIRECT_SALES_PAGE_SIZE = 20;
   const [selectedDirectOrder, setSelectedDirectOrder] = useState<LocalMarketOrder | null>(null);
 
@@ -192,6 +194,10 @@ export default function MaBoutiqueScreen() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const isNoTva = formData.tva_rate === '0' || formData.tva_rate === '0.0';
+
+  const handleSaveDirectSales = async (data: Partial<UserProfile>) => {
+    await updateProfile(data);
+  };
 
   // Charger les données
   const loadData = async () => {
@@ -260,14 +266,10 @@ export default function MaBoutiqueScreen() {
     setRefreshing(true);
     loadData();
     if (activeTab === 'orders') {
-      setOrdersPage(0);
-      setOrdersHasMore(true);
-      loadOrdersFromSupabase(true);
+      void refreshOrders({ producerId: producer?.id ?? null });
     }
     if (activeTab === 'direct_sales') {
-      setDirectSalesPage(0);
-      setDirectSalesHasMore(true);
-      loadDirectSalesOrders(true);
+      void refreshOrders({ producerId: producer?.id ?? null });
     }
   };
 
@@ -275,100 +277,61 @@ export default function MaBoutiqueScreen() {
     if (ordersLoadingMore || !ordersHasMore) {
       return;
     }
-    loadOrdersFromSupabase(false);
-  };
-
-  // Load direct sales orders (Local Market)
-  const loadDirectSalesOrders = async (reset = false) => {
-    if (!producer?.id || !session?.access_token) {
-      return;
-    }
-
-    if (reset) {
-      setDirectSalesLoading(true);
-    } else {
-      setDirectSalesLoadingMore(true);
-    }
-    try {
-      const nextPage = reset ? 0 : directSalesPage;
-      const offset = nextPage * DIRECT_SALES_PAGE_SIZE;
-      const orders = await loadOrdersForProducer(producer.id, session.access_token, {
-        limit: DIRECT_SALES_PAGE_SIZE,
-        offset,
-      });
-      setDirectSalesHasMore(orders.length === DIRECT_SALES_PAGE_SIZE);
-      setDirectSalesPage((prev) => (reset ? 1 : prev + 1));
-      setDirectSalesOrders((prev) => (reset ? orders : [...prev, ...orders]));
-    } catch (error) {
-      console.error('[MaBoutique] Error loading direct sales orders:', error);
-    } finally {
-      setDirectSalesLoading(false);
-      setDirectSalesLoadingMore(false);
-    }
+    void fetchNextOrdersPage();
   };
 
   const onLoadMoreDirectSales = () => {
     if (directSalesLoadingMore || !directSalesHasMore) return;
-    loadDirectSalesOrders(false);
+    void fetchNextDirectSalesPage();
   };
 
-  // Load direct sales when switching to tab
-  useEffect(() => {
-    if (activeTab === 'direct_sales' && producer?.id && session?.access_token) {
-      setDirectSalesPage(0);
-      setDirectSalesHasMore(true);
-      loadDirectSalesOrders(true);
-    }
-  }, [activeTab, producer?.id, session?.access_token]);
+  const ordersQueryEnabled = activeTab === 'orders' && !!producer?.id && isSupabaseSyncConfigured();
+  const {
+    data: producerOrdersPages,
+    isFetching: isOrdersFetching,
+    isFetchingNextPage: isOrdersFetchingMore,
+    fetchNextPage: fetchNextOrdersPage,
+    hasNextPage: ordersHasMore,
+  } = useProducerOrdersInfinite(producer?.id ?? '', ORDERS_PAGE_SIZE, ordersQueryEnabled);
 
-  // Load orders from Supabase - filtered by producer for security
-  const loadOrdersFromSupabase = async (reset = false) => {
-    // PROTECTION: Ne JAMAIS appeler sans un producer valide
-    if (!isSupabaseSyncConfigured()) {
+  const directSalesQueryEnabled =
+    activeTab === 'direct_sales' && !!producer?.id && !!session?.access_token;
+  const {
+    data: directSalesPages,
+    isFetching: isDirectSalesFetching,
+    isFetchingNextPage: isDirectSalesFetchingMore,
+    fetchNextPage: fetchNextDirectSalesPage,
+    refetch: refetchDirectSales,
+    hasNextPage: directSalesHasMore,
+  } = useProducerLocalMarketOrdersInfinite(
+    producer?.id,
+    session?.access_token,
+    DIRECT_SALES_PAGE_SIZE,
+    directSalesQueryEnabled
+  );
+
+  const ordersLoading = isOrdersFetching && !producerOrdersPages;
+  const ordersLoadingMore = isOrdersFetchingMore;
+  const directSalesLoading = isDirectSalesFetching && !directSalesPages;
+  const directSalesLoadingMore = isDirectSalesFetchingMore;
+
+  const ordersFromQuery = useMemo(
+    () => producerOrdersPages?.pages.flat() ?? [],
+    [producerOrdersPages]
+  );
+
+  const directSalesOrders = useMemo(
+    () => directSalesPages?.pages.flat() ?? [],
+    [directSalesPages]
+  );
+
+  useEffect(() => {
+    if (!ordersQueryEnabled || !producerOrdersPages) {
       return;
     }
 
-    if (!producer?.id) {
-      return;
-    }
-
-    if (reset) {
-      setOrdersLoading(true);
-    } else {
-      setOrdersLoadingMore(true);
-    }
-    try {
-      // Server-side filtering by producer_id for security
-      const nextPage = reset ? 0 : ordersPage;
-      const offset = nextPage * ORDERS_PAGE_SIZE;
-      const supabaseOrders = await fetchOrdersForProducer(producer.id, {
-        limit: ORDERS_PAGE_SIZE,
-        offset,
-      });
-
-      setOrdersHasMore(supabaseOrders.length === ORDERS_PAGE_SIZE);
-      setOrdersPage((prev) => (reset ? 1 : prev + 1));
-
-      // Toujours mettre à jour le store avec les données reçues (même vide = producteur sans commandes)
-      // Note: setOrders expects an array, not a function - get current orders and merge
-      const newOrders = reset ? supabaseOrders : [...orders, ...supabaseOrders];
-      setOrders(newOrders);
-    } catch (error) {
-      console.error('[MaBoutique] Error loading orders:', error);
-    } finally {
-      setOrdersLoading(false);
-      setOrdersLoadingMore(false);
-    }
-  };
-
-  // Load orders when switching to orders tab - only if producer is loaded
-  useEffect(() => {
-    if (activeTab === 'orders' && producer?.id) {
-      setOrdersPage(0);
-      setOrdersHasMore(true);
-      loadOrdersFromSupabase(true);
-    }
-  }, [activeTab, producer?.id]);
+    setOrders(ordersFromQuery);
+  }, [ordersQueryEnabled, producerOrdersPages, ordersFromQuery, setOrders]);
 
   // Filter orders for this producer only
   const producerOrders = useMemo(() => {
@@ -397,20 +360,45 @@ export default function MaBoutiqueScreen() {
     }
 
     updateOrderStatus(orderId, newStatus);
+    queryClient.setQueryData<InfiniteData<Order[]>>(
+      ['orders', 'producer', 'paged', producer.id],
+      (existing) => {
+        if (!existing) return existing;
+        return {
+          ...existing,
+          pages: existing.pages.map((page) =>
+            page.map((order) =>
+              order.id === orderId ? { ...order, status: newStatus, updatedAt: Date.now() } : order
+            )
+          ),
+        };
+      }
+    );
 
-    // Sync to Supabase
+    // Sync to Supabase — only send the changed field
     if (isSupabaseSyncConfigured()) {
       try {
         await updateOrderInSupabase(orderId, { status: newStatus });
         showToast('Statut mis à jour', 'success');
       } catch (error) {
-        const errMsg = error instanceof Error ? error.message : 'Erreur inconnue';
         if (error instanceof SessionExpiredError) {
           console.warn('Session expirée lors de la sync commande');
           showToast('Session expirée. Merci de vous reconnecter.', 'error');
           await signOut();
           return;
         }
+        // Order not yet in Supabase → full sync to create it
+        if (error instanceof Error && error.message.includes('introuvable')) {
+          try {
+            await syncOrderToSupabase({ ...orderToUpdate, status: newStatus, updatedAt: Date.now() });
+            showToast('Statut mis à jour', 'success');
+          } catch (syncError) {
+            console.warn('Erreur sync complète commande:', syncError);
+            showToast('Sync échoué', 'error');
+          }
+          return;
+        }
+        const errMsg = error instanceof Error ? error.message : 'Erreur inconnue';
         console.warn('Erreur sync statut commande:', errMsg);
         showToast(`Sync échoué: ${errMsg}`, 'error');
       }
@@ -434,7 +422,7 @@ export default function MaBoutiqueScreen() {
 
     updateOrderTrackingNumber(orderId, trackingNumber);
 
-    // Sync to Supabase
+    // Sync to Supabase — only send the changed field
     if (isSupabaseSyncConfigured()) {
       try {
         await updateOrderInSupabase(orderId, { trackingNumber });
@@ -481,12 +469,12 @@ export default function MaBoutiqueScreen() {
   // Ouvrir le formulaire pour éditer un produit
   const handleEditProduct = (product: ProducerProductDB) => {
     // Convertir les paliers de prix clients existants en format formulaire
-    const existingTiers: PriceTierForm[] = ((product as any).price_tiers ?? []).map((tier: PriceTier) => ({
+    const existingTiers: PriceTierForm[] = (product.price_tiers ?? []).map((tier: PriceTier) => ({
       minQuantity: tier.minQuantity.toString(),
       price: tier.price.toString(),
     }));
     // Convertir les paliers de prix pros existants en format formulaire
-    const existingProTiers: PriceTierForm[] = ((product as any).price_pro_tiers ?? []).map((tier: PriceTier) => ({
+    const existingProTiers: PriceTierForm[] = (product.price_pro_tiers ?? []).map((tier: PriceTier) => ({
       minQuantity: tier.minQuantity.toString(),
       price: tier.price.toString(),
     }));
@@ -2500,9 +2488,7 @@ export default function MaBoutiqueScreen() {
           {activeTab === 'orders' && (
             <Pressable
               onPress={() => {
-                setOrdersPage(0);
-                setOrdersHasMore(true);
-                loadOrdersFromSupabase(true);
+                void refreshOrders({ producerId: producer?.id ?? null });
               }}
               className="px-4 py-2.5 rounded-xl flex-row items-center"
               style={{ backgroundColor: `${COLORS.accent.teal}20` }}
@@ -2521,7 +2507,9 @@ export default function MaBoutiqueScreen() {
           )}
           {activeTab === 'direct_sales' && (
             <Pressable
-              onPress={() => loadDirectSalesOrders(true)}
+              onPress={() => {
+                void refreshOrders({ producerId: producer?.id ?? null });
+              }}
               className="px-4 py-2.5 rounded-xl flex-row items-center"
               style={{ backgroundColor: `${COLORS.accent.hemp}20` }}
             >
@@ -2538,6 +2526,23 @@ export default function MaBoutiqueScreen() {
             </Pressable>
           )}
         </View>
+
+        {/* Accès rapide à la fiche producteur */}
+        <Pressable
+          onPress={() => router.push('/producer-profile')}
+          className="flex-row items-center py-3 px-4 rounded-xl mb-4 active:opacity-80"
+          style={{
+            backgroundColor: `${COLORS.accent.hemp}15`,
+            borderWidth: 1,
+            borderColor: `${COLORS.accent.hemp}30`,
+          }}
+        >
+          <UserCircle size={18} color={COLORS.accent.hemp} />
+          <Text style={{ color: COLORS.accent.hemp }} className="font-medium text-sm ml-2 flex-1">
+            Ma fiche producteur
+          </Text>
+          <ChevronRight size={16} color={COLORS.accent.hemp} />
+        </Pressable>
 
         {/* Tab Switcher */}
         <View className="flex-row mb-4">
@@ -2725,9 +2730,7 @@ export default function MaBoutiqueScreen() {
             <RefreshControl
               refreshing={ordersLoading}
               onRefresh={() => {
-                setOrdersPage(0);
-                setOrdersHasMore(true);
-                loadOrdersFromSupabase(true);
+                void refreshOrders({ producerId: producer?.id ?? null });
               }}
               tintColor={COLORS.primary.gold}
             />
@@ -2776,14 +2779,22 @@ export default function MaBoutiqueScreen() {
             <RefreshControl
               refreshing={directSalesLoading}
               onRefresh={() => {
-                setDirectSalesPage(0);
-                setDirectSalesHasMore(true);
-                loadDirectSalesOrders(true);
+                void refreshOrders({ producerId: producer?.id ?? null });
               }}
               tintColor={COLORS.accent.hemp}
             />
           }
         >
+          {/* Paramètres de retrait à la ferme */}
+          <View className="mb-6">
+            <DirectSalesSettingsForm
+              profile={profile ?? null}
+              onSave={handleSaveDirectSales}
+              isSaving={isUpdatingProfile}
+            />
+          </View>
+
+          {/* Liste des commandes */}
           {directSalesLoading && directSalesOrders.length === 0 ? (
             <View className="items-center py-20">
               <ActivityIndicator size="large" color={COLORS.accent.hemp} />
@@ -2838,12 +2849,31 @@ export default function MaBoutiqueScreen() {
           onClose={() => setSelectedDirectOrder(null)}
           onStatusChange={async (status, notes) => {
             if (!session?.access_token) return;
-            const result = await updateLocalOrderStatus(session.access_token, String(selectedDirectOrder.id), status, notes);
+            const orderIdentifier = selectedDirectOrder.pickup_code || String(selectedDirectOrder.id);
+            const result = await updateLocalOrderStatus(session.access_token, orderIdentifier, status, notes);
             if (result.success) {
               showToast('Statut mis à jour', 'success');
               setSelectedDirectOrder({ ...selectedDirectOrder, status, producer_notes: notes || selectedDirectOrder.producer_notes });
+              if (producer?.id) {
+                queryClient.setQueryData<InfiniteData<LocalMarketOrder[]>>(
+                  ['local-market-orders', 'producer', producer.id],
+                  (existing) => {
+                    if (!existing) return existing;
+                    return {
+                      ...existing,
+                      pages: existing.pages.map((page) =>
+                        page.map((order) =>
+                          order.id === selectedDirectOrder.id
+                            ? { ...order, status, producer_notes: notes || order.producer_notes }
+                            : order
+                        )
+                      ),
+                    };
+                  }
+                );
+              }
               // Recharger les commandes
-              loadDirectSalesOrders();
+              void refetchDirectSales();
             } else {
               showToast(result.error || 'Erreur', 'error');
             }

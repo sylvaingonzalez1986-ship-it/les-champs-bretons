@@ -18,14 +18,15 @@ import {
   Store,
   Music,
   Globe,
-  MessageCircle,
   Warehouse,
   FlaskConical,
+  Handshake,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
-import { useCartStore, useTabVisibilityStore, useProducerChatStore, TabRole } from '@/lib/store';
+import { useCartStore, useTabVisibilityStore, TabRole } from '@/lib/store';
 import { Text } from '@/components/ui';
 import { usePermissions } from '@/lib/useAuth';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 /**
  * Hook sécurisé pour les permissions utilisateur
@@ -70,7 +71,7 @@ function useTabVisibility() {
 
   // Helper to check tab visibility
   const shouldShowTab = useMemo(() => {
-    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'chat-producteurs' | 'marche-local') => {
+    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'marche-local' | 'reseau-pro') => {
       // Admin sees everything
       if (isAdmin) return true;
       // Use role-based configuration
@@ -78,11 +79,11 @@ function useTabVisibility() {
     };
   }, [isAdmin, isTabVisibleForRole, userRole]);
 
-  return { shouldShowTab, isAdmin, isProUser, isProApproved };
+  return { shouldShowTab, isAdmin, isProUser };
 }
 
 /**
- * Badge component for cart/chat icons
+ * Badge component for cart icons
  */
 function TabBadge({ count }: { count: number }) {
   if (count <= 0) return null;
@@ -142,11 +143,13 @@ function TabIcon({
 
 export default function TabLayout() {
   // Store selectors - use primitive values to prevent unnecessary re-renders
-  const itemCount = useCartStore((s) => s.items.reduce((sum, item) => sum + item.quantity, 0));
-  const chatUnreadCount = useProducerChatStore((s) => s.unreadCount);
-
+  const cartItems = useCartStore((s) => s.items);
+  const itemCount = useMemo(
+    () => cartItems.reduce((sum, item) => sum + item.quantity, 0),
+    [cartItems]
+  );
   // Permissions and tab visibility
-  const { shouldShowTab, isAdmin, isProUser, isProApproved } = useTabVisibility();
+  const { shouldShowTab, isAdmin, isProUser } = useTabVisibility();
   const insets = useSafeAreaInsets();
 
   // Memoize screen options to prevent recreation on each render
@@ -182,7 +185,8 @@ export default function TabLayout() {
   );
 
   return (
-    <Tabs screenOptions={screenOptions}>
+    <ErrorBoundary>
+      <Tabs screenOptions={screenOptions}>
       {/* Hidden routes */}
       <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="collection" options={{ href: null }} />
@@ -287,20 +291,6 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="chat-producteurs"
-        options={{
-          title: 'Chat',
-          href: (shouldShowTab('chat-producteurs') || isProUser) ? '/(tabs)/chat-producteurs' : null,
-          tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon focused={focused} focusColor="#10B981">
-              <MessageCircle size={size} color={focused ? '#10B981' : color} strokeWidth={focused ? 2.5 : 2} />
-              <TabBadge count={chatUnreadCount} />
-            </TabIcon>
-          ),
-        }}
-      />
-
-      <Tabs.Screen
         name="marche-local"
         options={{
           title: 'Marché',
@@ -308,6 +298,19 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size, focused }) => (
             <TabIcon focused={focused} focusColor={COLORS.accent.hemp}>
               <Warehouse size={size} color={focused ? COLORS.accent.hemp : color} strokeWidth={focused ? 2.5 : 2} />
+            </TabIcon>
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="reseau-pro"
+        options={{
+          title: 'Réseau Pro',
+          href: shouldShowTab('reseau-pro') ? '/(tabs)/reseau-pro' : null,
+          tabBarIcon: ({ color, size, focused }) => (
+            <TabIcon focused={focused} focusColor={COLORS.accent.forest}>
+              <Handshake size={size} color={focused ? COLORS.accent.forest : color} strokeWidth={focused ? 2.5 : 2} />
             </TabIcon>
           ),
         }}
@@ -380,6 +383,7 @@ export default function TabLayout() {
           ),
         }}
       />
-    </Tabs>
+      </Tabs>
+    </ErrorBoundary>
   );
 }

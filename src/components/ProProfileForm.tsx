@@ -48,15 +48,15 @@ export function ProProfileForm({ profile, email, onSave, isSaving }: ProProfileF
     if (profile) {
       // Parse full_name into first/last name
       const nameParts = (profile.full_name || '').split(' ');
-      setFirstName((profile as any).first_name || nameParts[0] || '');
-      setLastName((profile as any).last_name || nameParts.slice(1).join(' ') || '');
-      setBusinessName((profile as any).business_name || '');
+      setFirstName(profile.first_name || nameParts[0] || '');
+      setLastName(profile.last_name || nameParts.slice(1).join(' ') || '');
+      setBusinessName(profile.business_name || '');
       setSiret(profile.siret || '');
       setVatNumber(profile.tva_number || '');
       setPhone(profile.phone || '');
-      setAddress((profile as any).address || '');
-      setPostalCode((profile as any).postal_code || '');
-      setCity((profile as any).city || '');
+      setAddress(profile.address || '');
+      setPostalCode(profile.postal_code || '');
+      setCity(profile.city || '');
     }
   }, [profile]);
 
@@ -133,7 +133,7 @@ export function ProProfileForm({ profile, email, onSave, isSaving }: ProProfileF
         address,
         postal_code: postalCode,
         city,
-      } as any);
+      });
 
       setSuccessMessage('Profil enregistré !');
       setTimeout(() => setSuccessMessage(''), 3000);

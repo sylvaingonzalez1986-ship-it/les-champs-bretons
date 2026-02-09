@@ -29,8 +29,9 @@ import {
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { useAuth } from '@/lib/useAuth';
-import { SUPABASE_URL, SUPABASE_ANON_KEY, getValidSession } from '@/lib/supabase-auth';
+import { SUPABASE_URL, getValidSession } from '@/lib/supabase-auth';
 import { useLocalMarketOrders, type LocalMarketOrder, getStatusLabel, getStatusColor } from '@/lib/local-market-orders';
+import { ensureDeviceId } from '@/lib/device-id';
 
 // Types
 type OrderStatus = 'en_attente' | 'confirmee' | 'prete' | 'recuperee' | 'annulee';
@@ -146,6 +147,7 @@ export function AdminProducerOrders() {
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [localOrderError, setLocalOrderError] = useState<string | null>(null);
 
   // Helper to get a valid access token (refreshes if expired)
   const getAccessToken = useCallback(async (): Promise<string | null> => {
@@ -166,49 +168,42 @@ export function AdminProducerOrders() {
     }
   }, [session?.refresh_token, refresh]);
 
+  const callDirectSaleOrders = useCallback(async (payload: Record<string, unknown>) => {
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      return null;
+    }
+
+    const deviceId = await ensureDeviceId();
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/direct-sale-orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'X-Device-Id': deviceId,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'Erreur chargement commandes');
+    }
+
+    return response.json();
+  }, [getAccessToken]);
+
   // Fetch the producer_id linked to this user's profile
   const fetchProducerId = useCallback(async () => {
     if (!session?.user?.id) return;
 
-    const accessToken = await getAccessToken();
-    if (!accessToken) {
-      console.error('[AdminProducerOrders] No valid access token available');
-      return;
-    }
-
     try {
-      // Use profile_id (not user_id) to link producer to user
-      const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/producers?profile_id=eq.${session.user.id}&select=id`,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.length > 0) {
-          setProducerId(data[0].id);
-        }
-      } else {
-        const errorText = await response.text();
-        // Check if it's a JWT error and try to refresh
-        if (errorText.includes('JWT expired') || errorText.includes('JWT')) {
-          await refresh();
-          // Retry after refresh
-          setTimeout(() => fetchProducerId(), 500);
-        } else {
-          console.error('[AdminProducerOrders] Failed to fetch producer:', errorText);
-        }
-      }
+      const result = await callDirectSaleOrders({ action: 'producerId' });
+      setProducerId(result?.producerId || null);
     } catch (error) {
       console.error('Error fetching producer id:', error);
     }
-  }, [session?.user?.id, getAccessToken, refresh]);
+  }, [session?.user?.id, callDirectSaleOrders]);
 
   useEffect(() => {
     fetchProducerId();
@@ -230,24 +225,16 @@ export function AdminProducerOrders() {
     try {
       // Fetch both types of orders in parallel
       const [directSalesData, localMarketData] = await Promise.all([
-        // 1. Fetch commandes_vente_directe (panier)
+        // 1. Fetch commandes_vente_directe via Edge Function
         (async () => {
-          let url = `${SUPABASE_URL}/rest/v1/commandes_vente_directe?producer_id=eq.${producerId}&order=created_at.desc`;
-          if (statusFilter !== 'all') {
-            url += `&statut=eq.${statusFilter}`;
-          }
-          const response = await fetch(url, {
-            headers: {
-              'Content-Type': 'application/json',
-              apikey: SUPABASE_ANON_KEY,
-              Authorization: `Bearer ${accessToken}`,
-            },
+          const result = await callDirectSaleOrders({
+            action: 'list',
+            producerId,
+            status: statusFilter === 'all' ? undefined : statusFilter,
+            limit: 200,
+            offset: 0,
           });
-          if (response.ok) {
-            return await response.json();
-          }
-          console.error('[AdminProducerOrders] Direct sales error:', await response.text());
-          return [];
+          return Array.isArray(result?.orders) ? result.orders : [];
         })(),
         // 2. Fetch local_market_orders (commande directe)
         loadOrdersForProducer(producerId, accessToken),
@@ -345,69 +332,16 @@ export function AdminProducerOrders() {
 
   // Fetch order details (lines + customer info)
   const fetchOrderDetails = async (order: DirectSaleOrder) => {
-    const accessToken = await getAccessToken();
-    if (!accessToken) return;
-
     setDetailsLoading(true);
     setSelectedOrder(order);
 
     try {
-      // Fetch order lines
-      const linesResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/lignes_commande_vente_directe?commande_id=eq.${order.id}`,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
-      );
-
-      if (linesResponse.ok) {
-        const lines = await linesResponse.json();
-
-        // Fetch product names for each line
-        const enrichedLines = await Promise.all(
-          lines.map(async (line: OrderLine) => {
-            const productResponse = await fetch(
-              `${SUPABASE_URL}/rest/v1/products?id=eq.${line.product_id}&select=name`,
-              {
-                headers: {
-                  'Content-Type': 'application/json',
-                  apikey: SUPABASE_ANON_KEY,
-                  Authorization: `Bearer ${accessToken}`,
-                },
-              }
-            );
-
-            if (productResponse.ok) {
-              const [product] = await productResponse.json();
-              return { ...line, product_name: product?.name || 'Produit inconnu' };
-            }
-            return { ...line, product_name: 'Produit inconnu' };
-          })
-        );
-
-        setOrderLines(enrichedLines);
+      const result = await callDirectSaleOrders({ action: 'details', orderId: order.id });
+      if (result?.order) {
+        setSelectedOrder(result.order);
       }
-
-      // Fetch customer info
-      const customerResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/profiles?id=eq.${order.user_id}&select=id,email,first_name,last_name,phone`,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${accessToken}`,
-          },
-        }
-      );
-
-      if (customerResponse.ok) {
-        const [customer] = await customerResponse.json();
-        setCustomerInfo(customer || null);
-      }
+      setOrderLines(Array.isArray(result?.lines) ? result.lines : []);
+      setCustomerInfo(result?.customer || null);
     } catch (error) {
       console.error('Error fetching order details:', error);
     } finally {
@@ -419,32 +353,17 @@ export function AdminProducerOrders() {
   const updateOrderStatus = async (newStatus: OrderStatus) => {
     if (!selectedOrder) return;
 
-    const accessToken = await getAccessToken();
-    if (!accessToken) return;
-
     setUpdatingStatus(true);
 
     try {
-      // Update status in database
-      const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/commandes_vente_directe?id=eq.${selectedOrder.id}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${accessToken}`,
-            Prefer: 'return=representation',
-          },
-          body: JSON.stringify({
-            statut: newStatus,
-            updated_at: new Date().toISOString(),
-          }),
-        }
-      );
+      const result = await callDirectSaleOrders({
+        action: 'updateStatus',
+        orderId: selectedOrder.id,
+        status: newStatus,
+      });
 
-      if (response.ok) {
-        // Call Edge Function to send notification email
+      const accessToken = await getAccessToken();
+      if (accessToken) {
         try {
           await fetch(`${SUPABASE_URL}/functions/v1/notify-order-status`, {
             method: 'POST',
@@ -462,13 +381,13 @@ export function AdminProducerOrders() {
         } catch (emailError) {
           console.error('Error sending notification email:', emailError);
         }
-
-        // Update local state
-        setSelectedOrder({ ...selectedOrder, statut: newStatus });
-        setOrders((prev) =>
-          prev.map((o) => (o.id === selectedOrder.id ? { ...o, statut: newStatus } : o))
-        );
       }
+
+      const updatedOrder = result?.order ? result.order : { ...selectedOrder, statut: newStatus };
+      setSelectedOrder(updatedOrder);
+      setOrders((prev) =>
+        prev.map((o) => (o.id === selectedOrder.id ? { ...o, statut: newStatus } : o))
+      );
     } catch (error) {
       console.error('Error updating order status:', error);
     } finally {
@@ -1075,10 +994,14 @@ export function AdminProducerOrders() {
                         const accessToken = await getAccessToken();
                         if (!accessToken) return;
                         setUpdatingStatus(true);
-                        const result = await updateLocalOrderStatus(accessToken, String(selectedLocalOrder.id), 'confirmed');
+                        setLocalOrderError(null);
+                        const orderIdentifier = selectedLocalOrder.pickup_code || String(selectedLocalOrder.id);
+                        const result = await updateLocalOrderStatus(accessToken, orderIdentifier, 'confirmed');
                         if (result.success) {
                           setSelectedLocalOrder({ ...selectedLocalOrder, status: 'confirmed' });
                           fetchOrders(false);
+                        } else {
+                          setLocalOrderError(result.error || 'Erreur lors de la mise à jour');
                         }
                         setUpdatingStatus(false);
                       }}
@@ -1103,10 +1026,14 @@ export function AdminProducerOrders() {
                         const accessToken = await getAccessToken();
                         if (!accessToken) return;
                         setUpdatingStatus(true);
-                        const result = await updateLocalOrderStatus(accessToken, String(selectedLocalOrder.id), 'ready');
+                        setLocalOrderError(null);
+                        const orderIdentifier = selectedLocalOrder.pickup_code || String(selectedLocalOrder.id);
+                        const result = await updateLocalOrderStatus(accessToken, orderIdentifier, 'ready');
                         if (result.success) {
                           setSelectedLocalOrder({ ...selectedLocalOrder, status: 'ready' });
                           fetchOrders(false);
+                        } else {
+                          setLocalOrderError(result.error || 'Erreur lors de la mise à jour');
                         }
                         setUpdatingStatus(false);
                       }}
@@ -1131,10 +1058,14 @@ export function AdminProducerOrders() {
                         const accessToken = await getAccessToken();
                         if (!accessToken) return;
                         setUpdatingStatus(true);
-                        const result = await updateLocalOrderStatus(accessToken, String(selectedLocalOrder.id), 'completed');
+                        setLocalOrderError(null);
+                        const orderIdentifier = selectedLocalOrder.pickup_code || String(selectedLocalOrder.id);
+                        const result = await updateLocalOrderStatus(accessToken, orderIdentifier, 'completed');
                         if (result.success) {
                           setSelectedLocalOrder({ ...selectedLocalOrder, status: 'completed' });
                           fetchOrders(false);
+                        } else {
+                          setLocalOrderError(result.error || 'Erreur lors de la mise à jour');
                         }
                         setUpdatingStatus(false);
                       }}
@@ -1159,10 +1090,14 @@ export function AdminProducerOrders() {
                         const accessToken = await getAccessToken();
                         if (!accessToken) return;
                         setUpdatingStatus(true);
-                        const result = await updateLocalOrderStatus(accessToken, String(selectedLocalOrder.id), 'cancelled');
+                        setLocalOrderError(null);
+                        const orderIdentifier = selectedLocalOrder.pickup_code || String(selectedLocalOrder.id);
+                        const result = await updateLocalOrderStatus(accessToken, orderIdentifier, 'cancelled');
                         if (result.success) {
                           setSelectedLocalOrder({ ...selectedLocalOrder, status: 'cancelled' });
                           fetchOrders(false);
+                        } else {
+                          setLocalOrderError(result.error || 'Erreur lors de la mise à jour');
                         }
                         setUpdatingStatus(false);
                       }}
@@ -1187,6 +1122,14 @@ export function AdminProducerOrders() {
                     <View className="py-3 px-4 rounded-xl" style={{ backgroundColor: 'rgba(255, 255, 255, 0.03)' }}>
                       <Text className="text-center" style={{ color: COLORS.text.muted }}>
                         Cette commande est {selectedLocalOrder.status === 'completed' ? 'terminée' : 'annulée'}
+                      </Text>
+                    </View>
+                  )}
+
+                  {localOrderError && (
+                    <View className="mt-3 px-3 py-2 rounded-lg" style={{ backgroundColor: 'rgba(255, 107, 107, 0.12)' }}>
+                      <Text className="text-sm" style={{ color: COLORS.accent.red }}>
+                        {localOrderError}
                       </Text>
                     </View>
                   )}

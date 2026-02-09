@@ -21,7 +21,7 @@ export default function ProPendingScreen() {
   const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
 
-  const proStatus = (profile as any)?.pro_status;
+  const proStatus = profile?.pro_status ?? null;
   const isRejected = proStatus === 'rejected';
 
   const handleSignOut = async () => {
@@ -108,7 +108,7 @@ export default function ProPendingScreen() {
               Compte Professionnel
             </Text>
             <Text style={{ color: COLORS.text.white }} className="font-medium">
-              {profile?.full_name || (profile as any)?.company_name || 'Non renseigné'}
+              {profile?.full_name || profile?.company_name || 'Non renseigné'}
             </Text>
           </View>
         </View>

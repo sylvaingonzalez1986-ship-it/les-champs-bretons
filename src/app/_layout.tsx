@@ -3,7 +3,7 @@
  * Version simplifiée pour debug
  */
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
+import { Stack, useRouter, useSegments, useRootNavigationState, type Href } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -14,9 +14,10 @@ import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { View, ActivityIndicator, Text, Pressable, InteractionManager } from 'react-native';
 import { configureReanimatedLogger, ReanimatedLogLevel } from 'react-native-reanimated';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { configureLogger } from '@/lib/logger';
 import { useDataSync } from '@/lib/useDataSync';
 import { useUserDataSync } from '@/lib/useUserData';
-import { AudioProvider } from '@/contexts/AudioContext';
+import { useAudioStore } from '@/lib/store';
 import { useAuth } from '@/lib/useAuth';
 import { COLORS } from '@/lib/colors';
 import { isSupabaseConfigured } from '@/lib/env-validation';
@@ -30,6 +31,8 @@ configureReanimatedLogger({
   level: ReanimatedLogLevel.warn,
   strict: false,
 });
+
+configureLogger();
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',
@@ -46,7 +49,7 @@ const queryClient = new QueryClient({
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
       staleTime: 1000 * 60 * 10,
       gcTime: 1000 * 60 * 60,
-      refetchOnMount: 'ifStale',
+      refetchOnMount: true,
       refetchOnWindowFocus: false,
     },
   },
@@ -63,6 +66,8 @@ const ChanvriersUnisDarkTheme = {
     border: '#1A472A',
   },
 };
+
+type RootRoute = '/auth/login' | '/age-verification' | '/pro-pending' | '/(tabs)/map';
 
 function LoadingScreen({ message }: { message?: string }) {
   return (
@@ -170,7 +175,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!rootNavState?.key) return;
     if (!rootNavState?.routes?.length) return;
-    if (!segments || segments.length === 0) return;
+    if (!segments) return;
     if (!isInitialized || isLoadingSession || isLoadingProfile) return;
     if (sessionError || profileError) return;
 
@@ -179,7 +184,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     const inProPendingPage = segments[0] === 'pro-pending';
     const inTabs = segments[0] === '(tabs)';
 
-    let targetRoute: string | null = null;
+    let targetRoute: RootRoute | null = null;
 
     // Skip navigation if user is on reset-password page (deep link from email)
     const currentPath = segments.join('/');
@@ -203,7 +208,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       } else {
         // 3. Age verified - check pro status
         const isPro = profile?.role === 'pro';
-        const proStatus = (profile as any)?.pro_status;
+        const proStatus = profile?.pro_status ?? null;
         const isProPending = isPro && (proStatus === 'pending' || proStatus === null);
         const isProRejected = isPro && proStatus === 'rejected';
 
@@ -220,7 +225,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     // Only navigate if we have a target and haven't navigated there already
     if (targetRoute && navigationDone.current !== targetRoute) {
       navigationDone.current = targetRoute;
-      router.replace(targetRoute as any);
+      router.replace(targetRoute as Href);
     }
   }, [
     isAuthenticated,
@@ -231,7 +236,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     profileError,
     profile?.is_adult,
     profile?.role,
-    (profile as any)?.pro_status,
+    profile?.pro_status,
     segments,
     router,
     rootNavState?.key,
@@ -240,7 +245,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   // Reset navigation tracking when auth state changes
   useEffect(() => {
     navigationDone.current = null;
-  }, [isAuthenticated, profile?.is_adult, profile?.role, (profile as any)?.pro_status]);
+  }, [isAuthenticated, profile?.is_adult, profile?.role, profile?.pro_status]);
 
   if (!isInitialized || isLoadingSession) {
     return <LoadingScreen message="Chargement de la session..." />;
@@ -273,19 +278,21 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function SafeAudioWrapper({ children }: { children: React.ReactNode }) {
-  const [audioError, setAudioError] = useState(false);
+function AudioEngineInitializer({ children }: { children: React.ReactNode }) {
+  const initializeAudio = useAudioStore((s) => s.initialize);
+  const destroyAudio = useAudioStore((s) => s.destroy);
 
-  if (audioError) {
-    console.warn('[Audio] Audio context failed, continuing without audio');
-    return <>{children}</>;
-  }
+  useEffect(() => {
+    void initializeAudio().catch((error) => {
+      console.warn('[Audio] Initialization failed:', error);
+    });
 
-  return (
-    <ErrorBoundary onError={() => setAudioError(true)} fallback={<>{children}</>}>
-      <AudioProvider>{children}</AudioProvider>
-    </ErrorBoundary>
-  );
+    return () => {
+      void destroyAudio();
+    };
+  }, [initializeAudio, destroyAudio]);
+
+  return <>{children}</>;
 }
 
 function NetworkStatusWrapper({ children }: { children: React.ReactNode }) {
@@ -362,7 +369,11 @@ export default function RootLayout() {
     if (fontsLoaded || fontError) {
       try {
         await SplashScreen.hideAsync();
-      } catch (e) {}
+      } catch (e) {
+        if (__DEV__) {
+          console.warn('[Layout] Erreur initialisation:', e);
+        }
+      }
     }
   }, [fontsLoaded, fontError]);
 
@@ -408,12 +419,12 @@ export default function RootLayout() {
           <NetworkProvider>
             <SafeAreaProvider>
               <GestureHandlerRootView style={{ flex: 1 }}>
-                <SafeAudioWrapper>
+                <AudioEngineInitializer>
                   <NetworkStatusWrapper>
                     <StatusBar style="light" />
                     <RootLayoutNav />
                   </NetworkStatusWrapper>
-                </SafeAudioWrapper>
+                </AudioEngineInitializer>
               </GestureHandlerRootView>
             </SafeAreaProvider>
           </NetworkProvider>

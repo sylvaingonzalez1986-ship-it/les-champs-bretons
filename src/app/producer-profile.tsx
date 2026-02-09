@@ -205,7 +205,9 @@ export default function ProducerProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { profile, isAuthenticated } = useAuth();
-  const { producers, addProducer, updateProducer } = useProducerStore();
+  const producers = useProducerStore((s) => s.producers);
+  const addProducer = useProducerStore((s) => s.addProducer);
+  const updateProducer = useProducerStore((s) => s.updateProducer);
 
   // Find existing producer profile linked to this user
   // Check by profileId (Supabase link), or by id matching profile.id, or by name matching company_name
@@ -362,10 +364,23 @@ export default function ProducerProfileScreen() {
           await syncProducerToSupabase(producerData);
         } catch (error) {
           console.error('[ProducerProfile] Error syncing to Supabase:', error);
+          const message = error instanceof Error ? error.message : String(error);
+          let alertMessage =
+            'La synchronisation avec le serveur a échoué. Les données sont sauvegardées localement et seront synchronisées plus tard.';
+          if (message.includes('RATE_LIMIT_EXCEEDED') || message.includes('RATE_LIMIT_BACKOFF')) {
+            alertMessage =
+              'Trop de tentatives. Merci de réessayer dans une minute. Les données sont sauvegardées localement.';
+          } else if (message.includes('DEVICE_MISMATCH')) {
+            alertMessage =
+              "Ce compte est déjà lié à un autre appareil. Contactez le support pour réinitialiser l'appareil lié. Les données sont sauvegardées localement.";
+          } else if (message.includes('DEVICE_NOT_BOUND')) {
+            alertMessage =
+              "L'appareil n'a pas pu être lié pour l'instant. Merci de réessayer dans une minute. Les données sont sauvegardées localement.";
+          }
           // Show error but continue to save locally
           Alert.alert(
             'Attention',
-            'La synchronisation avec le serveur a échoué. Les données sont sauvegardées localement et seront synchronisées plus tard.',
+            alertMessage,
             [{ text: 'OK' }]
           );
         }
