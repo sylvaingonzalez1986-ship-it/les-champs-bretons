@@ -229,6 +229,28 @@ async function getProducerByProfileId(profileId: string) {
   return data;
 }
 
+async function resolveProducerForProfile(profile: Awaited<ReturnType<typeof getUserProfile>>) {
+  if (!profile?.id) {
+    return null;
+  }
+
+  const byProfileId = await getProducerByProfileId(profile.id);
+  if (byProfileId) {
+    return byProfileId;
+  }
+
+  if (!profile.email) {
+    return null;
+  }
+
+  const { data } = await serviceClient
+    .from('producers')
+    .select('id, name, email, phone, city, region')
+    .eq('email', profile.email)
+    .single();
+  return data;
+}
+
 const handler = createValidatedHandler<LocalMarketOrderActionInput>(
   {
     schema: localMarketOrderActionSchema,
@@ -369,8 +391,10 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
       }
 
       if (role === 'producer') {
-        const producer = await getProducerByProfileId(user.id);
-        if (!producer || producer.id !== order.producer_id) {
+        const producer = await resolveProducerForProfile(profile);
+        const producerMatches = producer?.id === order.producer_id;
+        const profileMatches = profile?.id === order.producer_id;
+        if (!producerMatches && !profileMatches) {
           return new Response(JSON.stringify({ error: 'FORBIDDEN' }), {
             status: 403,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -447,7 +471,7 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
       }
 
       if (role === 'producer') {
-        const producer = await getProducerByProfileId(user.id);
+        const producer = await resolveProducerForProfile(profile);
         if (!producer || producer.id !== order.producer_id) {
           return new Response(JSON.stringify({ error: 'FORBIDDEN' }), {
             status: 403,
