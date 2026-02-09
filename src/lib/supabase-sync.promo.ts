@@ -8,6 +8,7 @@ import {
   isSupabaseSyncConfigured,
   supabaseFetch,
 } from './supabase-sync-core';
+import { getSignedImageUrl } from './storage-utils';
 
 export interface SupabasePromoProduct {
   id: string;
@@ -82,7 +83,13 @@ export async function fetchPromoProducts(): Promise<PromoProduct[]> {
     }
 
     const data: SupabasePromoProduct[] = await response.json();
-    return data.map(supabaseToPromoProduct);
+    const promos = data.map(supabaseToPromoProduct);
+    return Promise.all(
+      promos.map(async (promo) => ({
+        ...promo,
+        image: await getSignedImageUrl(promo.image),
+      }))
+    );
   } catch (error) {
     console.warn('Error fetching promo products from Supabase:', error);
     const cached = await AsyncStorage.getItem('cache_promo_products_v2');

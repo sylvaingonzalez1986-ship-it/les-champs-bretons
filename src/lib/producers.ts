@@ -58,6 +58,13 @@ export interface PriceTier {
   price: number; // Prix unitaire pour ce palier
 }
 
+export interface PricingProduct {
+  price: number;
+  pricePro?: number;
+  priceTiers?: PriceTier[];
+  priceProTiers?: PriceTier[];
+}
+
 export interface ProducerProduct {
   id: string;
   name: string;
@@ -122,7 +129,7 @@ export const PRODUCT_TYPE_COLORS: Record<ProducerProduct['type'], string> = {
 
 // Helper pour obtenir le prix selon la quantité (avec paliers)
 export function getPriceForQuantity(
-  product: ProducerProduct,
+  product: PricingProduct,
   quantity: number,
   isPro: boolean = false
 ): number {
@@ -147,7 +154,7 @@ export function getPriceForQuantity(
 
 // Helper pour obtenir le prochain palier de prix (pour afficher les économies potentielles)
 export function getNextPriceTier(
-  product: ProducerProduct,
+  product: PricingProduct,
   currentQuantity: number,
   isPro: boolean = false
 ): PriceTier | null {

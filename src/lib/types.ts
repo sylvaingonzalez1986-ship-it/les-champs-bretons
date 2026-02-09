@@ -30,6 +30,8 @@ export interface CollectionItem {
   minOrderAmount?: number;
 }
 
+export type AudioSource = ReturnType<typeof require> | { uri: string };
+
 export const RARITY_CONFIG: Record<Rarity, {
   label: string;
   color: string;

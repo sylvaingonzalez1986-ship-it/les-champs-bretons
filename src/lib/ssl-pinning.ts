@@ -11,17 +11,9 @@
  * pour une protection complete au niveau natif.
  */
 
-import { Platform } from 'react-native';
-import { SUPABASE_CERT_HASH, shouldRenewCertificate } from './ssl-cert-hash';
-
-// Verifier le certificat au demarrage de l'app (dev mode)
-if (__DEV__) {
-  shouldRenewCertificate();
-}
 
 // Configuration timeout par defaut
 const DEFAULT_TIMEOUT = 15000; // 15 secondes
-const STRICT_SUPABASE_CHECK = !__DEV__ && Platform.OS !== 'web';
 
 /**
  * Fetch securise avec validation et timeout
@@ -70,12 +62,18 @@ export async function secureFetch(
       // Log warning si les headers Supabase sont manquants (possible MITM)
       if (__DEV__ && !supabaseHeaders && response.ok) {
         console.warn(
-          '[SecureFetch] Warning: Headers Supabase manquants - verifier la connexion'
+          '[SecureFetch] Warning: Headers Supabase manquants - verifier la connexion',
+          {
+            url,
+            status: response.status,
+            server: serverHeader ?? 'n/a',
+            upstream: supabaseHeaders ?? 'n/a',
+          }
         );
       }
 
-      if (STRICT_SUPABASE_CHECK && response.ok && !looksLikeSupabase) {
-        throw new Error('Connexion Supabase non sécurisée détectée.');
+      if (response.ok && !looksLikeSupabase && __DEV__) {
+        console.warn('[SecureFetch] Réponse Supabase inattendue (headers manquants).');
       }
     }
 

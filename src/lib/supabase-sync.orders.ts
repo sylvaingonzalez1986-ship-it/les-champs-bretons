@@ -275,7 +275,8 @@ export async function updateOrderInSupabase(id: string, updates: Partial<Order>)
   if (updates.customerInfo) {
     supabaseUpdates.customer_first_name = updates.customerInfo.firstName;
     supabaseUpdates.customer_last_name = updates.customerInfo.lastName;
-    supabaseUpdates.customer_email = updates.customerInfo.email;
+    // customer_email volontairement omis : champ immuable protégé par le trigger
+    // prevent_orders_identity_change (20260131100000_security_rls_hardening.sql)
     supabaseUpdates.customer_phone = updates.customerInfo.phone;
     supabaseUpdates.customer_address = updates.customerInfo.address;
     supabaseUpdates.customer_city = updates.customerInfo.city;
@@ -300,6 +301,20 @@ export async function updateOrderInSupabase(id: string, updates: Partial<Order>)
   if (updates.status !== undefined) supabaseUpdates.status = updates.status;
   if (updates.trackingNumber !== undefined) supabaseUpdates.tracking_number = updates.trackingNumber;
   if (updates.notes !== undefined) supabaseUpdates.notes = updates.notes;
+  // Payment validation fields
+  if ((updates as Record<string, unknown>).paymentValidated !== undefined) {
+    supabaseUpdates.payment_validated = (updates as Record<string, unknown>).paymentValidated;
+  }
+  if ((updates as Record<string, unknown>).paymentValidatedAt !== undefined) {
+    const ts = (updates as Record<string, unknown>).paymentValidatedAt;
+    supabaseUpdates.payment_validated_at = typeof ts === 'number' ? new Date(ts).toISOString() : ts;
+  }
+  if ((updates as Record<string, unknown>).ticketsDistributed !== undefined) {
+    supabaseUpdates.tickets_distributed = (updates as Record<string, unknown>).ticketsDistributed;
+  }
+  if ((updates as Record<string, unknown>).ticketsEarned !== undefined) {
+    supabaseUpdates.tickets_earned = (updates as Record<string, unknown>).ticketsEarned;
+  }
   supabaseUpdates.updated_at = new Date().toISOString();
 
   // getAuthenticatedHeaders lève SessionExpiredError si pas de session

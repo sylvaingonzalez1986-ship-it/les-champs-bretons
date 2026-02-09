@@ -5,8 +5,9 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { Audio, AVPlaybackStatus } from 'expo-av';
-import { fetchMusicTracks, isMusicApiConfigured } from '@/lib/supabase-music';
+import { Audio, AVPlaybackStatus, type AVPlaybackSource } from 'expo-av';
+import { fetchMusicTracks, getSignedAudioUrl, getSignedCoverUrl, isMusicApiConfigured } from '@/lib/supabase-music';
+import type { AudioSource } from '@/lib/types';
 
 export interface Track {
   id: string;
@@ -14,7 +15,7 @@ export interface Track {
   artist: string;
   album?: string;
   coverUrl?: string;
-  audioSource: any; // require() ou { uri: string }
+  audioSource: AudioSource; // require() ou { uri: string }
 }
 
 interface AudioContextType {
@@ -47,6 +48,32 @@ interface AudioContextType {
 }
 
 const AudioContext = createContext<AudioContextType | null>(null);
+
+const AUDIO_FALLBACK: AudioContextType = {
+  currentTrack: null,
+  currentTrackIndex: 0,
+  isPlaying: false,
+  isMuted: false,
+  volume: 0.5,
+  position: 0,
+  duration: 0,
+  tracks: [],
+  isLoading: false,
+  repeatMode: 'off',
+  shuffleMode: false,
+  playTrack: async () => {},
+  playPause: async () => {},
+  nextTrack: async () => {},
+  previousTrack: async () => {},
+  setVolume: async () => {},
+  toggleMute: async () => {},
+  stop: async () => {},
+  seekTo: async () => {},
+  loadTracks: () => {},
+  setRepeatMode: () => {},
+  toggleShuffle: () => {},
+  refreshTracks: async () => {},
+};
 
 // Variable globale pour éviter les réinitialisations multiples
 let globalIsInitialized = false;
@@ -166,7 +193,7 @@ export function AudioProvider({ children }: AudioProviderProps) {
 
       // Charger le nouveau morceau
       const { sound: newSound } = await Audio.Sound.createAsync(
-        track.audioSource,
+        track.audioSource as AVPlaybackSource,
         {
           shouldPlay: true,
           volume: isMuted ? 0 : volume,
@@ -215,13 +242,20 @@ export function AudioProvider({ children }: AudioProviderProps) {
             const supabaseTracks = await fetchMusicTracks();
 
             if (supabaseTracks.length > 0) {
-              const convertedTracks: Track[] = supabaseTracks.map(track => ({
-                id: track.id,
-                title: track.title,
-                artist: track.artist,
-                album: track.album,
-                coverUrl: track.cover_url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400',
-                audioSource: { uri: track.audio_url },
+              const convertedTracks: Track[] = await Promise.all(supabaseTracks.map(async (track) => {
+                const coverUrl = track.cover_url
+                  ? await getSignedCoverUrl(track.cover_url)
+                  : 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400';
+                const audioUrl = track.audio_url ? await getSignedAudioUrl(track.audio_url) : '';
+                const resolvedAudioUrl = audioUrl || track.audio_url || '';
+                return {
+                  id: track.id,
+                  title: track.title,
+                  artist: track.artist,
+                  album: track.album,
+                  coverUrl,
+                  audioSource: { uri: resolvedAudioUrl },
+                };
               }));
 
               allTracks = [...PLAYLIST_TRACKS, ...convertedTracks];
@@ -344,13 +378,20 @@ export function AudioProvider({ children }: AudioProviderProps) {
         const supabaseTracks = await fetchMusicTracks();
 
         if (supabaseTracks.length > 0) {
-          const convertedTracks: Track[] = supabaseTracks.map(track => ({
-            id: track.id,
-            title: track.title,
-            artist: track.artist,
-            album: track.album,
-            coverUrl: track.cover_url || 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400',
-            audioSource: { uri: track.audio_url },
+          const convertedTracks: Track[] = await Promise.all(supabaseTracks.map(async (track) => {
+            const coverUrl = track.cover_url
+              ? await getSignedCoverUrl(track.cover_url)
+              : 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400';
+            const audioUrl = track.audio_url ? await getSignedAudioUrl(track.audio_url) : '';
+            const resolvedAudioUrl = audioUrl || track.audio_url || '';
+            return {
+              id: track.id,
+              title: track.title,
+              artist: track.artist,
+              album: track.album,
+              coverUrl,
+              audioSource: { uri: resolvedAudioUrl },
+            };
           }));
 
           allTracks = [...PLAYLIST_TRACKS, ...convertedTracks];
@@ -391,6 +432,14 @@ export function AudioProvider({ children }: AudioProviderProps) {
         refreshTracks,
       }}
     >
+      {children}
+    </AudioContext.Provider>
+  );
+}
+
+export function AudioFallbackProvider({ children }: AudioProviderProps) {
+  return (
+    <AudioContext.Provider value={AUDIO_FALLBACK}>
       {children}
     </AudioContext.Provider>
   );

@@ -97,6 +97,9 @@ export const userProfileUpdateSchema = userProfileSchema
 // SCHEMAS PRODUCTEUR
 // ============================================================================
 
+const storagePathSchema = z.string().regex(/^(images|product-images|lab-analyses|music-audio|music-covers)\/.+$/);
+const imagePathSchema = z.string().url().or(storagePathSchema);
+
 export const producerSchema = z.object({
   id: z.string(),
   name: z.string().min(1).max(255),
@@ -104,7 +107,7 @@ export const producerSchema = z.object({
   region: z.string().max(100).nullable(),
   department: z.string().max(100).nullable(),
   city: z.string().max(100).nullable(),
-  image: z.string().url().nullable().or(z.literal('')).nullable(),
+  image: imagePathSchema.nullable().or(z.literal('')).nullable(),
   description: z.string().max(2000).nullable(),
   siret: siretSchema,
   tva_number: tvaNumberSchema,
@@ -137,8 +140,8 @@ export const productSchema = z.object({
   price_public: z.number().min(0, 'Prix doit être positif'),
   price_pro: z.number().min(0).nullable(),
   weight: z.string().max(50).nullable(),
-  image: z.string().url().nullable().or(z.literal('')).nullable(),
-  images: z.array(z.string().url()).nullable(),
+  image: imagePathSchema.nullable().or(z.literal('')).nullable(),
+  images: z.array(imagePathSchema).nullable(),
   description: z.string().max(5000).nullable(),
   tva_rate: z.number().min(0).max(100),
   stock: z.number().int().min(0).nullable(),
@@ -147,7 +150,7 @@ export const productSchema = z.object({
   visible_for_clients: z.boolean(),
   visible_for_pros: z.boolean(),
   status: productStatusSchema,
-  lab_analysis_url: z.string().url().nullable().or(z.literal('')).nullable(),
+  lab_analysis_url: imagePathSchema.nullable().or(z.literal('')).nullable(),
   disponible_vente_directe: z.boolean(),
   price_tiers: z.array(priceTierSchema).nullable().optional(),
   price_pro_tiers: z.array(priceTierSchema).nullable().optional(),

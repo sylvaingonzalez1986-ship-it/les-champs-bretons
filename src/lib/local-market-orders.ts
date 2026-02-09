@@ -395,18 +395,25 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
 
   // Mettre à jour le statut d'une commande (pour producteur)
   updateOrderStatus: async (accessToken: string, orderId: string, status: LocalMarketOrder['status'], producerNotes?: string) => {
-    if (!accessToken || !orderId) {
+    if (!orderId) {
       return { success: false, error: 'Paramètres manquants' };
     }
 
     try {
+      const session = await getValidSession();
+      const validToken = session?.access_token || accessToken;
+
+      if (!validToken) {
+        return { success: false, error: 'Session expirée' };
+      }
+
       const response = await fetch(
         `${SUPABASE_URL}/functions/v1/local-market-orders`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${validToken}`,
           },
           body: JSON.stringify({
             action: 'updateStatus',
@@ -418,10 +425,13 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
       );
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.warn('[LocalMarketOrders] Error updating order status:', response.status, errorText);
         return { success: false, error: 'Erreur lors de la mise à jour' };
       }
       return { success: true };
     } catch (error) {
+      console.warn('[LocalMarketOrders] Update failed:', error);
       return { success: false, error: 'Erreur de connexion' };
     }
   },

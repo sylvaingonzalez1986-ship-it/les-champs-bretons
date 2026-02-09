@@ -7,13 +7,14 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Audio, AVPlaybackStatus } from 'expo-av';
+import type { AudioSource } from './types';
 
 export interface MusicTrack {
   id: string;
   title: string;
   artist: string;
   album?: string;
-  audioSource: any; // require() ou URL
+  audioSource: AudioSource; // require() ou URL
   coverImage?: string;
   durationSeconds?: number;
   orderIndex: number;

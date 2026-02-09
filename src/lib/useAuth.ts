@@ -351,7 +351,7 @@ export function useUserIdentity() {
 export function usePermissions() {
   const { profile, isAuthenticated } = useAuth();
   const role = profile?.role ?? 'client';
-  const proStatus = (profile as any)?.pro_status ?? null;
+  const proStatus = profile?.pro_status ?? null;
   const isAdmin = role === 'admin';
 
   // Un pro est approuvé seulement si son statut est 'approved'

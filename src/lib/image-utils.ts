@@ -6,6 +6,10 @@ function optimizeSupabaseImageUrl(url: string, width: number, quality: number): 
       return url;
     }
 
+    if (url.includes('/storage/v1/object/sign/') || url.includes('token=')) {
+      return url;
+    }
+
     if (url.includes('/storage/v1/render/image/public/')) {
       return url;
     }

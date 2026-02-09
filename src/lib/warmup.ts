@@ -32,15 +32,19 @@ async function warmCreateDirectSaleOrders(): Promise<void> {
 
 async function warmLabAnalyses(): Promise<void> {
   // Warm up lab-analyses-url function
+  const session = await getValidSession();
+  const token = session?.access_token;
+  if (!token) return;
+
   await fetch(`${SUPABASE_URL}/functions/v1/lab-analyses-url`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       apikey: SUPABASE_ANON_KEY,
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      Authorization: `Bearer ${token}`,
       'x-warmup': '1',
     },
-    body: JSON.stringify({ storagePath: 'warmup' }),
+    body: JSON.stringify({ path: 'lab-analyses/warmup' }),
   });
 }
 

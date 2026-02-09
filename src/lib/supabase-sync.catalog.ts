@@ -5,13 +5,17 @@ import { Producer, ProducerProduct } from './producers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   SUPABASE_URL,
+  SUPABASE_ANON_KEY,
   getAuthenticatedHeaders,
   getHeaders,
   isNetworkOnline,
   isSupabaseSyncConfigured,
   supabaseFetch,
 } from './supabase-sync-core';
+import { ensureDeviceId } from './device-id';
+import { getValidSession } from './supabase-auth';
 import { PriceTier } from './producers';
+import { getSignedImageUrl, getSignedLabAnalysisUrl } from './storage-utils';
 
 // ==================== PRODUCERS ====================
 
@@ -48,6 +52,79 @@ export interface SupabaseProducer {
   } | null;
   created_at: string;
   updated_at: string;
+}
+
+const DEVICE_BIND_MIN_INTERVAL_MS = 60_000;
+let lastBindAttemptAt = 0;
+
+async function bindDeviceForSession(): Promise<{ ok: boolean; status: number; error?: string }> {
+  const now = Date.now();
+  if (now - lastBindAttemptAt < DEVICE_BIND_MIN_INTERVAL_MS) {
+    return { ok: false, status: 429, error: 'RATE_LIMIT_BACKOFF' };
+  }
+
+  const session = await getValidSession();
+  if (!session?.access_token) {
+    return { ok: false, status: 401, error: 'NO_SESSION' };
+  }
+
+  lastBindAttemptAt = now;
+  const deviceId = await ensureDeviceId();
+  const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/bind-device`, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': `Bearer ${session.access_token}`,
+      'Content-Type': 'application/json',
+      'X-Device-Id': deviceId,
+    },
+    body: JSON.stringify({}),
+  });
+
+  let error: string | undefined;
+  if (!response.ok) {
+    try {
+      const data = await response.json();
+      error = typeof data?.error === 'string' ? data.error : 'BIND_FAILED';
+    } catch {
+      error = 'BIND_FAILED';
+    }
+    console.warn('[Producers] bind-device failed:', response.status, error);
+  }
+
+  return { ok: response.ok, status: response.status, error };
+}
+
+async function postProducerMutation(
+  payload: Record<string, unknown>,
+  retryAfterBind = true
+): Promise<Response> {
+  const headers = await getAuthenticatedHeaders();
+  const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/producers-mutations`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (response.status === 409 && retryAfterBind) {
+    let data: { error?: string } | null = null;
+    try {
+      data = await response.clone().json();
+    } catch {
+      data = null;
+    }
+
+    const shouldBind = !data || data.error === 'DEVICE_NOT_BOUND';
+    if (shouldBind) {
+      const bindResult = await bindDeviceForSession();
+      if (bindResult.ok) {
+        return postProducerMutation(payload, false);
+      }
+      console.warn('[Producers] Device binding failed or denied:', bindResult.status, bindResult.error);
+    }
+  }
+
+  return response;
 }
 
 // Convert Supabase producer to app Producer format
@@ -174,19 +251,15 @@ export async function addProducerToSupabase(producer: Producer): Promise<Supabas
   }
 
   try {
-    const headers = await getAuthenticatedHeaders();
-    const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/producers-mutations`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        action: 'create',
-        producer: producerToSupabase(producer),
-      }),
+    const response = await postProducerMutation({
+      action: 'create',
+      producer: producerToSupabase(producer),
     });
 
     if (!response.ok) {
-      console.warn('[Producers] Erreur ajout');
-      throw new Error('Erreur ajout producteur');
+      const errorText = await response.text().catch(() => '');
+      console.warn('[Producers] Erreur ajout:', response.status, errorText);
+      throw new Error(`Erreur ajout producteur${errorText ? `: ${errorText}` : ''}`);
     }
 
     const data = await response.json();
@@ -236,25 +309,38 @@ export async function updateProducerInSupabase(id: string, producer: Partial<Pro
   updates.updated_at = new Date().toISOString();
 
   try {
-    const headers = await getAuthenticatedHeaders();
-    const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/producers-mutations`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        action: 'update',
-        producerId: id,
-        updates,
-      }),
+    const response = await postProducerMutation({
+      action: 'update',
+      producerId: id,
+      updates,
     });
 
     if (!response.ok) {
-      console.warn('[Producers] Erreur mise à jour');
-      throw new Error('Erreur mise à jour producteur');
+      const errorText = await response.text().catch(() => '');
+      console.warn('[Producers] Erreur mise à jour:', response.status, errorText);
+      throw new Error(`Erreur mise à jour producteur${errorText ? `: ${errorText}` : ''}`);
     }
   } catch (error) {
     console.warn('[Producers] Erreur:', error);
     throw error;
   }
+}
+
+async function findProducerIdByProfileId(profileId: string): Promise<string | null> {
+  const response = await supabaseFetch(
+    `${SUPABASE_URL}/rest/v1/producers?profile_id=eq.${profileId}&select=id&limit=1`,
+    {
+      method: 'GET',
+      headers: getHeaders(),
+    }
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const rows = await response.json();
+  return Array.isArray(rows) && rows.length > 0 ? rows[0].id : null;
 }
 
 // Delete producer from Supabase - WITH AUTHENTICATION
@@ -599,6 +685,33 @@ function catalogRowToProducer(row: ProducersCatalogRow): Producer {
   };
 }
 
+async function resolveProductImages(product: ProducerProduct): Promise<ProducerProduct> {
+  const signedImage = await getSignedImageUrl(product.image);
+  const signedImages = product.images
+    ? await Promise.all(product.images.map((image) => getSignedImageUrl(image)))
+    : undefined;
+  const signedLab = product.labAnalysisUrl
+    ? await getSignedLabAnalysisUrl(product.labAnalysisUrl)
+    : undefined;
+
+  return {
+    ...product,
+    image: signedImage || product.image,
+    images: signedImages ?? product.images,
+    labAnalysisUrl: signedLab || product.labAnalysisUrl,
+  };
+}
+
+async function resolveProducerImages(producer: Producer): Promise<Producer> {
+  const signedImage = await getSignedImageUrl(producer.image);
+  const signedProducts = await Promise.all(producer.products.map(resolveProductImages));
+  return {
+    ...producer,
+    image: signedImage || producer.image,
+    products: signedProducts,
+  };
+}
+
 // Fetch all data and return as Producer array
 // OPTIMIZED: Uses materialized view (1 query instead of N+1 pattern)
 export async function fetchAllProducersWithProducts(): Promise<Producer[]> {
@@ -635,7 +748,8 @@ export async function fetchAllProducersWithProducts(): Promise<Producer[]> {
 
       // Convert to Producer format
       for (const row of rows) {
-        allProducers.push(catalogRowToProducer(row));
+        const producer = catalogRowToProducer(row);
+        allProducers.push(await resolveProducerImages(producer));
       }
 
       // Check if there are more pages
@@ -657,6 +771,14 @@ export async function fetchAllProducersWithProducts(): Promise<Producer[]> {
 export async function syncProducerToSupabase(producer: Producer): Promise<void> {
   if (!isSupabaseSyncConfigured()) {
     throw new Error('Supabase non configuré');
+  }
+
+  if (producer.profileId) {
+    const producerId = await findProducerIdByProfileId(producer.profileId);
+    if (producerId) {
+      await updateProducerInSupabase(producerId, producer);
+      return;
+    }
   }
 
   // Check if producer already exists

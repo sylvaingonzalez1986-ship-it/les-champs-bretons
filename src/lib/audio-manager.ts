@@ -1,5 +1,6 @@
-import { Audio } from 'expo-av';
+import { Audio, type AVPlaybackSource } from 'expo-av';
 import * as Haptics from 'expo-haptics';
+import type { AudioSource } from './types';
 
 type SoundName = 'plant' | 'water' | 'harvest' | 'coin' | 'rain' | 'levelup' | 'error' | 'click';
 
@@ -33,9 +34,9 @@ class AudioManager {
     }
   }
 
-  async loadSound(name: string, source: any) {
+  async loadSound(name: string, source: AudioSource) {
     try {
-      const { sound } = await Audio.Sound.createAsync(source);
+      const { sound } = await Audio.Sound.createAsync(source as AVPlaybackSource);
       this.sounds[name] = sound;
     } catch (error) {
       console.error(`Failed to load sound ${name}:`, error);

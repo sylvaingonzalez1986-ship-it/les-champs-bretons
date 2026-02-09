@@ -3,7 +3,7 @@
  * Handles lab analysis uploads (PDF or image) for products
  */
 
-import { getValidSession, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-auth';
+import { getSession, getValidSession, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-auth';
 import { ensureDeviceId } from './device-id';
 import { generateSecureUUID } from './uuid';
 
@@ -133,4 +133,49 @@ export async function uploadLabAnalysis(
   }
 
   return storedPath as string;
+}
+
+function isLabAnalysesUrl(url: string): boolean {
+  return url.includes('/storage/v1/object/public/lab-analyses/')
+    || url.includes('/storage/v1/object/lab-analyses/')
+    || url.includes('/storage/v1/object/sign/lab-analyses/')
+    || url.startsWith('lab-analyses/');
+}
+
+export async function getSignedLabAnalysisUrl(path: string, expiresIn = 3600): Promise<string> {
+  if (!path) return '';
+
+  const isRemote = path.startsWith('http://') || path.startsWith('https://');
+  const isLocal = path.startsWith('file://') || path.startsWith('/data/') || path.includes('/cache/');
+  if (isLocal) return path;
+
+  if (path.includes('/storage/v1/object/sign/') || path.includes('token=')) {
+    return path;
+  }
+
+  if (!isLabAnalysesUrl(path)) {
+    return path;
+  }
+
+  const session = getSession();
+  if (!session?.access_token) {
+    return path;
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/lab-analyses-url`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({ path, expiresIn }),
+  });
+
+  if (!response.ok) {
+    return path;
+  }
+
+  const data = await response.json();
+  return data?.url || path;
 }

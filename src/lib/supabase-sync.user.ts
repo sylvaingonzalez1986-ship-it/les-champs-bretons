@@ -5,6 +5,7 @@ import {
   isSupabaseSyncConfigured,
   supabaseFetch,
 } from './supabase-sync-core';
+import { getSignedImageUrl } from './storage-utils';
 
 // ==================== USER DATA SYNC ====================
 // Synchronisation des données utilisateur (collection, tickets, parrainage)
@@ -157,7 +158,13 @@ export async function fetchUserCollection(): Promise<SupabaseUserCollectionItem[
 
     if (!response.ok) return [];
 
-    return await response.json();
+    const data: SupabaseUserCollectionItem[] = await response.json();
+    return Promise.all(
+      data.map(async (item) => ({
+        ...item,
+        product_image: item.product_image ? await getSignedImageUrl(item.product_image) : null,
+      }))
+    );
   } catch (error) {
     console.warn('[UserSync] Erreur fetch collection:', error);
     return [];
@@ -329,7 +336,8 @@ export async function fetchUserGiftsSent(): Promise<SupabaseUserGift[]> {
     );
 
     if (!response.ok) return [];
-    return await response.json();
+    const data: SupabaseUserGift[] = await response.json();
+    return data;
   } catch (error) {
     console.warn('[UserSync] Erreur fetch gifts sent:', error);
     return [];

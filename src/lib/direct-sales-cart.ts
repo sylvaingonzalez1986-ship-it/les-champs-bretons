@@ -34,6 +34,16 @@ export interface DirectSalesCartItem {
   created_at: string;
 }
 
+interface DirectSalesCartApiItem {
+  id: string;
+  product_id: string;
+  producer_id: string;
+  quantity: number;
+  created_at: string;
+  product: { id: string; name: string; price_public: number; image: string } | { id: string; name: string; price_public: number; image: string }[] | null;
+  producer: { id: string; name: string } | { id: string; name: string }[] | null;
+}
+
 interface DirectSalesCartStore {
   items: DirectSalesCartItem[];
   loading: boolean;
@@ -82,27 +92,48 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
       );
 
       if (response.ok) {
-        const data = await response.json();
+        const data = (await response.json()) as DirectSalesCartApiItem[];
 
-        const enrichedItems: DirectSalesCartItem[] = data.map((item: any) => {
+        const enrichedItems: DirectSalesCartItem[] = [];
+        let orphanedItemsCount = 0;
+
+        for (const item of data) {
           const product = Array.isArray(item.product) ? item.product[0] : item.product;
           const producer = Array.isArray(item.producer) ? item.producer[0] : item.producer;
 
-          return {
+          // Skip items with missing product or invalid price (orphaned items)
+          if (!product || typeof product.price_public !== 'number' || product.price_public <= 0) {
+            console.warn('[DirectSalesCart] Skipping orphaned item with missing/invalid product:', item.id);
+            orphanedItemsCount++;
+            continue;
+          }
+
+          // Skip items with missing producer
+          if (!producer) {
+            console.warn('[DirectSalesCart] Skipping item with missing producer:', item.id);
+            orphanedItemsCount++;
+            continue;
+          }
+
+          enrichedItems.push({
             id: item.id,
             product_id: item.product_id,
             producer_id: item.producer_id,
-            producer_name: producer?.name || 'Unknown',
-            product_name: product?.name || 'Unknown',
-            price: product?.price_public || 0,
+            producer_name: producer.name || 'Producteur inconnu',
+            product_name: product.name || 'Produit inconnu',
+            price: product.price_public,
             quantity: item.quantity,
-            image: product?.image || '',
+            image: product.image || '',
             created_at: item.created_at,
-          };
-        });
+          });
+        }
+
+        if (orphanedItemsCount > 0) {
+          console.warn(`[DirectSalesCart] ${orphanedItemsCount} orphaned items filtered from cart`);
+        }
 
         set({ items: enrichedItems });
-        endMetric('cart.load', metricStart, { items: enrichedItems.length });
+        endMetric('cart.load', metricStart, { items: enrichedItems.length, orphaned: orphanedItemsCount });
       }
     } catch (error) {
       console.warn('[DirectSalesCart] Error loading cart:', error);
@@ -146,7 +177,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
     try {
       if (!userId) return;
 
-      await fetch(
+      const response = await fetch(
         `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
         {
           method: 'POST',
@@ -158,9 +189,17 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
         }
       );
 
-      set({ items: get().items.filter((item) => item.id !== id) });
+      // Only update local state if server confirms success
+      if (response.ok) {
+        set({ items: get().items.filter((item) => item.id !== id) });
+      } else {
+        console.warn('[DirectSalesCart] Server rejected removeItem, reloading cart');
+        await get().loadCart(userId, accessToken);
+      }
     } catch (error) {
       console.warn('[DirectSalesCart] Error removing item:', error);
+      // Reload cart to ensure consistency
+      await get().loadCart(userId, accessToken);
     }
   },
 
@@ -174,7 +213,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
 
       if (!userId) return;
 
-      await fetch(
+      const response = await fetch(
         `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
         {
           method: 'POST',
@@ -187,13 +226,21 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
         }
       );
 
-      set({
-        items: get().items.map((item) =>
-          item.id === id ? { ...item, quantity } : item
-        ),
-      });
+      // Only update local state if server confirms success
+      if (response.ok) {
+        set({
+          items: get().items.map((item) =>
+            item.id === id ? { ...item, quantity } : item
+          ),
+        });
+      } else {
+        console.warn('[DirectSalesCart] Server rejected updateQuantity, reloading cart');
+        await get().loadCart(userId, accessToken);
+      }
     } catch (error) {
       console.warn('[DirectSalesCart] Error updating quantity:', error);
+      // Reload cart to ensure consistency
+      await get().loadCart(userId, accessToken);
     }
   },
 
@@ -202,7 +249,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
     try {
       if (!userId) return;
 
-      await fetch(
+      const response = await fetch(
         `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
         {
           method: 'POST',
@@ -213,9 +260,17 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
         }
       );
 
-      set({ items: [] });
+      // Only update local state if server confirms success
+      if (response.ok) {
+        set({ items: [] });
+      } else {
+        console.warn('[DirectSalesCart] Server rejected clearCart, reloading cart');
+        await get().loadCart(userId, accessToken);
+      }
     } catch (error) {
       console.warn('[DirectSalesCart] Error clearing cart:', error);
+      // Reload cart to ensure consistency
+      await get().loadCart(userId, accessToken);
     }
   },
 

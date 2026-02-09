@@ -11,6 +11,9 @@ import {
 import { linkUserCode } from './supabase-sync.user';
 import type { SupabaseUserLot } from './supabase-sync.user';
 import { Lot, LotItem, Rarity } from './store';
+import { generateSecureUUID } from './uuid';
+import * as Crypto from 'expo-crypto';
+import { getSignedImageUrl } from './storage-utils';
 
 // ==================== LOTS (TIRAGE) ====================
 
@@ -96,6 +99,14 @@ function supabaseToLotItem(sli: SupabaseLotItem): LotItem {
     productName: sli.product_name,
     producerName: sli.producer_name,
     quantity: sli.quantity,
+  };
+}
+
+async function resolveLotImages(lot: Lot): Promise<Lot> {
+  const signedImage = await getSignedImageUrl(lot.image);
+  return {
+    ...lot,
+    image: signedImage || lot.image,
   };
 }
 
@@ -255,9 +266,11 @@ export async function fetchAllLotsWithItems(): Promise<Lot[]> {
     }
 
     // Convert to Lot array
-    return supabaseLots.map((sl) =>
+    const lots = supabaseLots.map((sl) =>
       supabaseToLot(sl, itemsByLot.get(sl.id) || [])
     );
+
+    return Promise.all(lots.map(resolveLotImages));
   } catch (error) {
     console.warn('Error fetching lots from Supabase:', error);
     const cached = await AsyncStorage.getItem('cache_lots_v2');
@@ -361,8 +374,8 @@ export async function recordUserWonLot(
     return null;
   }
 
-  const id = `user-lot-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  const giftCode = `GIFT-${generateGiftCode()}`;
+  const id = `user-lot-${generateSecureUUID()}`;
+  const giftCode = `GIFT-${generateSecureGiftCode()}`;
 
   try {
     const session = await getValidSession();
@@ -485,14 +498,36 @@ export async function recordUserWonLot(
   }
 }
 
-// Generate a unique gift code
-function generateGiftCode(): string {
+// Generate a cryptographically secure gift code
+function generateSecureGiftCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  const codeLength = 8;
+
+  // Use expo-crypto for secure random bytes
+  if (Crypto?.getRandomBytes) {
+    const randomBytes = Crypto.getRandomBytes(codeLength);
+    let code = '';
+    for (let i = 0; i < codeLength; i++) {
+      code += chars.charAt(randomBytes[i] % chars.length);
+    }
+    return code;
   }
-  return code;
+
+  // Fallback to Web Crypto API
+  const cryptoObj = globalThis.crypto as Crypto | undefined;
+  if (cryptoObj?.getRandomValues) {
+    const randomArray = new Uint8Array(codeLength);
+    cryptoObj.getRandomValues(randomArray);
+    let code = '';
+    for (let i = 0; i < codeLength; i++) {
+      code += chars.charAt(randomArray[i] % chars.length);
+    }
+    return code;
+  }
+
+  // Last resort fallback (logs warning) - uses secure UUID
+  console.warn('[GiftCode] No secure random available, using UUID-based fallback');
+  return generateSecureUUID().replace(/-/g, '').substring(0, 8).toUpperCase();
 }
 
 // Fetch user's won lots - WITH AUTHENTICATION

@@ -8,6 +8,7 @@ import {
   isSupabaseSyncConfigured,
   supabaseFetch,
 } from './supabase-sync-core';
+import { getSignedImageUrl } from './storage-utils';
 
 export interface SupabasePack {
   id: string;
@@ -76,6 +77,25 @@ function supabaseToPackItem(spi: SupabasePackItem): PackItem {
   };
 }
 
+async function resolvePackImages(pack: Pack): Promise<Pack> {
+  const signedImage = await getSignedImageUrl(pack.image);
+  const signedItems = await Promise.all(
+    pack.items.map(async (item) => {
+      if (!item.images || item.images.length === 0) {
+        return item;
+      }
+      const signedImages = await Promise.all(item.images.map((image) => getSignedImageUrl(image)));
+      return { ...item, images: signedImages };
+    })
+  );
+
+  return {
+    ...pack,
+    image: signedImage || pack.image,
+    items: signedItems,
+  };
+}
+
 // Fetch all packs from Supabase
 export async function fetchPacks(): Promise<SupabasePack[]> {
   if (!isSupabaseSyncConfigured()) {
@@ -139,9 +159,11 @@ export async function fetchAllPacksWithItems(): Promise<Pack[]> {
     }
 
     // Convert to Pack array
-    return supabasePacks.map((sp) =>
+    const packs = supabasePacks.map((sp) =>
       supabaseToPack(sp, itemsByPack.get(sp.id) || [])
     );
+
+    return Promise.all(packs.map(resolvePackImages));
   } catch (error) {
     console.warn('Error fetching packs from Supabase:', error);
     const cached = await AsyncStorage.getItem('cache_packs_v2');

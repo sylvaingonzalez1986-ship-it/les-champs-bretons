@@ -9,6 +9,7 @@ import { fetchWithRetry, NetworkError } from './fetch-with-retry';
 import SecureStorage, { initializeSecureStorage } from './secure-storage';
 import { ensureDeviceId } from './device-id';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './env-validation';
+import { normalizeEmail } from './input-validation';
 
 const DEVICE_BINDING_ENDPOINT = '/functions/v1/bind-device';
 
@@ -68,102 +69,7 @@ const secureDelete = async (key: string): Promise<void> => {
   return SecureStorage.deleteItem(key);
 };
 
-// ============================================
-// Rate Limiting System
-// ============================================
-const RATE_LIMIT_MAX_ATTEMPTS = 5;
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 60 seconds
-
-interface RateLimitEntry {
-  attempts: number;
-  firstAttemptAt: number;
-  blockedUntil: number | null;
-}
-
-// In-memory rate limit tracking (per action type)
-const rateLimitStore: Map<string, RateLimitEntry> = new Map();
-
-/**
- * Check if an action is rate limited
- * @param actionKey - Unique key for the action (e.g., 'signIn', 'magicLink', 'resetPassword')
- * @returns Object with isBlocked status and remaining seconds if blocked
- */
-function checkRateLimit(actionKey: string): { isBlocked: boolean; remainingSeconds: number } {
-  const now = Date.now();
-  const entry = rateLimitStore.get(actionKey);
-
-  if (!entry) {
-    return { isBlocked: false, remainingSeconds: 0 };
-  }
-
-  // Check if currently blocked
-  if (entry.blockedUntil && now < entry.blockedUntil) {
-    const remainingSeconds = Math.ceil((entry.blockedUntil - now) / 1000);
-    return { isBlocked: true, remainingSeconds };
-  }
-
-  // If block period has passed, reset
-  if (entry.blockedUntil && now >= entry.blockedUntil) {
-    rateLimitStore.delete(actionKey);
-    return { isBlocked: false, remainingSeconds: 0 };
-  }
-
-  // Check if window has expired (reset attempts)
-  if (now - entry.firstAttemptAt > RATE_LIMIT_WINDOW_MS) {
-    rateLimitStore.delete(actionKey);
-    return { isBlocked: false, remainingSeconds: 0 };
-  }
-
-  return { isBlocked: false, remainingSeconds: 0 };
-}
-
-/**
- * Record an attempt for rate limiting
- * @param actionKey - Unique key for the action
- * @returns Object with isBlocked status and remaining seconds if now blocked
- */
-function recordAttempt(actionKey: string): { isBlocked: boolean; remainingSeconds: number } {
-  const now = Date.now();
-  let entry = rateLimitStore.get(actionKey);
-
-  // Check if we need to reset due to expired window
-  if (entry && now - entry.firstAttemptAt > RATE_LIMIT_WINDOW_MS) {
-    rateLimitStore.delete(actionKey);
-    entry = undefined;
-  }
-
-  if (!entry) {
-    // First attempt
-    rateLimitStore.set(actionKey, {
-      attempts: 1,
-      firstAttemptAt: now,
-      blockedUntil: null,
-    });
-    return { isBlocked: false, remainingSeconds: 0 };
-  }
-
-  // Increment attempts
-  entry.attempts += 1;
-
-  // Check if we've exceeded the limit
-  if (entry.attempts >= RATE_LIMIT_MAX_ATTEMPTS) {
-    entry.blockedUntil = now + RATE_LIMIT_WINDOW_MS;
-    console.warn(`[Auth] Rate limit exceeded for ${actionKey}. Blocked for 60 seconds.`);
-    return { isBlocked: true, remainingSeconds: 60 };
-  }
-
-  return { isBlocked: false, remainingSeconds: 0 };
-}
-
-/**
- * Create a rate-limited error response
- */
-function createRateLimitError(remainingSeconds: number): AuthError {
-  return {
-    message: `Trop de tentatives. Veuillez réessayer dans ${remainingSeconds} secondes.`,
-    status: 429,
-  };
-}
+// Client-side rate limiting removed: server-side rate limiting is enforced in Edge Functions.
 
 // Types pour l'authentification
 export interface AuthUser {
@@ -202,6 +108,8 @@ export interface UserProfile {
   siret: string | null;
   tva_number: string | null;
   user_code: string | null;
+  linked_producer_id?: string | null;
+  pro_status?: 'pending' | 'approved' | 'rejected' | null;
   is_adult: boolean | null;
   age_verified_at: string | null;
   // Direct farm sales fields
@@ -409,22 +317,6 @@ export function getCurrentUser(): AuthUser | null {
 }
 
 /**
- * Normalize and sanitize email address
- * Removes invisible characters, trims whitespace, and converts to lowercase
- */
-function normalizeEmail(email: string): string {
-  return email
-    // Remove invisible/zero-width characters
-    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '')
-    // Remove other control characters
-    .replace(/[\x00-\x1F\x7F]/g, '')
-    // Trim whitespace
-    .trim()
-    // Convert to lowercase
-    .toLowerCase();
-}
-
-/**
  * Inscription avec email/password
  */
 export async function signUp(
@@ -505,20 +397,12 @@ export async function signUp(
 
 /**
  * Connexion avec email/password
- * Rate limited: 5 attempts per 60 seconds
  */
 export async function signIn(
   email: string,
   password: string
 ): Promise<{ session: AuthSession | null; error: AuthError | null }> {
   const normalizedEmail = normalizeEmail(email);
-  const rateLimitKey = `signIn:${normalizedEmail}`;
-
-  // Check if rate limited
-  const { isBlocked, remainingSeconds } = checkRateLimit(rateLimitKey);
-  if (isBlocked) {
-    return { session: null, error: createRateLimitError(remainingSeconds) };
-  }
 
   try {
     const response = await authFetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
@@ -530,11 +414,6 @@ export async function signIn(
     const data = await response.json();
 
     if (!response.ok) {
-      // Record failed attempt
-      const limitResult = recordAttempt(rateLimitKey);
-      if (limitResult.isBlocked) {
-        return { session: null, error: createRateLimitError(limitResult.remainingSeconds) };
-      }
 
       // Améliorer les messages d'erreur
       let errorMessage = data.error_description || data.msg || 'Identifiants incorrects';
@@ -561,9 +440,6 @@ export async function signIn(
       };
     }
 
-    // Success - clear rate limit for this email
-    rateLimitStore.delete(rateLimitKey);
-
     const session: AuthSession = {
       access_token: data.access_token,
       refresh_token: data.refresh_token,
@@ -585,25 +461,11 @@ export async function signIn(
 
 /**
  * Connexion avec Magic Link (envoie un email)
- * Rate limited: 5 attempts per 60 seconds
  */
 export async function signInWithMagicLink(
   email: string
 ): Promise<{ error: AuthError | null }> {
   const normalizedEmail = normalizeEmail(email);
-  const rateLimitKey = `magicLink:${normalizedEmail}`;
-
-  // Check if rate limited
-  const { isBlocked, remainingSeconds } = checkRateLimit(rateLimitKey);
-  if (isBlocked) {
-    return { error: createRateLimitError(remainingSeconds) };
-  }
-
-  // Record attempt before making request (to prevent spam)
-  const limitResult = recordAttempt(rateLimitKey);
-  if (limitResult.isBlocked) {
-    return { error: createRateLimitError(limitResult.remainingSeconds) };
-  }
 
   try {
     const response = await authFetch(`${SUPABASE_URL}/auth/v1/otp`, {
@@ -747,25 +609,11 @@ export async function signOut(): Promise<{ error: AuthError | null }> {
 
 /**
  * Réinitialiser le mot de passe (envoie un email)
- * Rate limited: 5 attempts per 60 seconds
  */
 export async function resetPassword(
   email: string
 ): Promise<{ error: AuthError | null }> {
   const normalizedEmail = normalizeEmail(email);
-  const rateLimitKey = `resetPassword:${normalizedEmail}`;
-
-  // Check if rate limited
-  const { isBlocked, remainingSeconds } = checkRateLimit(rateLimitKey);
-  if (isBlocked) {
-    return { error: createRateLimitError(remainingSeconds) };
-  }
-
-  // Record attempt before making request (to prevent spam)
-  const limitResult = recordAttempt(rateLimitKey);
-  if (limitResult.isBlocked) {
-    return { error: createRateLimitError(limitResult.remainingSeconds) };
-  }
 
   try {
     // Construire l'URL de redirection vers l'app
@@ -875,119 +723,85 @@ export async function fetchProfile(): Promise<{ profile: UserProfile | null; err
 }
 
 /**
+ * Fields that ONLY service_role / admin should set.
+ * The SQL trigger protect_profile_sensitive_columns() is the hard boundary;
+ * this client-side filter is defense-in-depth.
+ */
+const ADMIN_ONLY_FIELDS: ReadonlySet<string> = new Set([
+  'is_adult',
+  'age_verified_at',
+]);
+
+/**
  * Mettre à jour le profil (utilise PATCH pour forcer la mise à jour)
+ *
+ * Security: un trigger SQL bloque l'escalade de privilèges côté serveur.
+ * Côté client, on filtre les champs dangereux en defense-in-depth.
  */
 export async function updateProfile(
-  updates: Partial<Omit<UserProfile, 'id' | 'created_at' | 'updated_at'>>
+  updates: Partial<Omit<UserProfile, 'id' | 'created_at' | 'updated_at'>>,
+  retryAfterBind = true
 ): Promise<{ profile: UserProfile | null; error: AuthError | null }> {
   if (!currentSession?.access_token) {
     console.warn('[Auth] updateProfile: No access token');
     return { profile: null, error: { message: 'Non authentifié' } };
   }
 
-  const userId = currentSession.user.id;
-
   try {
-    // Préparer les données de mise à jour
-    const updateData = {
-      ...updates,
-      updated_at: new Date().toISOString(),
-    };
-
-    const requestBody = JSON.stringify(updateData);
-
-    // Utiliser PATCH pour forcer la mise à jour des champs existants (y compris role)
+    // Defense-in-depth: strip admin-only fields
+    const sanitized = { ...updates };
+    for (const key of ADMIN_ONLY_FIELDS) {
+      if (key in sanitized) {
+        console.warn(`[Auth] updateProfile: Stripped admin-only field "${key}"`);
+        delete (sanitized as Record<string, unknown>)[key];
+      }
+    }
+    const deviceId = await ensureDeviceId();
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`,
+      `${SUPABASE_URL}/functions/v1/update-profile`,
       {
-        method: 'PATCH',
+        method: 'POST',
         headers: {
           ...getAuthHeaders(currentSession.access_token),
-          'Prefer': 'return=representation',
+          'X-Device-Id': deviceId,
         },
-        body: requestBody,
+        body: JSON.stringify({ updates: sanitized }),
       }
     );
 
-    const responseText = await response.text();
-
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (e) {
-      console.warn('[Auth] updateProfile: Failed to parse JSON response:', e);
-      data = null;
-    }
+    const data = await response.json();
 
     if (!response.ok) {
+      // Handle DEVICE_NOT_BOUND error by attempting to bind device and retry
+      if (response.status === 409 && data?.error === 'DEVICE_NOT_BOUND' && retryAfterBind) {
+        console.log('[Auth] Device not bound, attempting to bind and retry...');
+        try {
+          const bindResponse = await fetch(`${SUPABASE_URL}${DEVICE_BINDING_ENDPOINT}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${currentSession.access_token}`,
+              'X-Device-Id': deviceId,
+            },
+            body: JSON.stringify({}),
+          });
+          if (bindResponse.ok) {
+            console.log('[Auth] Device bound successfully, retrying update...');
+            return updateProfile(updates, false); // Retry without re-binding
+          }
+        } catch (bindError) {
+          console.warn('[Auth] Device binding failed:', bindError);
+        }
+      }
+
       console.warn('[Auth] Profile update failed - status:', response.status);
       return {
         profile: null,
-        error: { message: data?.message || 'Erreur mise à jour profil', status: response.status },
+        error: { message: data?.error || 'Erreur mise à jour profil', status: response.status },
       };
     }
 
-    const profile = Array.isArray(data) ? data[0] : data;
-
-    // Synchroniser les champs de vente directe vers la table producers si nécessaire
-    if (updates.vente_directe_ferme !== undefined ||
-        updates.adresse_retrait !== undefined ||
-        updates.horaires_retrait !== undefined ||
-        updates.instructions_retrait !== undefined) {
-      try {
-        // Récupérer le producer_id lié à ce profil
-        const producerResponse = await fetch(
-          `${SUPABASE_URL}/rest/v1/producers?profile_id=eq.${userId}&select=id`,
-          {
-            method: 'GET',
-            headers: getAuthHeaders(currentSession.access_token),
-          }
-        );
-
-        if (producerResponse.ok) {
-          const producers = await producerResponse.json();
-          if (Array.isArray(producers) && producers.length > 0) {
-            const producerId = producers[0].id;
-
-            // Mettre à jour la table producers avec les infos de vente directe
-            const producerUpdateData: Record<string, unknown> = {};
-            if (updates.vente_directe_ferme !== undefined) {
-              producerUpdateData.vente_directe_ferme = updates.vente_directe_ferme;
-            }
-            if (updates.adresse_retrait !== undefined) {
-              producerUpdateData.adresse_retrait = updates.adresse_retrait;
-            }
-            if (updates.horaires_retrait !== undefined) {
-              producerUpdateData.horaires_retrait = updates.horaires_retrait;
-            }
-            if (updates.instructions_retrait !== undefined) {
-              producerUpdateData.instructions_retrait = updates.instructions_retrait;
-            }
-
-            const updateProducerResponse = await fetch(
-              `${SUPABASE_URL}/rest/v1/producers?id=eq.${producerId}`,
-              {
-                method: 'PATCH',
-                headers: {
-                  ...getAuthHeaders(currentSession.access_token),
-                  'Prefer': 'return=representation',
-                },
-                body: JSON.stringify(producerUpdateData),
-              }
-            );
-
-            if (updateProducerResponse.ok) {
-            } else {
-              console.warn('[Auth] Failed to sync producer direct sales info:', updateProducerResponse.status);
-            }
-          }
-        }
-      } catch (syncError) {
-        console.warn('[Auth] Error syncing producer direct sales info:', syncError);
-      }
-    }
-
-    return { profile, error: null };
+    return { profile: data?.profile ?? null, error: null };
   } catch (error) {
     console.warn('[Auth] Profile update error');
     return {
@@ -1008,36 +822,25 @@ export async function linkUserCode(
   }
 
   try {
-    // Vérifier d'abord si le code n'est pas déjà utilisé par un autre compte
-    const checkResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/profiles?user_code=eq.${encodeURIComponent(userCode)}&id=neq.${currentSession.user.id}`,
-      {
-        method: 'GET',
-        headers: getAuthHeaders(currentSession.access_token),
-      }
-    );
-
-    const existingProfiles = await checkResponse.json();
-
-    if (Array.isArray(existingProfiles) && existingProfiles.length > 0) {
-      return {
-        success: false,
-        error: { message: 'Ce code utilisateur est déjà lié à un autre compte' },
-      };
-    }
-
-    // Lier le code
+    const deviceId = await ensureDeviceId();
     const response = await fetch(
-      `${SUPABASE_URL}/rest/v1/profiles?id=eq.${currentSession.user.id}`,
+      `${SUPABASE_URL}/functions/v1/user-code-mapping-mutations`,
       {
-        method: 'PATCH',
+        method: 'POST',
         headers: {
           ...getAuthHeaders(currentSession.access_token),
-          'Prefer': 'return=representation',
+          'X-Device-Id': deviceId,
         },
-        body: JSON.stringify({ user_code: userCode }),
+        body: JSON.stringify({ action: 'link', userCode }),
       }
     );
+
+    if (response.status === 409) {
+      return {
+        success: false,
+        error: { message: 'Ce code utilisateur est déjà lié à un autre compte', status: 409 },
+      };
+    }
 
     if (!response.ok) {
       return {
@@ -1064,25 +867,11 @@ export function isAuthConfigured(): boolean {
 
 /**
  * Renvoyer l'email de confirmation
- * Rate limited: 5 attempts per 60 seconds
  */
 export async function resendConfirmationEmail(
   email: string
 ): Promise<{ error: AuthError | null }> {
   const normalizedEmail = normalizeEmail(email);
-  const rateLimitKey = `resendConfirm:${normalizedEmail}`;
-
-  // Check if rate limited
-  const { isBlocked, remainingSeconds } = checkRateLimit(rateLimitKey);
-  if (isBlocked) {
-    return { error: createRateLimitError(remainingSeconds) };
-  }
-
-  // Record attempt before making request
-  const limitResult = recordAttempt(rateLimitKey);
-  if (limitResult.isBlocked) {
-    return { error: createRateLimitError(limitResult.remainingSeconds) };
-  }
 
   try {
     const response = await authFetch(`${SUPABASE_URL}/auth/v1/resend`, {

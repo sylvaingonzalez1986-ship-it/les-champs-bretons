@@ -81,7 +81,7 @@ export function isSupabaseStorageConfigured(): boolean {
 }
 
 /**
- * Ensure the storage bucket exists and is public
+ * Ensure the storage bucket exists
  */
 async function ensureBucketExists(): Promise<boolean> {
   if (bucketVerified) return true;
@@ -120,7 +120,7 @@ async function ensureBucketExists(): Promise<boolean> {
         body: JSON.stringify({
           id: STORAGE_BUCKET,
           name: STORAGE_BUCKET,
-          public: true,
+          public: false,
           file_size_limit: 5242880, // 5MB
           allowed_mime_types: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
         }),
@@ -287,7 +287,7 @@ function getRetryDelay(attempt: number): number {
  * Upload an image to Supabase Storage with retry
  * @param localUri - Local file URI (file://...)
  * @param folder - Folder in bucket (e.g., 'products', 'packs', 'promos')
- * @returns Public URL of the uploaded image, or null if upload fails
+ * @returns Storage path of the uploaded image, or null if upload fails
  */
 export async function uploadImageToSupabase(
   localUri: string,
@@ -324,6 +324,18 @@ export async function uploadImageToSupabase(
     // Read the compressed file and convert to blob
     const response = await fetch(compressedUri);
     const blob = await response.blob();
+
+    const clientValidation = validateFileClient(
+      blob.size,
+      blob.type || 'image/jpeg'
+    );
+    if (!clientValidation.valid) {
+      notifyProgress({
+        status: 'error',
+        message: clientValidation.error || ERROR_MESSAGES.VALIDATION_FAILED,
+      });
+      return null;
+    }
 
     const validation = await validateFileOnServer(
       STORAGE_BUCKET,
@@ -403,10 +415,8 @@ export async function uploadImageToSupabase(
         clearTimeout(timeoutId);
 
         if (uploadResponse.ok) {
-          // Return the public URL
-          const publicUrl = `${url}/storage/v1/object/public/${STORAGE_BUCKET}/${filename}`;
           notifyProgress({ status: 'success', message: 'Image envoyée avec succès' });
-          return publicUrl;
+          return storedPath as string;
         }
 
         const errorText = await uploadResponse.text();
@@ -472,7 +482,7 @@ export async function uploadImageWithResult(
  * @param localUris - Array of local file URIs
  * @param folder - Folder in bucket
  * @param concurrency - Max concurrent uploads (default: 3)
- * @returns Array of public URLs (null for failed uploads)
+ * @returns Array of storage paths (null for failed uploads)
  */
 export async function uploadMultipleImages(
   localUris: string[],
@@ -508,7 +518,7 @@ export async function uploadMultipleImages(
  * Process an image - upload if local, return as-is if remote/asset
  * @param image - Image URI (local, remote, or asset:)
  * @param folder - Folder in bucket
- * @returns Processed image URI (uploaded URL, original remote URL, or asset reference)
+ * @returns Processed image URI (uploaded path, original remote URL, or asset reference)
  */
 export async function processImageForSync(
   image: string | undefined | null,
@@ -565,9 +575,9 @@ export async function processMultipleImagesForSync(
 
 /**
  * Delete an image from Supabase Storage
- * @param publicUrl - Public URL of the image
+ * @param path - Storage path of the image
  */
-export async function deleteImageFromSupabase(publicUrl: string): Promise<boolean> {
+export async function deleteImageFromSupabase(path: string): Promise<boolean> {
   if (!isSupabaseConfigured()) {
     return false;
   }
@@ -592,7 +602,7 @@ export async function deleteImageFromSupabase(publicUrl: string): Promise<boolea
         },
         body: JSON.stringify({
           action: 'delete',
-          path: publicUrl,
+          path,
         }),
       }
     );

@@ -3,6 +3,7 @@ import { ensureDeviceId } from './device-id';
 import { fetchWithRetry, NetworkError } from './fetch-with-retry';
 import NetInfo from '@react-native-community/netinfo';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './env-validation';
+import { logger } from './logger';
 
 // Re-export for backward compatibility (source: env-validation.ts)
 export { SUPABASE_URL, SUPABASE_ANON_KEY };
@@ -35,13 +36,11 @@ export const getAuthenticatedHeaders = async () => {
   const session = await getValidSession();
   
   if (!session?.access_token) {
-    console.warn('[getAuthenticatedHeaders] Pas de session valide - utilisateur non connecté');
+    logger.warn('[getAuthenticatedHeaders] Pas de session valide - utilisateur non connecté');
     throw new SessionExpiredError();
   }
-  
-  // Log pour debug (masquer le token complet)
-  const tokenPreview = session.access_token.substring(0, 20) + '...';
-  console.log('[getAuthenticatedHeaders] Token obtenu:', tokenPreview, 'expire:', new Date(session.expires_at * 1000).toISOString());
+
+  logger.debug('[getAuthenticatedHeaders] Session valide, expiration:', new Date(session.expires_at * 1000).toISOString());
   
   const deviceId = await ensureDeviceId();
   return {
@@ -67,9 +66,9 @@ export async function supabaseFetchOrNull(url: string, options: RequestInit = {}
     return await supabaseFetch(url, options);
   } catch (error) {
     if (error instanceof NetworkError) {
-      console.warn(`[Supabase] Échec après ${error.attempts} tentatives:`, error.message);
+      logger.warn(`[Supabase] Échec après ${error.attempts} tentatives:`, error.message);
     } else {
-      console.warn('[Supabase] Erreur inattendue:', String(error));
+      logger.warn('[Supabase] Erreur inattendue:', String(error));
     }
     return null;
   }
