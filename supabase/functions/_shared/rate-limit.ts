@@ -141,6 +141,12 @@ export const RATE_LIMIT_PRESETS = {
     windowMs: 15 * 60 * 1000, // 15 minutes
     identifier: 'auth',
   },
+  /** Device binding */
+  DEVICE_BIND: {
+    limit: 20,
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    identifier: 'device-bind',
+  },
   /** Order creation */
   ORDERS: {
     limit: 10,

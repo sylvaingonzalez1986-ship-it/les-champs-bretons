@@ -63,6 +63,57 @@ function getCorsHeaders(req?: Request): Record<string, string> {
   return buildCorsHeaders(origin);
 }
 
+function extractProductImagesPath(image: string): string | null {
+  if (!image) return null;
+
+  if (image.startsWith('product-images/')) {
+    return image.replace(/^product-images\//, '');
+  }
+
+  const markers = [
+    '/storage/v1/object/public/product-images/',
+    '/storage/v1/object/product-images/',
+    '/storage/v1/object/sign/product-images/',
+    '/storage/v1/render/image/public/product-images/',
+  ];
+
+  for (const marker of markers) {
+    const idx = image.indexOf(marker);
+    if (idx !== -1) {
+      return image.slice(idx + marker.length).split('?')[0];
+    }
+  }
+
+  return null;
+}
+
+async function signProductImageUrl(
+  image: string,
+  serviceClient: ReturnType<typeof createClient> | null
+): Promise<string> {
+  if (!image) return image;
+  if (!serviceClient) return image;
+  if (image.startsWith('asset:')) return image;
+
+  const filePath = extractProductImagesPath(image);
+  if (!filePath) return image;
+
+  try {
+    const { data, error } = await serviceClient
+      .storage
+      .from('product-images')
+      .createSignedUrl(filePath, 3600);
+
+    if (error || !data?.signedUrl) {
+      return image;
+    }
+
+    return data.signedUrl;
+  } catch {
+    return image;
+  }
+}
+
 // =============================================================================
 // RATE LIMIT (local copy to avoid bundler issues with _shared)
 // =============================================================================
@@ -149,6 +200,7 @@ serve(async (req: Request): Promise<Response> => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
   if (!supabaseUrl || !supabaseAnonKey) {
     return new Response(JSON.stringify({ error: 'SERVER_ERROR', message: 'Supabase not configured' }), {
       status: 500,
@@ -162,6 +214,9 @@ serve(async (req: Request): Promise<Response> => {
     supabaseAnonKey,
     authHeader ? { global: { headers: { Authorization: authHeader } } } : undefined
   );
+  const serviceClient = supabaseServiceKey
+    ? createClient(supabaseUrl, supabaseServiceKey)
+    : null;
 
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
   let rateLimitKey = ip;
@@ -275,9 +330,21 @@ serve(async (req: Request): Promise<Response> => {
         productsByProducer.set(product.producer_id, list);
       });
 
-      const producers = (producersData || []).map((producer) => ({
-        ...producer,
-        products: productsByProducer.get(producer.id) ?? [],
+      const producers = await Promise.all((producersData || []).map(async (producer) => {
+        const products = productsByProducer.get(producer.id) ?? [];
+        const signedProducerImage = await signProductImageUrl(producer.image, serviceClient);
+        const signedProducts = await Promise.all(
+          products.map(async (product: any) => ({
+            ...product,
+            image: await signProductImageUrl(product.image, serviceClient),
+          }))
+        );
+
+        return {
+          ...producer,
+          image: signedProducerImage,
+          products: signedProducts,
+        };
       }));
 
       return new Response(
@@ -320,11 +387,22 @@ serve(async (req: Request): Promise<Response> => {
       }
 
       const producer = products && products.length > 0 ? (products[0] as any).producer ?? null : null;
+      const signedProducer = producer
+        ? {
+          ...producer,
+          image: await signProductImageUrl((producer as any).image, serviceClient),
+        }
+        : null;
 
       return new Response(
         JSON.stringify({
-          products: products || [],
-          producer,
+          products: await Promise.all(
+            (products || []).map(async (product: any) => ({
+              ...product,
+              image: await signProductImageUrl(product.image, serviceClient),
+            }))
+          ),
+          producer: signedProducer,
           hasMore: (products || []).length === limit,
         }),
         {

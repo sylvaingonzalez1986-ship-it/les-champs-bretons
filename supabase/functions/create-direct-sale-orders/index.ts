@@ -45,11 +45,19 @@ async function getUserFromRequest(req: Request) {
   return { user: data.user };
 }
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
-const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+// UUID validation regex to prevent PostgREST injection
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+function isValidUUID(id: string): boolean {
+  return UUID_REGEX.test(id);
+}
 
+// Create service client per-request to avoid race conditions
+function createServiceClient() {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+  return createClient(supabaseUrl, serviceKey);
+}
 
 serve(async (req) => {
   const responseCorsHeaders = getCorsHeaders(req);
@@ -99,26 +107,40 @@ serve(async (req) => {
 
   const { items } = parsed.data;
 
-    // Group items by producer
-    const itemsByProducer = new Map<string, DirectSaleOrderInput['items']>();
-    for (const item of items) {
-      const list = itemsByProducer.get(item.producerId) ?? [];
-      list.push(item);
-      itemsByProducer.set(item.producerId, list);
+  // Validate all UUIDs to prevent PostgREST injection
+  for (const item of items) {
+    if (!isValidUUID(item.producerId)) {
+      return jsonResponse({ error: 'INVALID_PRODUCER_ID' }, 400, responseCorsHeaders);
     }
+    if (!isValidUUID(item.productId)) {
+      return jsonResponse({ error: 'INVALID_PRODUCT_ID' }, 400, responseCorsHeaders);
+    }
+  }
 
-    const orderIds: string[] = [];
-    const errors: Array<{ producerId: string; reason: string }> = [];
+  // Create service client per-request to avoid race conditions
+  const serviceClient = createServiceClient();
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
 
-    const authHeader = req.headers.get('Authorization') || '';
+  // Group items by producer
+  const itemsByProducer = new Map<string, DirectSaleOrderInput['items']>();
+  for (const item of items) {
+    const list = itemsByProducer.get(item.producerId) ?? [];
+    list.push(item);
+    itemsByProducer.set(item.producerId, list);
+  }
 
-    for (const [producerId, producerItems] of itemsByProducer.entries()) {
-      const payloadItems = producerItems.map((item) => ({
-        productId: item.productId,
-        quantity: item.quantity,
-      }));
+  const orderIds: string[] = [];
+  const errors: Array<{ producerId: string; reason: string }> = [];
 
-      const { data: orderId, error: orderError } = await serviceClient.rpc(
+  const authHeader = req.headers.get('Authorization') || '';
+
+  for (const [producerId, producerItems] of itemsByProducer.entries()) {
+    const payloadItems = producerItems.map((item: { productId: string; producerId: string; quantity: number }) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+    }));
+
+    const { data: orderId, error: orderError } = await serviceClient.rpc(
         'create_direct_sale_order',
         {
           p_user_id: user.id,
@@ -143,7 +165,7 @@ serve(async (req) => {
       // Trigger email (best-effort)
       if (authHeader) {
         try {
-          await fetch(`${SUPABASE_URL}/functions/v1/send-order-email`, {
+          await fetch(`${supabaseUrl}/functions/v1/send-order-email`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

@@ -11,6 +11,7 @@ import {
 
 
 const uuidSchema = z.string().uuid('Invalid UUID format');
+const idOrPickupSchema = z.string().min(1, 'Invalid order identifier');
 const emailSchema = z.string().email('Invalid email format').max(255);
 const quantitySchema = z.number().int().positive().max(10000);
 
@@ -37,11 +38,11 @@ const localMarketOrderActionSchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('cancel'),
-    orderId: uuidSchema,
+    orderId: idOrPickupSchema,
   }),
   z.object({
     action: z.literal('updateStatus'),
-    orderId: uuidSchema,
+    orderId: idOrPickupSchema,
     status: localMarketOrderStatusSchema,
     producerNotes: z.string().max(1000).optional(),
   }),
@@ -52,6 +53,15 @@ const localMarketOrderActionSchema = z.discriminatedUnion('action', [
 ]);
 
 type LocalMarketOrderActionInput = z.infer<typeof localMarketOrderActionSchema>;
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function resolveOrderLookup(orderId: string): { field: 'id' | 'pickup_code'; value: string } {
+  if (UUID_REGEX.test(orderId)) {
+    return { field: 'id', value: orderId };
+  }
+  return { field: 'pickup_code', value: orderId };
+}
 
 interface ValidatedRequest<T> {
   user: User;
@@ -196,6 +206,28 @@ async function getProducerByProfileId(profileId: string) {
   return data;
 }
 
+async function resolveProducerForProfile(profile: Awaited<ReturnType<typeof getUserProfile>>) {
+  if (!profile?.id) {
+    return null;
+  }
+
+  const byProfileId = await getProducerByProfileId(profile.id);
+  if (byProfileId) {
+    return byProfileId;
+  }
+
+  if (!profile.email) {
+    return null;
+  }
+
+  const { data } = await serviceClient
+    .from('producers')
+    .select('id, name, email, phone, city, region')
+    .eq('email', profile.email)
+    .single();
+  return data;
+}
+
 const handler = createValidatedHandler<LocalMarketOrderActionInput>(
   {
     schema: localMarketOrderActionSchema,
@@ -206,6 +238,7 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
     const corsHeaders = responseCorsHeaders;
     const profile = await getUserProfile(user.id, supabase);
     const role = profile?.role ?? 'user';
+    const isProducerRole = role === 'producer' || role === 'pro';
 
     if (data.action === 'create') {
       const {
@@ -316,7 +349,7 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
     }
 
     if (data.action === 'getByPickupCode') {
-      if (role !== 'producer' && role !== 'admin') {
+      if (!isProducerRole && role !== 'admin') {
         return new Response(JSON.stringify({ error: 'FORBIDDEN' }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -336,9 +369,16 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
         });
       }
 
-      if (role === 'producer') {
-        const producer = await getProducerByProfileId(user.id);
+      if (isProducerRole) {
+        const producer = await resolveProducerForProfile(profile);
         if (!producer || producer.id !== order.producer_id) {
+          console.warn('[local-market-orders] getByPickupCode forbidden', {
+            userId: user.id,
+            role,
+            profileEmail: profile?.email ?? null,
+            resolvedProducerId: producer?.id ?? null,
+            orderProducerId: order.producer_id,
+          });
           return new Response(JSON.stringify({ error: 'FORBIDDEN' }), {
             status: 403,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -353,10 +393,11 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
     }
 
     if (data.action === 'cancel') {
+      const lookup = resolveOrderLookup(data.orderId);
       const { data: order, error: orderError } = await serviceClient
         .from('local_market_orders')
         .select('*')
-        .eq('id', data.orderId)
+        .eq(lookup.field, lookup.value)
         .single();
 
       if (orderError || !order) {
@@ -376,7 +417,7 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
       const { data: updated, error: updateError } = await serviceClient
         .from('local_market_orders')
         .update({ status: 'cancelled' })
-        .eq('id', data.orderId)
+        .eq(lookup.field, lookup.value)
         .select('*')
         .single();
 
@@ -394,17 +435,18 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
     }
 
     if (data.action === 'updateStatus') {
-      if (role !== 'producer' && role !== 'admin') {
+      if (!isProducerRole && role !== 'admin') {
         return new Response(JSON.stringify({ error: 'FORBIDDEN' }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
+      const lookup = resolveOrderLookup(data.orderId);
       const { data: order, error: orderError } = await serviceClient
         .from('local_market_orders')
         .select('*')
-        .eq('id', data.orderId)
+        .eq(lookup.field, lookup.value)
         .single();
 
       if (orderError || !order) {
@@ -414,9 +456,20 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
         });
       }
 
-      if (role === 'producer') {
-        const producer = await getProducerByProfileId(user.id);
-        if (!producer || producer.id !== order.producer_id) {
+      if (isProducerRole) {
+        const producer = await resolveProducerForProfile(profile);
+        const producerMatches = producer?.id === order.producer_id;
+        const profileMatches = profile?.id === order.producer_id;
+        if (!producerMatches && !profileMatches) {
+          console.warn('[local-market-orders] updateStatus forbidden', {
+            userId: user.id,
+            role,
+            profileEmail: profile?.email ?? null,
+            resolvedProducerId: producer?.id ?? null,
+            orderProducerId: order.producer_id,
+            orderLookupField: lookup.field,
+            orderLookupValue: lookup.value,
+          });
           return new Response(JSON.stringify({ error: 'FORBIDDEN' }), {
             status: 403,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -430,7 +483,7 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
           status: data.status,
           producer_notes: data.producerNotes ?? null,
         })
-        .eq('id', data.orderId)
+        .eq(lookup.field, lookup.value)
         .select('*')
         .single();
 

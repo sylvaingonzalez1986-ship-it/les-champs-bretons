@@ -25,10 +25,18 @@ const updatesSchema = z.object({
   tracking_number: z.string().max(100).optional(),
   notes: z.string().max(1000).optional(),
   updated_at: z.string().optional(),
+  // Payment validation fields
+  payment_validated: z.boolean().optional(),
+  payment_validated_at: z.string().optional(),
+  tickets_distributed: z.boolean().optional(),
+  tickets_earned: z.number().int().nonnegative().optional(),
 });
 
+// Strict ID validation to prevent PostgREST injection
+const SAFE_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
+
 const requestSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).refine((val) => SAFE_ID_REGEX.test(val), { message: 'Invalid order ID format' }),
   updates: updatesSchema,
 });
 
@@ -158,7 +166,13 @@ serve(async (req) => {
 
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) {
-    return jsonResponse({ error: 'VALIDATION_ERROR' }, 400, responseCorsHeaders);
+    return jsonResponse({
+      error: 'VALIDATION_ERROR',
+      details: parsed.error.errors.map((err) => ({
+        path: err.path.join('.'),
+        message: err.message,
+      })),
+    }, 400, responseCorsHeaders);
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
@@ -238,7 +252,12 @@ serve(async (req) => {
     .eq('id', parsed.data.id);
 
   if (updateError) {
-    return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
+    console.error('[orders-update] DB error:', updateError.message, updateError.code, updateError.details);
+    return jsonResponse({
+      error: 'DATABASE_ERROR',
+      message: updateError.message,
+      code: updateError.code,
+    }, 500, responseCorsHeaders);
   }
 
   return jsonResponse({ success: true }, 200, responseCorsHeaders);

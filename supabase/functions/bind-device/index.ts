@@ -67,7 +67,7 @@ serve(async (req) => {
   }
 
   const userId = userData.user.id;
-  const rateLimitResult = await checkRateLimit(userId, RATE_LIMIT_PRESETS.AUTH);
+  const rateLimitResult = await checkRateLimit(userId, RATE_LIMIT_PRESETS.DEVICE_BIND);
   if (!rateLimitResult.allowed) {
     logSecurityEvent({
       userId,
@@ -76,9 +76,9 @@ serve(async (req) => {
       ip: req.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown',
       userAgent: req.headers.get('user-agent') || 'unknown',
       success: false,
-      reason: `Exceeded ${RATE_LIMIT_PRESETS.AUTH.limit} requests per window`,
+      reason: `Exceeded ${RATE_LIMIT_PRESETS.DEVICE_BIND.limit} requests per window`,
     });
-    return createRateLimitResponse(rateLimitResult, RATE_LIMIT_PRESETS.AUTH, responseCorsHeaders);
+    return createRateLimitResponse(rateLimitResult, RATE_LIMIT_PRESETS.DEVICE_BIND, responseCorsHeaders);
   }
 
   const serviceClient = createClient(supabaseUrl, serviceKey);

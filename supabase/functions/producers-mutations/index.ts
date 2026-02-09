@@ -3,7 +3,6 @@ import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 import { getCorsHeaders, isOriginAllowed } from '../_shared/cors.ts';
-import { verifyDeviceBinding } from '../_shared/device.ts';
 import { checkRateLimit, createRateLimitResponse, RATE_LIMIT_PRESETS } from '../_shared/rate-limit.ts';
 
 const producerSchema = z.object({
@@ -170,15 +169,6 @@ serve(async (req) => {
   const { user, error, authHeader, supabaseUrl, anonKey } = await getUserFromRequest(req, responseCorsHeaders);
   if (error) {
     return error;
-  }
-
-  const authClient = createClient(supabaseUrl ?? '', anonKey ?? '', {
-    global: { headers: { Authorization: authHeader ?? '' } },
-  });
-
-  const deviceError = await verifyDeviceBinding(req, user, authClient, responseCorsHeaders);
-  if (deviceError) {
-    return deviceError;
   }
 
   const rateLimitResult = await checkRateLimit(user.id, RATE_LIMIT_PRESETS.GENERAL);
