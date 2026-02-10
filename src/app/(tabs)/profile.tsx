@@ -538,7 +538,7 @@ export default function ProfileScreen() {
   const proFinancials = calculateProFinancials();
 
   return (
-    <View className="flex-1 bg-[#0A0F0D]" style={{ paddingTop: insets.top }}>
+    <View className="flex-1" style={{ paddingTop: insets.top, backgroundColor: COLORS.background.nightSky }}>
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View className="px-6 pt-4 pb-6">
