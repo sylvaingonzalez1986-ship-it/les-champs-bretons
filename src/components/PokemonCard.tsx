@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Pressable, Image, Dimensions } from 'react-native';
 import { Text } from '@/components/ui';
-import { MapPin, X, Leaf, ShoppingBag, Sparkles, Star, ChevronLeft, ChevronRight, Instagram, Facebook, Twitter, Youtube, Globe } from 'lucide-react-native';
+import { MapPin, X, Leaf, ShoppingBag, Sparkles, Star, ChevronLeft, ChevronRight, Instagram, Facebook, Twitter, Linkedin, Youtube, Globe } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { safeOpenExternalUrl } from '@/lib/safe-linking';
 import Animated, {
@@ -92,6 +92,7 @@ export const PokemonCard = ({
     producer.socialLinks.instagram ||
     producer.socialLinks.facebook ||
     producer.socialLinks.twitter ||
+    producer.socialLinks.linkedin ||
     producer.socialLinks.tiktok ||
     producer.socialLinks.youtube ||
     producer.socialLinks.website
@@ -490,6 +491,17 @@ export const PokemonCard = ({
                         style={{ backgroundColor: '#1DA1F225', borderWidth: 1, borderColor: '#1DA1F250' }}
                       >
                         <Twitter size={18} color="#1DA1F2" />
+                      </Pressable>
+                    ) : null}
+                    {producer.socialLinks?.linkedin ? (
+                      <Pressable
+                        onPress={() => {
+                          void safeOpenExternalUrl(producer.socialLinks!.linkedin!);
+                        }}
+                        className="w-9 h-9 rounded-full items-center justify-center"
+                        style={{ backgroundColor: '#0A66C225', borderWidth: 1, borderColor: '#0A66C250' }}
+                      >
+                        <Linkedin size={18} color="#0A66C2" />
                       </Pressable>
                     ) : null}
                     {producer.socialLinks?.tiktok ? (

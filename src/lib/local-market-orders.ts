@@ -45,6 +45,12 @@ export interface LocalMarketOrder {
   pickup_location: string | null;
   pickup_instructions: string | null;
 
+  // Livraison
+  delivery_method: 'pickup' | 'shipping';
+  delivery_fee: number | null;
+  delivery_address: string | null;
+  delivery_instructions: string | null;
+
   // Notes
   customer_notes: string | null;
   producer_notes: string | null;
@@ -78,6 +84,12 @@ export interface CreateLocalOrderParams {
   // Infos retrait
   pickup_location?: string;
   pickup_instructions?: string;
+
+  // Livraison
+  delivery_method?: 'pickup' | 'shipping';
+  delivery_fee?: number;
+  delivery_address?: string;
+  delivery_instructions?: string;
 
   // Notes
   customer_notes?: string;
@@ -221,6 +233,10 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
             quantity: params.quantity,
             pickupLocation: params.pickup_location,
             pickupInstructions: params.pickup_instructions,
+            deliveryMethod: params.delivery_method,
+            deliveryFee: params.delivery_fee,
+            deliveryAddress: params.delivery_address,
+            deliveryInstructions: params.delivery_instructions,
             customerNotes: params.customer_notes,
             customerName: params.customer_name,
             customerEmail: params.customer_email,
@@ -235,15 +251,17 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
         let errorMessage = 'Erreur lors de la création de la commande';
         try {
           const errorData = JSON.parse(responseText);
-          if (errorData.message) {
-            errorMessage = errorData.message;
-          } else if (errorData.error) {
-            errorMessage = errorData.error;
-          }
+          const parts: string[] = [];
+          if (errorData.error) parts.push(errorData.error);
+          if (errorData.details) parts.push(errorData.details);
+          if (errorData.producerId) parts.push(`producerId: ${errorData.producerId}`);
+          if (errorData.message) parts.push(errorData.message);
+          if (parts.length > 0) errorMessage = parts.join(' — ');
         } catch (e) {
           // Réponse non-JSON
         }
 
+        console.warn('[createOrder] Error:', errorMessage, 'status:', response.status);
         return { success: false, error: errorMessage };
       }
 
@@ -465,6 +483,10 @@ async function sendLocalMarketOrderEmail(
           pickupCode: order.pickup_code,
           pickupLocation: order.pickup_location || undefined,
           pickupInstructions: order.pickup_instructions || undefined,
+          deliveryMethod: order.delivery_method || 'pickup',
+          deliveryFee: order.delivery_fee ?? 0,
+          deliveryAddress: order.delivery_address || undefined,
+          deliveryInstructions: order.delivery_instructions || undefined,
           customerNotes: order.customer_notes || undefined,
         }),
       }

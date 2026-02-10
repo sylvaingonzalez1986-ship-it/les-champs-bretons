@@ -12,6 +12,7 @@ export interface Producer {
   image: string;
   description: string;
   email?: string; // Email de contact du producteur
+  phone?: string; // Telephone de contact du producteur
   // GPS coordinates for map positioning
   coordinates: {
     latitude: number;
@@ -41,6 +42,9 @@ export interface Producer {
   adresse_retrait?: string;
   horaires_retrait?: string;
   instructions_retrait?: string;
+  shipping_enabled?: boolean;
+  shipping_fee?: number;
+  shipping_note?: string;
   // Réseaux sociaux
   socialLinks?: {
     instagram?: string;
@@ -49,6 +53,7 @@ export interface Producer {
     tiktok?: string;
     youtube?: string;
     website?: string;
+    linkedin?: string;
   };
 }
 

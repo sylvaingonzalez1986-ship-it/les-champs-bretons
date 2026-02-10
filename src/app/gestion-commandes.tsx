@@ -6,7 +6,7 @@
  * - Export CSV/PDF
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   ScrollView,
@@ -26,19 +26,24 @@ import {
   FileText,
   Calendar,
   ChevronDown,
+  ChevronUp,
   Eye,
   Printer,
   Mail,
   Store,
+  Phone,
+  Users,
+  Truck,
+  MapPin,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { COLORS, withOpacity } from '@/lib/colors';
-import { useOrdersStore, Order, ORDER_STATUS_CONFIG } from '@/lib/store';
-import { getStatusLabel, getStatusColor } from '@/lib/local-market-orders';
+import { useOrdersStore, Order, ORDER_STATUS_CONFIG, useProducerStore, useSupabaseSyncStore } from '@/lib/store';
+import { getStatusLabel, getStatusColor, type LocalMarketOrder } from '@/lib/local-market-orders';
 import { usePermissions, useAuth } from '@/lib/useAuth';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase-auth';
 import { useQueryClient } from '@tanstack/react-query';
-import { useMyProducerQuery, useProducerLocalOrdersQuery, useProducerProOrdersQuery } from '@/api/orders';
+import { useMyProducerQuery, useProducerLocalOrdersQuery, useProducerProOrdersQuery, useUserOrdersQuery } from '@/api/orders';
 import { useLocalMarketOrdersInfinite } from '@/api/local-market';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
@@ -46,9 +51,14 @@ import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as MailComposer from 'expo-mail-composer';
-import { safeOpenExternalUrl } from '@/lib/safe-linking';
+import { getSafeMailtoUrl, getSafeTelUrl, safeOpenExternalUrl } from '@/lib/safe-linking';
+import { useOrderQueueStore } from '@/lib/order-queue-store';
+import { isSupabaseSyncConfigured } from '@/lib/supabase-sync';
+import { getProducerDisplayName, Producer, SAMPLE_PRODUCERS } from '@/lib/producers';
+import { Toast, useToast } from '@/components/Toast';
 
 type PeriodFilter = 'all' | '1month' | '3months' | '6months' | '12months';
+type GestionMode = 'producer' | 'pro' | 'admin';
 
 const PERIOD_FILTERS: { value: PeriodFilter; label: string }[] = [
   { value: 'all', label: 'Depuis le départ' },
@@ -60,12 +70,11 @@ const PERIOD_FILTERS: { value: PeriodFilter; label: string }[] = [
 
 const PAYMENT_LINK_EMAIL = 'leschanvriersunis@gmail.com';
 
-export default function GestionCommandesScreen() {
+export default function GestionCommandesScreen({ mode }: { mode?: GestionMode }) {
   const insets = useSafeAreaInsets();
   const { isAdmin, isPro, isProducer } = usePermissions();
   const { session, profile } = useAuth();
   const ordersFromStore = useOrdersStore((s) => s.orders);
-  const setOrders = useOrdersStore((s) => s.setOrders);
   const updateOrderStatus = useOrdersStore((s) => s.updateOrderStatus);
   const queryClient = useQueryClient();
 
@@ -75,12 +84,26 @@ export default function GestionCommandesScreen() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isRequestingPaymentLink, setIsRequestingPaymentLink] = useState(false);
+  const [showSuppliers, setShowSuppliers] = useState(false);
+  const [producerOrdersView, setProducerOrdersView] = useState<'pro' | 'local'>('pro');
+  const { toast, showToast, hideToast } = useToast();
   const { data: myProducer } = useMyProducerQuery();
   const producerId = myProducer?.id ?? '';
   const {
     data: producerProOrders = [],
     isLoading: isLoadingProOrders,
   } = useProducerProOrdersQuery(producerId);
+
+  const roleMode: GestionMode | 'client' = mode ?? (isProducer ? 'producer' : isPro ? 'pro' : isAdmin ? 'admin' : 'client');
+  const isProducerMode = roleMode === 'producer';
+  const isProMode = roleMode === 'pro';
+  const isAdminMode = roleMode === 'admin';
+
+  const shouldLoadUserOrders = (isAdminMode || isProMode) && isSupabaseSyncConfigured();
+  const {
+    data: userOrders = [],
+    isLoading: isLoadingUserOrders,
+  } = useUserOrdersQuery(shouldLoadUserOrders);
   const {
     data: producerLocalOrders = [],
     isLoading: isLoadingLocalOrders,
@@ -90,8 +113,8 @@ export default function GestionCommandesScreen() {
     data: localMarketPages,
     isFetching: isLocalMarketFetching,
   } = useLocalMarketOrdersInfinite(
-    isAdmin || isPro ? session?.user?.id : undefined,
-    isAdmin || isPro ? session?.access_token : undefined,
+    isAdminMode || isProMode ? session?.user?.id : undefined,
+    isAdminMode || isProMode ? session?.access_token : undefined,
     200
   );
 
@@ -100,29 +123,112 @@ export default function GestionCommandesScreen() {
     [localMarketPages]
   );
 
+  const pendingOrders = useOrderQueueStore((s) => s.pendingOrders);
+  const customProducers = useProducerStore((s) => s.producers);
+  const syncedProducers = useSupabaseSyncStore((s) => s.syncedProducers);
+  const pendingOrdersForDisplay = useMemo(
+    () =>
+      pendingOrders
+        .filter((pending) => pending.status === 'pending' || pending.status === 'failed')
+        .map((pending) => pending.order),
+    [pendingOrders]
+  );
+  const pendingOrderIds = useMemo(
+    () => new Set(pendingOrdersForDisplay.map((order) => order.id)),
+    [pendingOrdersForDisplay]
+  );
+
+  const suppliersListMax = 8;
+  const supplierContacts = useMemo(() => {
+    if (!isProMode) return [] as Array<{
+      id: string;
+      name: string;
+      email?: string;
+      phone?: string;
+      city?: string;
+      region?: string;
+    }>;
+
+    let baseProducers: Producer[] = [];
+    if (isAdminMode) {
+      const customIds = new Set(customProducers.map((producer) => producer.id));
+      const filteredSamples = SAMPLE_PRODUCERS.filter((producer) => !customIds.has(producer.id));
+      baseProducers = [...customProducers, ...filteredSamples];
+    } else if (syncedProducers.length > 0) {
+      baseProducers = syncedProducers;
+    } else {
+      const customIds = new Set(customProducers.map((producer) => producer.id));
+      const filteredSamples = SAMPLE_PRODUCERS.filter((producer) => !customIds.has(producer.id));
+      baseProducers = [...customProducers, ...filteredSamples];
+    }
+
+    const unique = new Map<string, Producer>();
+    baseProducers.forEach((producer) => {
+      if (!unique.has(producer.id)) {
+        unique.set(producer.id, producer);
+      }
+    });
+
+    return Array.from(unique.values()).map((producer) => ({
+      id: producer.id,
+      name: getProducerDisplayName(producer),
+      email: producer.email?.trim() || undefined,
+      phone: producer.phone?.trim() || undefined,
+      city: producer.city?.trim() || undefined,
+      region: producer.region?.trim() || undefined,
+    }));
+  }, [customProducers, isAdminMode, isProMode, syncedProducers]);
+
+  const openSupplierMail = useCallback(async (email?: string) => {
+    if (!email) {
+      showToast('Contact indisponible', 'warning');
+      return;
+    }
+    const mailUrl = getSafeMailtoUrl(email);
+    if (!mailUrl) {
+      showToast('Contact indisponible', 'warning');
+      return;
+    }
+    const opened = await safeOpenExternalUrl(mailUrl, { allowMailto: true });
+    if (!opened) {
+      showToast('Contact indisponible', 'warning');
+    }
+  }, [showToast]);
+
+  const openSupplierTel = useCallback(async (phone?: string) => {
+    if (!phone) {
+      showToast('Contact indisponible', 'warning');
+      return;
+    }
+    const telUrl = getSafeTelUrl(phone);
+    if (!telUrl) {
+      showToast('Contact indisponible', 'warning');
+      return;
+    }
+    const opened = await safeOpenExternalUrl(telUrl, { allowTel: true });
+    if (!opened) {
+      showToast('Contact indisponible', 'warning');
+    }
+  }, [showToast]);
+
   // Vérifier les permissions
-  const hasAccess = isAdmin || isPro || isProducer;
+  const hasAccess = isAdminMode || isProMode || isProducerMode;
 
-  const isLoadingOrders = isProducer
+  const isLoadingOrders = isProducerMode
     ? isLoadingProOrders || isLoadingLocalOrders
-    : isLocalMarketFetching;
+    : isLocalMarketFetching || (shouldLoadUserOrders && isLoadingUserOrders);
 
-  // Combiner les commandes boutique et marché local
-  const allOrders = useMemo(() => {
-    // Pour les producteurs, utiliser producerLocalOrders et producerProOrders
-    // Pour admin/pro, utiliser localMarketOrders et ordersFromStore
-    const localOrdersSource = isProducer ? producerLocalOrders : localMarketOrders;
-    const proOrdersSource = isProducer ? producerProOrders : ordersFromStore;
-
-    // Convertir les commandes marché local en format Order pour affichage unifié
-    const localOrdersConverted: Order[] = localOrdersSource.map((lo) => ({
+  const convertLocalOrders = useCallback((orders: LocalMarketOrder[]): Order[] => (
+    orders.map((lo) => ({
       id: String(lo.id),
       customerInfo: {
         firstName: lo.customer_name.split(' ')[0] || lo.customer_name,
         lastName: lo.customer_name.split(' ').slice(1).join(' ') || '',
         email: lo.customer_email,
         phone: lo.customer_phone || '',
-        address: lo.pickup_location || '',
+        address: lo.delivery_method === 'shipping'
+          ? lo.delivery_address || ''
+          : lo.pickup_location || '',
         postalCode: '',
         city: '',
       },
@@ -137,40 +243,77 @@ export default function GestionCommandesScreen() {
         totalPrice: lo.total_amount,
         tvaRate: 20,
       }],
-      subtotal: lo.total_amount,
-      shippingFee: 0,
+      subtotal: lo.total_amount - (lo.delivery_method === 'shipping' ? (lo.delivery_fee || 0) : 0),
+      shippingFee: lo.delivery_method === 'shipping' ? (lo.delivery_fee || 0) : 0,
       total: lo.total_amount,
       status: (lo.status === 'completed' ? 'shipped' : lo.status === 'cancelled' ? 'cancelled' : 'pending') as Order['status'],
       createdAt: new Date(lo.created_at).getTime(),
       updatedAt: new Date(lo.updated_at).getTime(),
       notes: lo.customer_notes || lo.producer_notes || undefined,
       isProOrder: false,
-    }));
+      deliveryMethod: lo.delivery_method || 'pickup',
+    }))
+  ), []);
+
+  const producerLocalOrdersConverted = useMemo(
+    () => convertLocalOrders(producerLocalOrders),
+    [convertLocalOrders, producerLocalOrders]
+  );
+
+  // Combiner les commandes boutique et marché local
+  const allOrders = useMemo(() => {
+    // Pour les producteurs, utiliser producerLocalOrders et producerProOrders
+    // Pour admin/pro, utiliser localMarketOrders et ordersFromStore
+    const localOrdersSource = isProducerMode ? producerLocalOrders : localMarketOrders;
+    const baseProOrdersSource = isProducerMode
+      ? producerProOrders
+      : shouldLoadUserOrders
+        ? userOrders
+        : ordersFromStore;
+
+    const proOrdersSource = isProducerMode
+      ? baseProOrdersSource
+      : [
+          ...baseProOrdersSource,
+          ...pendingOrdersForDisplay.filter(
+            (pending) => !baseProOrdersSource.some((order) => order.id === pending.id)
+          ),
+        ];
+
+    const localOrdersConverted = convertLocalOrders(localOrdersSource);
 
     return [...proOrdersSource, ...localOrdersConverted];
-  }, [ordersFromStore, localMarketOrders, producerLocalOrders, producerProOrders, isProducer]);
+  }, [
+    ordersFromStore,
+    localMarketOrders,
+    producerLocalOrders,
+    producerProOrders,
+    convertLocalOrders,
+    isProducerMode,
+    shouldLoadUserOrders,
+    userOrders,
+    pendingOrdersForDisplay,
+  ]);
 
-  // Filtrer les commandes par période
-  const filteredByPeriod = useMemo(() => {
-    if (selectedPeriod === 'all') return allOrders;
+  const filterOrders = useCallback((orders: Order[]) => {
+    const periodFiltered = (() => {
+      if (selectedPeriod === 'all') return orders;
 
-    const now = Date.now();
-    const periodMs = {
-      '1month': 30 * 24 * 60 * 60 * 1000,
-      '3months': 90 * 24 * 60 * 60 * 1000,
-      '6months': 180 * 24 * 60 * 60 * 1000,
-      '12months': 365 * 24 * 60 * 60 * 1000,
-    }[selectedPeriod];
+      const now = Date.now();
+      const periodMs = {
+        '1month': 30 * 24 * 60 * 60 * 1000,
+        '3months': 90 * 24 * 60 * 60 * 1000,
+        '6months': 180 * 24 * 60 * 60 * 1000,
+        '12months': 365 * 24 * 60 * 60 * 1000,
+      }[selectedPeriod];
 
-    return allOrders.filter((order) => now - order.createdAt <= periodMs);
-  }, [allOrders, selectedPeriod]);
+      return orders.filter((order) => now - order.createdAt <= periodMs);
+    })();
 
-  // Filtrer par recherche
-  const filteredOrders = useMemo(() => {
-    if (!searchQuery.trim()) return filteredByPeriod;
+    if (!searchQuery.trim()) return periodFiltered;
 
     const query = searchQuery.toLowerCase();
-    return filteredByPeriod.filter((order) => {
+    return periodFiltered.filter((order) => {
       const matchId = order.id.toLowerCase().includes(query);
       const matchCustomer =
         order.customerInfo.firstName?.toLowerCase().includes(query) ||
@@ -185,17 +328,31 @@ export default function GestionCommandesScreen() {
 
       return matchId || matchCustomer || matchStatus || matchProducts;
     });
-  }, [filteredByPeriod, searchQuery]);
+  }, [searchQuery, selectedPeriod]);
 
-  // Statistiques
-  const stats = useMemo(() => {
-    const total = filteredOrders.length;
-    const totalRevenue = filteredOrders.reduce((sum, order) => sum + order.total, 0);
-    const pending = filteredOrders.filter((o) => o.status === 'pending').length;
-    const completed = filteredOrders.filter((o) => o.status === 'shipped').length;
+  const filteredOrders = useMemo(
+    () => filterOrders(allOrders),
+    [allOrders, filterOrders]
+  );
+
+  const filteredProducerProOrders = useMemo(
+    () => filterOrders(producerProOrders),
+    [filterOrders, producerProOrders]
+  );
+
+  const filteredProducerLocalOrders = useMemo(
+    () => filterOrders(producerLocalOrdersConverted),
+    [filterOrders, producerLocalOrdersConverted]
+  );
+
+  const computeStats = useCallback((orders: Order[]) => {
+    const total = orders.length;
+    const totalRevenue = orders.reduce((sum, order) => sum + order.total, 0);
+    const pending = orders.filter((o) => o.status === 'pending').length;
+    const completed = orders.filter((o) => o.status === 'shipped').length;
 
     // Calcul TVA cumulée - utilise le taux de chaque item ou 20% par défaut
-    const totalTVA = filteredOrders.reduce((sum, order) => {
+    const totalTVA = orders.reduce((sum, order) => {
       const orderTVA = order.items.reduce((itemSum, item) => {
         const tvaRate = (item.tvaRate ?? 20) / 100;
         const tva = item.totalPrice - (item.totalPrice / (1 + tvaRate));
@@ -204,11 +361,21 @@ export default function GestionCommandesScreen() {
       return sum + orderTVA;
     }, 0);
 
-    // Calcul HT
     const totalHT = totalRevenue - totalTVA;
 
     return { total, totalRevenue, pending, completed, totalTVA, totalHT };
-  }, [filteredOrders]);
+  }, []);
+
+  // Statistiques
+  const stats = useMemo(() => computeStats(filteredOrders), [computeStats, filteredOrders]);
+  const producerProStats = useMemo(
+    () => computeStats(filteredProducerProOrders),
+    [computeStats, filteredProducerProOrders]
+  );
+  const producerLocalStats = useMemo(
+    () => computeStats(filteredProducerLocalOrders),
+    [computeStats, filteredProducerLocalOrders]
+  );
 
   // Générer CSV
   const generateCSV = async () => {
@@ -468,7 +635,7 @@ export default function GestionCommandesScreen() {
       };
 
       // Si c'est un producteur connecté, utiliser ses propres infos de profil
-      if (isProducer && profile) {
+      if (isProducerMode && profile) {
         producerInfo = {
           name: profile.company_name || profile.business_name || profile.full_name || myProducer?.name || producerInfo.name,
           companyName: profile.company_name || profile.business_name || '',
@@ -812,8 +979,13 @@ export default function GestionCommandesScreen() {
 
   const markPaymentLinkSent = (orderId: string) => {
     updateOrderStatus(orderId, 'payment_sent');
-    if (isProducer && producerId) {
+    if (isProducerMode && producerId) {
       queryClient.setQueryData<Order[]>(['orders', 'pro', producerId], (prev) =>
+        prev ? prev.map((o) => (o.id === orderId ? { ...o, status: 'payment_sent' } : o)) : prev
+      );
+    }
+    if (!isProducerMode && session?.user?.id) {
+      queryClient.setQueryData<Order[]>(['orders', 'user', session.user.id], (prev) =>
         prev ? prev.map((o) => (o.id === orderId ? { ...o, status: 'payment_sent' } : o)) : prev
       );
     }
@@ -1015,6 +1187,33 @@ export default function GestionCommandesScreen() {
             <Text style={{ fontSize: 16, fontWeight: 'bold', color: COLORS.primary.gold, marginBottom: 15 }}>
               Informations Client
             </Text>
+
+            {/* Badge mode de réception */}
+            {selectedOrder.deliveryMethod && (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  backgroundColor: selectedOrder.deliveryMethod === 'shipping' ? 'rgba(59, 130, 246, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  marginBottom: 15,
+                  borderWidth: 1,
+                  borderColor: selectedOrder.deliveryMethod === 'shipping' ? 'rgba(59, 130, 246, 0.3)' : 'rgba(16, 185, 129, 0.3)',
+                }}
+              >
+                {selectedOrder.deliveryMethod === 'shipping' ? (
+                  <Truck size={16} color="#3B82F6" />
+                ) : (
+                  <MapPin size={16} color="#10B981" />
+                )}
+                <Text style={{ fontSize: 13, fontWeight: 'bold', color: selectedOrder.deliveryMethod === 'shipping' ? '#3B82F6' : '#10B981' }}>
+                  {selectedOrder.deliveryMethod === 'shipping' ? 'Livraison postale' : 'Retrait sur place'}
+                </Text>
+              </View>
+            )}
             <View style={{ gap: 10 }}>
               <View>
                 <Text style={{ fontSize: 12, color: COLORS.text.muted }}>Nom</Text>
@@ -1220,6 +1419,13 @@ export default function GestionCommandesScreen() {
 
           <View style={{ height: insets.bottom + 20 }} />
         </ScrollView>
+        <Toast
+          visible={toast.visible}
+          message={toast.message}
+          type={toast.type}
+          onHide={hideToast}
+          position="top"
+        />
       </View>
     );
   }
@@ -1408,6 +1614,146 @@ export default function GestionCommandesScreen() {
 
       {/* Liste des commandes */}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20 }}>
+        {isProMode && (
+          <View
+            style={{
+              backgroundColor: COLORS.background.charcoal,
+              borderRadius: 12,
+              padding: 14,
+              marginBottom: 16,
+              borderWidth: 1,
+              borderColor: `${COLORS.accent.teal}30`,
+            }}
+          >
+            <Pressable
+              onPress={() => setShowSuppliers((prev) => !prev)}
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 10,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: `${COLORS.accent.teal}25`,
+                  }}
+                >
+                  <Users size={18} color={COLORS.accent.teal} />
+                </View>
+                <View>
+                  <Text style={{ color: COLORS.text.white, fontWeight: 'bold', fontSize: 14 }}>Fournisseurs</Text>
+                  <Text style={{ color: COLORS.text.muted, fontSize: 11 }}>{supplierContacts.length} producteurs</Text>
+                </View>
+              </View>
+              {showSuppliers ? (
+                <ChevronUp size={18} color={COLORS.text.muted} />
+              ) : (
+                <ChevronDown size={18} color={COLORS.text.muted} />
+              )}
+            </Pressable>
+
+            {showSuppliers && (
+              <View style={{ marginTop: 12 }}>
+                {supplierContacts.length === 0 ? (
+                  <Text style={{ color: COLORS.text.muted, fontSize: 12, textAlign: 'center', paddingVertical: 8 }}>
+                    Aucun fournisseur disponible
+                  </Text>
+                ) : (
+                  supplierContacts.slice(0, suppliersListMax).map((supplier) => {
+                    const mailUrl = supplier.email ? getSafeMailtoUrl(supplier.email) : null;
+                    const telUrl = supplier.phone ? getSafeTelUrl(supplier.phone) : null;
+
+                    return (
+                      <View
+                        key={supplier.id}
+                        style={{
+                          backgroundColor: 'rgba(255,255,255,0.04)',
+                          borderRadius: 10,
+                          padding: 10,
+                          marginBottom: 8,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <View style={{ flex: 1, marginRight: 10 }}>
+                          <Text style={{ color: COLORS.text.white, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                            {supplier.name}
+                          </Text>
+                          <Text style={{ color: COLORS.text.muted, fontSize: 11 }} numberOfLines={1}>
+                            {[supplier.city, supplier.region].filter(Boolean).join(' · ')}
+                          </Text>
+                          {supplier.email && (
+                            <Text style={{ color: COLORS.text.muted, fontSize: 10 }} numberOfLines={1}>
+                              {supplier.email}
+                            </Text>
+                          )}
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                          <Pressable
+                            onPress={() => void openSupplierMail(supplier.email)}
+                            style={{
+                              width: 30,
+                              height: 30,
+                              borderRadius: 15,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              backgroundColor: `${COLORS.accent.teal}25`,
+                              marginRight: 8,
+                              opacity: mailUrl ? 1 : 0.4,
+                            }}
+                          >
+                            <Mail size={14} color={mailUrl ? COLORS.accent.teal : COLORS.text.muted} />
+                          </Pressable>
+                          <Pressable
+                            onPress={() => void openSupplierTel(supplier.phone)}
+                            style={{
+                              width: 30,
+                              height: 30,
+                              borderRadius: 15,
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              backgroundColor: `${COLORS.accent.hemp}25`,
+                              opacity: telUrl ? 1 : 0.4,
+                            }}
+                          >
+                            <Phone size={14} color={telUrl ? COLORS.accent.hemp : COLORS.text.muted} />
+                          </Pressable>
+                        </View>
+                      </View>
+                    );
+                  })
+                )}
+                {supplierContacts.length > suppliersListMax && (
+                  <Text style={{ color: COLORS.text.muted, fontSize: 10, textAlign: 'center', marginTop: 4 }}>
+                    +{supplierContacts.length - suppliersListMax} autres fournisseurs
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+        {pendingOrdersForDisplay.length > 0 && !isProducerMode && (
+          <View
+            style={{
+              backgroundColor: 'rgba(199, 91, 91, 0.12)',
+              borderRadius: 12,
+              padding: 14,
+              marginBottom: 16,
+              borderWidth: 1,
+              borderColor: 'rgba(199, 91, 91, 0.3)',
+            }}
+          >
+            <Text style={{ fontSize: 14, color: '#C75B5B', fontWeight: 'bold', marginBottom: 4 }}>
+              {pendingOrdersForDisplay.length} commande{pendingOrdersForDisplay.length > 1 ? 's' : ''} en attente de synchronisation
+            </Text>
+            <Text style={{ fontSize: 12, color: COLORS.text.muted }}>
+              Elles apparaissent ici mais ne sont pas encore confirmées sur le serveur.
+            </Text>
+          </View>
+        )}
         {isLoadingOrders ? (
           <View style={{ paddingTop: 10 }}>
             {Array.from({ length: 5 }).map((_, index) => (
@@ -1433,6 +1779,218 @@ export default function GestionCommandesScreen() {
               </View>
             ))}
           </View>
+        ) : isProducerMode ? (
+          (() => {
+            const renderOrders = (orders: Order[], offset: number) => (
+              orders.map((order, index) => (
+                <Animated.View
+                  key={`${order.id}-${index}`}
+                  entering={FadeInDown.delay((index + offset) * 50)}
+                  style={{ marginBottom: 15 }}
+                >
+                  <Pressable
+                    onPress={() => viewOrderDetail(order)}
+                    style={{
+                      backgroundColor: COLORS.background.charcoal,
+                      borderRadius: 12,
+                      padding: 15,
+                      borderLeftWidth: 4,
+                      borderLeftColor: ORDER_STATUS_CONFIG[order.status].color,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 12, color: COLORS.text.muted, fontFamily: 'monospace' }}>
+                          {order.id.slice(0, 12)}...
+                        </Text>
+                        <Text style={{ fontSize: 16, color: COLORS.text.white, fontWeight: 'bold', marginTop: 5 }}>
+                          {order.customerInfo.firstName} {order.customerInfo.lastName}
+                        </Text>
+                        <Text style={{ fontSize: 12, color: COLORS.text.muted, marginTop: 2 }}>
+                          {new Date(order.createdAt).toLocaleDateString('fr-FR')}
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <View
+                          style={{
+                            backgroundColor: ORDER_STATUS_CONFIG[order.status].color,
+                            paddingHorizontal: 10,
+                            paddingVertical: 4,
+                            borderRadius: 6,
+                            marginBottom: 8,
+                          }}
+                        >
+                          <Text style={{ color: 'white', fontSize: 10, fontWeight: 'bold' }}>
+                            {ORDER_STATUS_CONFIG[order.status].label}
+                          </Text>
+                        </View>
+                        {pendingOrderIds.has(order.id) && (
+                          <View
+                            style={{
+                              backgroundColor: 'rgba(199, 91, 91, 0.2)',
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 999,
+                              marginBottom: 8,
+                            }}
+                          >
+                            <Text style={{ color: '#C75B5B', fontSize: 10, fontWeight: 'bold' }}>
+                              Sync en attente
+                            </Text>
+                          </View>
+                        )}
+                        <Text style={{ fontSize: 18, color: COLORS.primary.gold, fontWeight: 'bold' }}>
+                          {order.total.toFixed(2)} €
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View
+                      style={{
+                        borderTopWidth: 1,
+                        borderTopColor: COLORS.background.nightSky,
+                        paddingTop: 10,
+                        flexDirection: 'row',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Text style={{ fontSize: 12, color: COLORS.text.muted }}>
+                          {order.items.length} produit{order.items.length > 1 ? 's' : ''}
+                        </Text>
+                        {order.deliveryMethod && (
+                          <View
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 4,
+                              backgroundColor: order.deliveryMethod === 'shipping' ? 'rgba(59, 130, 246, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 6,
+                            }}
+                          >
+                            {order.deliveryMethod === 'shipping' ? (
+                              <Truck size={12} color="#3B82F6" />
+                            ) : (
+                              <MapPin size={12} color="#10B981" />
+                            )}
+                            <Text style={{ fontSize: 10, fontWeight: 'bold', color: order.deliveryMethod === 'shipping' ? '#3B82F6' : '#10B981' }}>
+                              {order.deliveryMethod === 'shipping' ? 'Livraison' : 'Retrait'}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                        <Eye size={16} color={COLORS.primary.gold} />
+                        <Text style={{ fontSize: 12, color: COLORS.primary.gold }}>Voir détails</Text>
+                      </View>
+                    </View>
+                  </Pressable>
+                </Animated.View>
+              ))
+            );
+
+            const viewIsPro = producerOrdersView === 'pro';
+            const activeOrders = viewIsPro ? filteredProducerProOrders : filteredProducerLocalOrders;
+            const activeStats = viewIsPro ? producerProStats : producerLocalStats;
+            const titleColor = viewIsPro ? '#10B981' : '#F97316';
+            const title = viewIsPro ? 'Commandes PRO' : 'Commandes Marche Local';
+
+            return (
+              <>
+                <View style={{ flexDirection: 'row', marginBottom: 12 }}>
+                  <Pressable
+                    onPress={() => setProducerOrdersView('pro')}
+                    style={{
+                      flex: 1,
+                      padding: 10,
+                      borderRadius: 10,
+                      alignItems: 'center',
+                      marginRight: 6,
+                      backgroundColor: viewIsPro ? 'rgba(16, 185, 129, 0.2)' : COLORS.background.charcoal,
+                      borderWidth: viewIsPro ? 1 : 0,
+                      borderColor: 'rgba(16, 185, 129, 0.45)',
+                    }}
+                  >
+                    <Text style={{ color: viewIsPro ? '#10B981' : COLORS.text.muted, fontWeight: 'bold', fontSize: 12 }}>
+                      PRO
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setProducerOrdersView('local')}
+                    style={{
+                      flex: 1,
+                      padding: 10,
+                      borderRadius: 10,
+                      alignItems: 'center',
+                      marginLeft: 6,
+                      backgroundColor: !viewIsPro ? 'rgba(249, 115, 22, 0.2)' : COLORS.background.charcoal,
+                      borderWidth: !viewIsPro ? 1 : 0,
+                      borderColor: 'rgba(249, 115, 22, 0.45)',
+                    }}
+                  >
+                    <Text style={{ color: !viewIsPro ? '#F97316' : COLORS.text.muted, fontWeight: 'bold', fontSize: 12 }}>
+                      MARCHE LOCAL
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <View
+                  style={{
+                    backgroundColor: viewIsPro ? 'rgba(16, 185, 129, 0.12)' : 'rgba(249, 115, 22, 0.12)',
+                    borderRadius: 12,
+                    padding: 14,
+                    marginBottom: 12,
+                    borderWidth: 1,
+                    borderColor: viewIsPro ? 'rgba(16, 185, 129, 0.3)' : 'rgba(249, 115, 22, 0.3)',
+                  }}
+                >
+                  <Text style={{ fontSize: 14, color: titleColor, fontWeight: 'bold' }}>
+                    {title}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: COLORS.text.muted }}>
+                    {activeOrders.length} commande{activeOrders.length > 1 ? 's' : ''}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                  <View style={{ width: '48%', backgroundColor: COLORS.background.charcoal, padding: 10, borderRadius: 8 }}>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: titleColor }}>
+                      {activeStats.total}
+                    </Text>
+                    <Text style={{ fontSize: 11, color: COLORS.text.muted }}>Commandes</Text>
+                  </View>
+                  <View style={{ width: '48%', backgroundColor: COLORS.background.charcoal, padding: 10, borderRadius: 8 }}>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: titleColor }}>
+                      {activeStats.totalRevenue.toFixed(0)} €
+                    </Text>
+                    <Text style={{ fontSize: 11, color: COLORS.text.muted }}>CA TTC</Text>
+                  </View>
+                  <View style={{ width: '48%', backgroundColor: COLORS.background.charcoal, padding: 10, borderRadius: 8 }}>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#10B981' }}>
+                      {activeStats.totalHT.toFixed(0)} €
+                    </Text>
+                    <Text style={{ fontSize: 11, color: COLORS.text.muted }}>CA HT</Text>
+                  </View>
+                  <View style={{ width: '48%', backgroundColor: 'rgba(199, 91, 91, 0.15)', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(199, 91, 91, 0.3)' }}>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#C75B5B' }}>
+                      {activeStats.totalTVA.toFixed(2)} €
+                    </Text>
+                    <Text style={{ fontSize: 11, color: '#C75B5B' }}>TVA due</Text>
+                  </View>
+                </View>
+
+                {activeOrders.length > 0 ? (
+                  renderOrders(activeOrders, 0)
+                ) : (
+                  <Text style={{ fontSize: 12, color: COLORS.text.muted, textAlign: 'center', marginBottom: 16 }}>
+                    {searchQuery ? 'Aucune commande trouvée' : 'Aucune commande pour cette période'}
+                  </Text>
+                )}
+              </>
+            );
+          })()
         ) : filteredOrders.length === 0 ? (
           <View style={{ alignItems: 'center', paddingTop: 60 }}>
             <Text style={{ fontSize: 16, color: COLORS.text.muted, textAlign: 'center' }}>
@@ -1482,6 +2040,21 @@ export default function GestionCommandesScreen() {
                         {ORDER_STATUS_CONFIG[order.status].label}
                       </Text>
                     </View>
+                    {pendingOrderIds.has(order.id) && (
+                      <View
+                        style={{
+                          backgroundColor: 'rgba(199, 91, 91, 0.2)',
+                          paddingHorizontal: 8,
+                          paddingVertical: 3,
+                          borderRadius: 999,
+                          marginBottom: 8,
+                        }}
+                      >
+                        <Text style={{ color: '#C75B5B', fontSize: 10, fontWeight: 'bold' }}>
+                          Sync en attente
+                        </Text>
+                      </View>
+                    )}
                     <Text style={{ fontSize: 18, color: COLORS.primary.gold, fontWeight: 'bold' }}>
                       {order.total.toFixed(2)} €
                     </Text>
@@ -1513,6 +2086,13 @@ export default function GestionCommandesScreen() {
 
         <View style={{ height: insets.bottom + 20 }} />
       </ScrollView>
+      <Toast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={hideToast}
+        position="top"
+      />
     </View>
   );
 }

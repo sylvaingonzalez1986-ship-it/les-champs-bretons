@@ -45,6 +45,13 @@ export interface SupabaseProducer {
   adresse_retrait?: string | null;
   horaires_retrait?: string | null;
   instructions_retrait?: string | null;
+  instagram_url?: string | null;
+  facebook_url?: string | null;
+  twitter_url?: string | null;
+  tiktok_url?: string | null;
+  youtube_url?: string | null;
+  website_url?: string | null;
+  linkedin_url?: string | null;
   profile_id?: string | null;
   profile?: {
     company_name: string | null;
@@ -162,6 +169,15 @@ function supabaseToProducer(sp: SupabaseProducer, products: ProducerProduct[]): 
     cultureOutdoor: sp.culture_outdoor ?? undefined,
     cultureGreenhouse: sp.culture_greenhouse ?? undefined,
     cultureIndoor: sp.culture_indoor ?? undefined,
+    socialLinks: {
+      instagram: sp.instagram_url ?? undefined,
+      facebook: sp.facebook_url ?? undefined,
+      twitter: sp.twitter_url ?? undefined,
+      tiktok: sp.tiktok_url ?? undefined,
+      youtube: sp.youtube_url ?? undefined,
+      website: sp.website_url ?? undefined,
+      linkedin: sp.linkedin_url ?? undefined,
+    },
   };
 }
 
@@ -189,6 +205,13 @@ function producerToSupabase(p: Producer): Omit<SupabaseProducer, 'created_at' | 
     culture_outdoor: p.cultureOutdoor ?? null,
     culture_greenhouse: p.cultureGreenhouse ?? null,
     culture_indoor: p.cultureIndoor ?? null,
+    instagram_url: p.socialLinks?.instagram ?? null,
+    facebook_url: p.socialLinks?.facebook ?? null,
+    twitter_url: p.socialLinks?.twitter ?? null,
+    tiktok_url: p.socialLinks?.tiktok ?? null,
+    youtube_url: p.socialLinks?.youtube ?? null,
+    website_url: p.socialLinks?.website ?? null,
+    linkedin_url: p.socialLinks?.linkedin ?? null,
     profile_id: p.profileId ?? p.id, // Use profileId if set, fallback to id
   };
 }
@@ -302,6 +325,15 @@ export async function updateProducerInSupabase(id: string, producer: Partial<Pro
   if (producer.cultureOutdoor !== undefined) updates.culture_outdoor = producer.cultureOutdoor;
   if (producer.cultureGreenhouse !== undefined) updates.culture_greenhouse = producer.cultureGreenhouse;
   if (producer.cultureIndoor !== undefined) updates.culture_indoor = producer.cultureIndoor;
+  if (producer.socialLinks !== undefined) {
+    if (producer.socialLinks.instagram !== undefined) updates.instagram_url = producer.socialLinks.instagram;
+    if (producer.socialLinks.facebook !== undefined) updates.facebook_url = producer.socialLinks.facebook;
+    if (producer.socialLinks.twitter !== undefined) updates.twitter_url = producer.socialLinks.twitter;
+    if (producer.socialLinks.tiktok !== undefined) updates.tiktok_url = producer.socialLinks.tiktok;
+    if (producer.socialLinks.youtube !== undefined) updates.youtube_url = producer.socialLinks.youtube;
+    if (producer.socialLinks.website !== undefined) updates.website_url = producer.socialLinks.website;
+    if (producer.socialLinks.linkedin !== undefined) updates.linkedin_url = producer.socialLinks.linkedin;
+  }
 
   // Ensure profile_id is always set to link producer to user
   if (producer.profileId !== undefined) updates.profile_id = producer.profileId;
@@ -634,6 +666,16 @@ interface ProducersCatalogRow {
   adresse_retrait: string | null;
   horaires_retrait: string | null;
   instructions_retrait: string | null;
+  shipping_enabled: boolean | null;
+  shipping_fee: number | null;
+  shipping_note: string | null;
+  instagram_url: string | null;
+  facebook_url: string | null;
+  twitter_url: string | null;
+  tiktok_url: string | null;
+  youtube_url: string | null;
+  website_url: string | null;
+  linkedin_url: string | null;
   profile_id: string | null;
   created_at: string;
   updated_at: string;
@@ -682,6 +724,18 @@ function catalogRowToProducer(row: ProducersCatalogRow): Producer {
     cultureOutdoor: row.culture_outdoor ?? undefined,
     cultureGreenhouse: row.culture_greenhouse ?? undefined,
     cultureIndoor: row.culture_indoor ?? undefined,
+    shipping_enabled: row.shipping_enabled ?? undefined,
+    shipping_fee: row.shipping_fee ?? undefined,
+    shipping_note: row.shipping_note ?? undefined,
+    socialLinks: {
+      instagram: row.instagram_url ?? undefined,
+      facebook: row.facebook_url ?? undefined,
+      twitter: row.twitter_url ?? undefined,
+      tiktok: row.tiktok_url ?? undefined,
+      youtube: row.youtube_url ?? undefined,
+      website: row.website_url ?? undefined,
+      linkedin: row.linkedin_url ?? undefined,
+    },
   };
 }
 

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { View, Pressable, Dimensions, Image, FlatList, ViewToken, NativeScrollEvent, NativeSyntheticEvent, ScrollView } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Sparkles, Volume2, VolumeX, SkipForward, ShoppingBag, MapPin, Leaf, Star, ChevronLeft, ChevronRight, Thermometer, CloudRain, Mountain, X, Map } from 'lucide-react-native';
+import { Sparkles, Volume2, VolumeX, SkipForward, ShoppingBag, MapPin, Leaf, Star, ChevronLeft, ChevronRight, Thermometer, CloudRain, Mountain, X, Map, Instagram, Facebook, Twitter, Linkedin, Youtube, Globe } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -27,6 +27,7 @@ import { useAudioStore } from '@/lib/store';
 import { CultureTypeIcons } from '@/components/CultureTypeIcons';
 import { usePermissions } from '@/lib/useAuth';
 import { CompactCacheStatus } from '@/components/CacheStatusBanner';
+import { safeOpenExternalUrl } from '@/lib/safe-linking';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.715;
@@ -138,6 +139,16 @@ const ProducerCardItem = ({ producer, index, scrollX, isScrolling }: ProducerCar
     : 0;
 
   const productTypes = [...new Set(producer.products.map((p) => p.type))];
+  const socialLinks = producer.socialLinks;
+  const hasSocialLinks = Boolean(
+    socialLinks?.instagram ||
+      socialLinks?.facebook ||
+      socialLinks?.twitter ||
+      socialLinks?.linkedin ||
+      socialLinks?.tiktok ||
+      socialLinks?.youtube ||
+      socialLinks?.website
+  );
 
   // Glow animation
   const glowOpacity = useSharedValue(0.4);
@@ -457,6 +468,88 @@ const ProducerCardItem = ({ producer, index, scrollX, isScrolling }: ProducerCar
                   ) : null}
                 </View>
               </View>
+
+              {hasSocialLinks ? (
+                <View className="flex-row items-center justify-center gap-2 mb-2">
+                  {socialLinks?.instagram ? (
+                    <Pressable
+                      onPress={() => {
+                        void safeOpenExternalUrl(socialLinks.instagram!);
+                      }}
+                      className="w-7 h-7 rounded-full items-center justify-center"
+                      style={{ backgroundColor: '#E1306C20', borderWidth: 1, borderColor: '#E1306C40' }}
+                    >
+                      <Instagram size={14} color="#E1306C" />
+                    </Pressable>
+                  ) : null}
+                  {socialLinks?.facebook ? (
+                    <Pressable
+                      onPress={() => {
+                        void safeOpenExternalUrl(socialLinks.facebook!);
+                      }}
+                      className="w-7 h-7 rounded-full items-center justify-center"
+                      style={{ backgroundColor: '#1877F220', borderWidth: 1, borderColor: '#1877F240' }}
+                    >
+                      <Facebook size={14} color="#1877F2" />
+                    </Pressable>
+                  ) : null}
+                  {socialLinks?.twitter ? (
+                    <Pressable
+                      onPress={() => {
+                        void safeOpenExternalUrl(socialLinks.twitter!);
+                      }}
+                      className="w-7 h-7 rounded-full items-center justify-center"
+                      style={{ backgroundColor: '#1DA1F220', borderWidth: 1, borderColor: '#1DA1F240' }}
+                    >
+                      <Twitter size={14} color="#1DA1F2" />
+                    </Pressable>
+                  ) : null}
+                  {socialLinks?.linkedin ? (
+                    <Pressable
+                      onPress={() => {
+                        void safeOpenExternalUrl(socialLinks.linkedin!);
+                      }}
+                      className="w-7 h-7 rounded-full items-center justify-center"
+                      style={{ backgroundColor: '#0A66C220', borderWidth: 1, borderColor: '#0A66C240' }}
+                    >
+                      <Linkedin size={14} color="#0A66C2" />
+                    </Pressable>
+                  ) : null}
+                  {socialLinks?.tiktok ? (
+                    <Pressable
+                      onPress={() => {
+                        void safeOpenExternalUrl(socialLinks.tiktok!);
+                      }}
+                      className="w-7 h-7 rounded-full items-center justify-center"
+                      style={{ backgroundColor: '#FFFFFF12', borderWidth: 1, borderColor: '#FFFFFF2A' }}
+                    >
+                      <Text style={{ color: '#FFFFFF', fontSize: 10, fontWeight: 'bold' }}>TT</Text>
+                    </Pressable>
+                  ) : null}
+                  {socialLinks?.youtube ? (
+                    <Pressable
+                      onPress={() => {
+                        void safeOpenExternalUrl(socialLinks.youtube!);
+                      }}
+                      className="w-7 h-7 rounded-full items-center justify-center"
+                      style={{ backgroundColor: '#FF000020', borderWidth: 1, borderColor: '#FF000040' }}
+                    >
+                      <Youtube size={14} color="#FF0000" />
+                    </Pressable>
+                  ) : null}
+                  {socialLinks?.website ? (
+                    <Pressable
+                      onPress={() => {
+                        void safeOpenExternalUrl(socialLinks.website!);
+                      }}
+                      className="w-7 h-7 rounded-full items-center justify-center"
+                      style={{ backgroundColor: `${COLORS.primary.gold}20`, borderWidth: 1, borderColor: `${COLORS.primary.gold}40` }}
+                    >
+                      <Globe size={14} color={COLORS.primary.gold} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
 
               {/* Shop button */}
               <Pressable
@@ -779,52 +872,7 @@ export default function MapScreen() {
           paddingBottom: 20,
         }}
       >
-        {/* Music Controller */}
-        <View
-          style={{
-            position: 'absolute',
-            top: insets.top + 10,
-            right: 16,
-            flexDirection: 'row',
-            gap: 8,
-            zIndex: 10,
-          }}
-        >
-          <Pressable
-            onPress={toggleMute}
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 20,
-              backgroundColor: 'rgba(22, 34, 54, 0.9)',
-              borderWidth: 1.5,
-              borderColor: 'rgba(212, 168, 83, 0.38)',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {isMuted ? (
-              <VolumeX size={20} color={COLORS.text.muted} />
-            ) : (
-              <Volume2 size={20} color={COLORS.primary.gold} />
-            )}
-          </Pressable>
-          <Pressable
-            onPress={skipToNextTrack}
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 20,
-              backgroundColor: 'rgba(22, 34, 54, 0.9)',
-              borderWidth: 1.5,
-              borderColor: 'rgba(212, 168, 83, 0.38)',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <SkipForward size={20} color={COLORS.primary.gold} />
-          </Pressable>
-        </View>
+        {/* Music controls removed on map view */}
 
         <Animated.View entering={FadeIn.duration(500)} className="items-center">
           <View

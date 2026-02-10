@@ -209,7 +209,11 @@ serve(async (req) => {
     if (type === 'category') {
       const parsed = categoryInsertSchema.safeParse(payload.data);
       if (!parsed.success) {
-        return jsonResponse({ error: 'VALIDATION_ERROR' }, 400, responseCorsHeaders);
+        return jsonResponse(
+          { error: 'VALIDATION_ERROR', details: parsed.error.flatten() },
+          400,
+          responseCorsHeaders
+        );
       }
 
       const { data, error: insertError } = await serviceClient
@@ -235,7 +239,11 @@ serve(async (req) => {
     if (type === 'resource') {
       const parsed = resourceInsertSchema.safeParse(payload.data);
       if (!parsed.success) {
-        return jsonResponse({ error: 'VALIDATION_ERROR' }, 400, responseCorsHeaders);
+        return jsonResponse(
+          { error: 'VALIDATION_ERROR', details: parsed.error.flatten() },
+          400,
+          responseCorsHeaders
+        );
       }
 
       const { data, error: insertError } = await serviceClient
@@ -272,7 +280,11 @@ serve(async (req) => {
     if (type === 'category') {
       const parsed = categoryUpdateSchema.safeParse(payload);
       if (!parsed.success) {
-        return jsonResponse({ error: 'VALIDATION_ERROR' }, 400, responseCorsHeaders);
+        return jsonResponse(
+          { error: 'VALIDATION_ERROR', details: parsed.error.flatten() },
+          400,
+          responseCorsHeaders
+        );
       }
 
       const { id, ...updates } = parsed.data;
@@ -299,7 +311,11 @@ serve(async (req) => {
     if (type === 'resource') {
       const parsed = resourceUpdateSchema.safeParse(payload);
       if (!parsed.success) {
-        return jsonResponse({ error: 'VALIDATION_ERROR' }, 400, responseCorsHeaders);
+        return jsonResponse(
+          { error: 'VALIDATION_ERROR', details: parsed.error.flatten() },
+          400,
+          responseCorsHeaders
+        );
       }
 
       const { id, ...updates } = parsed.data;

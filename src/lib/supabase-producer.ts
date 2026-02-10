@@ -73,6 +73,13 @@ export interface ProducerDB {
   culture_outdoor: boolean | null;
   culture_greenhouse: boolean | null;
   culture_indoor: boolean | null;
+  instagram_url?: string | null;
+  facebook_url?: string | null;
+  twitter_url?: string | null;
+  tiktok_url?: string | null;
+  linkedin_url?: string | null;
+  youtube_url?: string | null;
+  website_url?: string | null;
 }
 
 // Types pour insert/update (sans les champs auto-générés)
@@ -396,6 +403,13 @@ export async function updateMyProducer(
     if (updates.culture_outdoor !== undefined) sanitizedUpdates.culture_outdoor = updates.culture_outdoor;
     if (updates.culture_greenhouse !== undefined) sanitizedUpdates.culture_greenhouse = updates.culture_greenhouse;
     if (updates.culture_indoor !== undefined) sanitizedUpdates.culture_indoor = updates.culture_indoor;
+    if (updates.instagram_url !== undefined) sanitizedUpdates.instagram_url = sanitizeString(updates.instagram_url ?? '');
+    if (updates.facebook_url !== undefined) sanitizedUpdates.facebook_url = sanitizeString(updates.facebook_url ?? '');
+    if (updates.twitter_url !== undefined) sanitizedUpdates.twitter_url = sanitizeString(updates.twitter_url ?? '');
+    if (updates.tiktok_url !== undefined) sanitizedUpdates.tiktok_url = sanitizeString(updates.tiktok_url ?? '');
+    if (updates.linkedin_url !== undefined) sanitizedUpdates.linkedin_url = sanitizeString(updates.linkedin_url ?? '');
+    if (updates.youtube_url !== undefined) sanitizedUpdates.youtube_url = sanitizeString(updates.youtube_url ?? '');
+    if (updates.website_url !== undefined) sanitizedUpdates.website_url = sanitizeString(updates.website_url ?? '');
 
     // Le producteur appartient au bon utilisateur, effectuer la mise à jour
     const headers = await getValidAuthHeaders();

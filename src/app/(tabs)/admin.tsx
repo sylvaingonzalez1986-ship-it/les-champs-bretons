@@ -6268,7 +6268,7 @@ export default function AdminScreen() {
           {/* Bouton Gestion Commandes - CORRECTION 1: visible uniquement pour admin ou producteur */}
           {(isAdmin || isProducer) && (
             <Pressable
-              onPress={() => router.push('/gestion-commandes')}
+              onPress={() => router.push('/(tabs)/gestion')}
               className="flex-row items-center px-3 py-2 rounded-xl"
               style={{ backgroundColor: `${COLORS.primary.gold}30`, borderWidth: 1, borderColor: COLORS.primary.gold }}
             >

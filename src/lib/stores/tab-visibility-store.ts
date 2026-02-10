@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Tab Visibility Store - for controlling which tabs are visible per role
-export type TabId = 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'marche-local' | 'reseau-pro';
+export type TabId = 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'marche-local' | 'reseau-pro' | 'gestion';
 
 // Role-based visibility
 export type TabRole = 'client' | 'pro' | 'producer';
@@ -39,10 +39,11 @@ const DEFAULT_TABS: TabConfig[] = [
   { id: 'produits', name: 'Produits', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
   { id: 'ma-boutique', name: 'Ma Boutique', visible: true, roleVisibility: { client: false, pro: false, producer: true } },
   { id: 'reseau-pro', name: 'Réseau Pro', visible: true, roleVisibility: { client: false, pro: false, producer: true } },
+  { id: 'gestion', name: 'Gestion', visible: true, roleVisibility: { client: false, pro: true, producer: true } },
   { id: 'cart', name: 'Panier', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
   { id: 'tirage', name: 'Tirage', visible: true, roleVisibility: { client: true, pro: false, producer: false } },
   { id: 'profile', name: 'Profil', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
-  { id: 'marche-local', name: 'Marché Local', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
+  { id: 'marche-local', name: 'Marché Local', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
 ];
 
 export const useTabVisibilityStore = create<TabVisibilityStore>()(
@@ -85,9 +86,11 @@ export const useTabVisibilityStore = create<TabVisibilityStore>()(
 
         // Enforce pro tabs: Carte / Chat / Marché Local / Profil only
         if (effectiveRole === 'pro') {
-          const proAllowed: TabId[] = ['map', 'marche-local', 'profile'];
+          const proAllowed: TabId[] = ['map', 'marche-local', 'cart', 'profile', 'gestion'];
           return proAllowed.includes(tabId);
         }
+
+        if (effectiveRole === 'producer' && tabId === 'marche-local') return false;
 
         return tab.roleVisibility?.[effectiveRole] ?? tab.visible ?? true;
       },

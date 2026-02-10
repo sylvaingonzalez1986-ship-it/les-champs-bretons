@@ -46,6 +46,12 @@ import {
   RefreshCw,
   Layers,
   UserCircle,
+  Instagram,
+  Facebook,
+  Twitter,
+  Linkedin,
+  Youtube,
+  Globe,
 } from 'lucide-react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import * as ImagePicker from 'expo-image-picker';
@@ -72,6 +78,7 @@ import { useOrdersStore, Order, OrderStatus, ORDER_STATUS_CONFIG } from '@/lib/s
 import { isSupabaseSyncConfigured, updateOrderInSupabase, SessionExpiredError, syncOrderToSupabase } from '@/lib/supabase-sync';
 import { useLocalMarketOrders, LocalMarketOrder, getStatusLabel, getStatusColor } from '@/lib/local-market-orders';
 import { useAuth } from '@/lib/useAuth';
+import { safeOpenExternalUrl } from '@/lib/safe-linking';
 import type { UserProfile } from '@/lib/supabase-auth';
 import { useProducerOrdersInfinite } from '@/api/orders';
 import { useOrdersRefresher } from '@/api/orders-refresh';
@@ -2473,18 +2480,6 @@ export default function MaBoutiqueScreen() {
               {producer.name}
             </Text>
           </View>
-          {activeTab === 'products' && (
-            <Pressable
-              onPress={handleAddProduct}
-              className="px-4 py-2.5 rounded-xl flex-row items-center"
-              style={{ backgroundColor: COLORS.accent.forest }}
-            >
-              <Plus size={18} color={COLORS.text.white} />
-              <Text style={{ color: COLORS.text.white }} className="font-bold ml-1">
-                Ajouter
-              </Text>
-            </Pressable>
-          )}
           {activeTab === 'orders' && (
             <Pressable
               onPress={() => {
@@ -2526,6 +2521,105 @@ export default function MaBoutiqueScreen() {
             </Pressable>
           )}
         </View>
+
+        {producer && (
+          (() => {
+            const socialLinks = {
+              instagram: producer.instagram_url,
+              facebook: producer.facebook_url,
+              twitter: producer.twitter_url,
+              tiktok: producer.tiktok_url,
+              linkedin: producer.linkedin_url,
+              youtube: producer.youtube_url,
+              website: producer.website_url,
+            };
+            const hasSocialLinks = Object.values(socialLinks).some(Boolean);
+
+            if (!hasSocialLinks) return null;
+
+            return (
+              <View className="flex-row items-center justify-center gap-3 mb-4">
+                {socialLinks.instagram ? (
+                  <Pressable
+                    onPress={() => {
+                      void safeOpenExternalUrl(socialLinks.instagram!);
+                    }}
+                    className="w-9 h-9 rounded-full items-center justify-center"
+                    style={{ backgroundColor: '#E1306C25', borderWidth: 1, borderColor: '#E1306C50' }}
+                  >
+                    <Instagram size={18} color="#E1306C" />
+                  </Pressable>
+                ) : null}
+                {socialLinks.facebook ? (
+                  <Pressable
+                    onPress={() => {
+                      void safeOpenExternalUrl(socialLinks.facebook!);
+                    }}
+                    className="w-9 h-9 rounded-full items-center justify-center"
+                    style={{ backgroundColor: '#1877F225', borderWidth: 1, borderColor: '#1877F250' }}
+                  >
+                    <Facebook size={18} color="#1877F2" />
+                  </Pressable>
+                ) : null}
+                {socialLinks.twitter ? (
+                  <Pressable
+                    onPress={() => {
+                      void safeOpenExternalUrl(socialLinks.twitter!);
+                    }}
+                    className="w-9 h-9 rounded-full items-center justify-center"
+                    style={{ backgroundColor: '#1DA1F225', borderWidth: 1, borderColor: '#1DA1F250' }}
+                  >
+                    <Twitter size={18} color="#1DA1F2" />
+                  </Pressable>
+                ) : null}
+                {socialLinks.linkedin ? (
+                  <Pressable
+                    onPress={() => {
+                      void safeOpenExternalUrl(socialLinks.linkedin!);
+                    }}
+                    className="w-9 h-9 rounded-full items-center justify-center"
+                    style={{ backgroundColor: '#0A66C225', borderWidth: 1, borderColor: '#0A66C250' }}
+                  >
+                    <Linkedin size={18} color="#0A66C2" />
+                  </Pressable>
+                ) : null}
+                {socialLinks.tiktok ? (
+                  <Pressable
+                    onPress={() => {
+                      void safeOpenExternalUrl(socialLinks.tiktok!);
+                    }}
+                    className="w-9 h-9 rounded-full items-center justify-center"
+                    style={{ backgroundColor: '#FFFFFF15', borderWidth: 1, borderColor: '#FFFFFF30' }}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: 'bold' }}>TT</Text>
+                  </Pressable>
+                ) : null}
+                {socialLinks.youtube ? (
+                  <Pressable
+                    onPress={() => {
+                      void safeOpenExternalUrl(socialLinks.youtube!);
+                    }}
+                    className="w-9 h-9 rounded-full items-center justify-center"
+                    style={{ backgroundColor: '#FF000025', borderWidth: 1, borderColor: '#FF000050' }}
+                  >
+                    <Youtube size={18} color="#FF0000" />
+                  </Pressable>
+                ) : null}
+                {socialLinks.website ? (
+                  <Pressable
+                    onPress={() => {
+                      void safeOpenExternalUrl(socialLinks.website!);
+                    }}
+                    className="w-9 h-9 rounded-full items-center justify-center"
+                    style={{ backgroundColor: `${COLORS.primary.gold}25`, borderWidth: 1, borderColor: `${COLORS.primary.gold}50` }}
+                  >
+                    <Globe size={18} color={COLORS.primary.gold} />
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })()
+        )}
 
         {/* Accès rapide à la fiche producteur */}
         <Pressable
@@ -2570,10 +2664,10 @@ export default function MaBoutiqueScreen() {
           >
             <ShoppingBag size={16} color={activeTab === 'orders' ? COLORS.text.white : COLORS.text.muted} />
             <Text
-              style={{ color: activeTab === 'orders' ? COLORS.text.white : COLORS.text.muted, fontSize: 12 }}
+              style={{ color: activeTab === 'orders' ? COLORS.text.white : COLORS.text.muted, fontSize: 10 }}
               className="font-bold ml-1"
             >
-              Boutique
+              Commandes pros
             </Text>
             {pendingOrdersCount > 0 && (
               <View
@@ -2681,7 +2775,7 @@ export default function MaBoutiqueScreen() {
         <ScrollView
           className="flex-1 px-4"
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingTop: 16, paddingBottom: 100 }}
+          contentContainerStyle={{ paddingTop: 16, paddingBottom: 180 }}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -2718,6 +2812,28 @@ export default function MaBoutiqueScreen() {
             filteredProducts.map((product, index) => renderProductCard(product, index))
           )}
         </ScrollView>
+      )}
+
+      {activeTab === 'products' && isProducer && (
+        <View
+          style={{
+            position: 'absolute',
+            left: 16,
+            right: 16,
+            bottom: Math.max(16, insets.bottom + 12),
+          }}
+        >
+          <Pressable
+            onPress={handleAddProduct}
+            className="px-5 py-3 rounded-xl flex-row items-center justify-center"
+            style={{ backgroundColor: COLORS.accent.forest }}
+          >
+            <Plus size={18} color={COLORS.text.white} />
+            <Text style={{ color: COLORS.text.white }} className="font-bold ml-2">
+              Ajouter un produit
+            </Text>
+          </Pressable>
+        </View>
       )}
 
       {/* Orders Tab Content */}
@@ -2965,14 +3081,39 @@ function DirectSalesOrderCard({ order, index, onPress }: { order: LocalMarketOrd
           </View>
         </View>
 
-        {/* Code de retrait */}
+        {/* Code de retrait + mode de livraison */}
         <View
           className="flex-row items-center justify-between px-4 py-2"
           style={{ backgroundColor: `${COLORS.primary.gold}10` }}
         >
-          <Text style={{ color: COLORS.text.muted }} className="text-xs">
-            Code retrait
-          </Text>
+          <View className="flex-row items-center" style={{ gap: 8 }}>
+            <Text style={{ color: COLORS.text.muted }} className="text-xs">
+              {(order.delivery_method ?? 'pickup') === 'shipping' ? 'Code commande' : 'Code retrait'}
+            </Text>
+            <View
+              className="flex-row items-center px-2 py-1 rounded"
+              style={{
+                backgroundColor: (order.delivery_method ?? 'pickup') === 'shipping'
+                  ? 'rgba(59, 130, 246, 0.15)'
+                  : 'rgba(16, 185, 129, 0.15)',
+              }}
+            >
+              {(order.delivery_method ?? 'pickup') === 'shipping' ? (
+                <Truck size={10} color="#3B82F6" />
+              ) : (
+                <MapPin size={10} color="#10B981" />
+              )}
+              <Text
+                className="ml-1 font-semibold"
+                style={{
+                  fontSize: 9,
+                  color: (order.delivery_method ?? 'pickup') === 'shipping' ? '#3B82F6' : '#10B981',
+                }}
+              >
+                {(order.delivery_method ?? 'pickup') === 'shipping' ? 'Livraison' : 'Retrait'}
+              </Text>
+            </View>
+          </View>
           <Text style={{ color: COLORS.primary.gold }} className="font-bold">
             {order.pickup_code}
           </Text>
@@ -3104,6 +3245,68 @@ function DirectSalesOrderModal({
               <Text style={{ color: COLORS.text.lightGray }} className="font-medium mb-3">
                 Client
               </Text>
+
+              {/* Badge mode de réception */}
+              <View
+                className="flex-row items-center p-3 rounded-xl mb-3"
+                style={{
+                  backgroundColor: (order.delivery_method ?? 'pickup') === 'shipping'
+                    ? 'rgba(59, 130, 246, 0.12)'
+                    : 'rgba(16, 185, 129, 0.12)',
+                  borderWidth: 1,
+                  borderColor: (order.delivery_method ?? 'pickup') === 'shipping'
+                    ? 'rgba(59, 130, 246, 0.3)'
+                    : 'rgba(16, 185, 129, 0.3)',
+                }}
+              >
+                {(order.delivery_method ?? 'pickup') === 'shipping' ? (
+                  <Truck size={16} color="#3B82F6" />
+                ) : (
+                  <MapPin size={16} color="#10B981" />
+                )}
+                <View className="ml-3 flex-1">
+                  <Text
+                    className="font-bold"
+                    style={{
+                      fontSize: 13,
+                      color: (order.delivery_method ?? 'pickup') === 'shipping' ? '#3B82F6' : '#10B981',
+                    }}
+                  >
+                    {(order.delivery_method ?? 'pickup') === 'shipping' ? 'Livraison postale' : 'Retrait sur place'}
+                  </Text>
+                  {(order.delivery_method ?? 'pickup') === 'shipping' ? (
+                    <Text style={{ color: COLORS.text.muted, fontSize: 11, marginTop: 2 }}>
+                      Paiement à distance — expédition après réception
+                    </Text>
+                  ) : (
+                    <Text style={{ color: COLORS.text.muted, fontSize: 11, marginTop: 2 }}>
+                      Paiement en personne lors du retrait
+                    </Text>
+                  )}
+                </View>
+              </View>
+
+              {/* Adresse de livraison si shipping */}
+              {(order.delivery_method ?? 'pickup') === 'shipping' && order.delivery_address && (
+                <View
+                  className="rounded-xl p-4 mb-3"
+                  style={{ backgroundColor: 'rgba(59, 130, 246, 0.08)' }}
+                >
+                  <Text style={{ color: COLORS.text.muted, fontSize: 11, marginBottom: 4 }}>Adresse de livraison</Text>
+                  <Text style={{ color: COLORS.text.cream, fontSize: 13 }}>{order.delivery_address}</Text>
+                  {order.delivery_instructions ? (
+                    <Text style={{ color: COLORS.text.muted, fontSize: 11, marginTop: 4, fontStyle: 'italic' }}>
+                      {order.delivery_instructions}
+                    </Text>
+                  ) : null}
+                  {(order.delivery_fee ?? 0) > 0 && (
+                    <Text style={{ color: '#3B82F6', fontSize: 11, marginTop: 4, fontWeight: '600' }}>
+                      Frais de livraison : {Number(order.delivery_fee).toFixed(2)}€
+                    </Text>
+                  )}
+                </View>
+              )}
+
               <View className="rounded-xl p-4" style={{ backgroundColor: `${COLORS.text.white}05` }}>
                 <View className="flex-row items-center mb-3">
                   <User size={18} color={COLORS.accent.teal} />

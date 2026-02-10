@@ -117,6 +117,9 @@ export interface UserProfile {
   adresse_retrait?: string | null;
   horaires_retrait?: string | null;
   instructions_retrait?: string | null;
+  shipping_enabled?: boolean | null;
+  shipping_fee?: number | null;
+  shipping_note?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -794,10 +797,13 @@ export async function updateProfile(
         }
       }
 
-      console.warn('[Auth] Profile update failed - status:', response.status);
+      const errorMsg = data?.errorDetails
+        ? `${data.error}: ${data.errorDetails}`
+        : (data?.error || 'Erreur mise à jour profil');
+      console.warn('[Auth] Profile update failed - status:', response.status, 'error:', errorMsg);
       return {
         profile: null,
-        error: { message: data?.error || 'Erreur mise à jour profil', status: response.status },
+        error: { message: errorMsg, status: response.status },
       };
     }
 

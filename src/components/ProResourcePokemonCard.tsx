@@ -163,6 +163,9 @@ export function ProResourcePokemonCard({
   currentIndex = 0,
   totalCount = 0,
 }: ModalCardProps) {
+  const safeTags = Array.isArray(resource.tags) ? resource.tags : [];
+  const safeName = resource.name?.trim() || 'Fournisseur';
+
   // Glow animation
   const glowOpacity = useSharedValue(0.4);
   const starRotation = useSharedValue(0);
@@ -307,6 +310,7 @@ export function ProResourcePokemonCard({
         entering={ZoomIn.springify().damping(14)}
         style={{
           width: CARD_WIDTH,
+          height: CARD_HEIGHT,
           maxHeight: CARD_HEIGHT,
           borderRadius: 28,
           overflow: 'hidden',
@@ -353,7 +357,7 @@ export function ProResourcePokemonCard({
                     style={{ backgroundColor: `${categoryColor}25` }}
                   >
                     <Text style={{ color: categoryColor, fontSize: 42, fontWeight: 'bold' }}>
-                      {resource.name.charAt(0).toUpperCase()}
+                      {safeName.charAt(0).toUpperCase()}
                     </Text>
                   </View>
                 </View>
@@ -423,7 +427,7 @@ export function ProResourcePokemonCard({
                     style={{ color: COLORS.primary.paleGold }}
                     numberOfLines={2}
                   >
-                    {resource.name}
+                    {safeName}
                   </Text>
                   <Sparkles size={16} color={COLORS.primary.brightYellow} />
                 </View>
@@ -461,9 +465,9 @@ export function ProResourcePokemonCard({
               )}
 
               {/* Tags */}
-              {resource.tags.length > 0 && (
+              {safeTags.length > 0 && (
                 <View className="flex-row flex-wrap justify-center gap-2 mb-3">
-                  {resource.tags.map((tag) => (
+                  {safeTags.map((tag) => (
                     <View
                       key={tag}
                       className="px-3 py-1.5 rounded-full"

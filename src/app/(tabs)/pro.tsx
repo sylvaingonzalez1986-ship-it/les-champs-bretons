@@ -715,7 +715,7 @@ export default function ProScreen() {
           {/* Bouton Mes Commandes - CORRECTION 1: visible uniquement pour pro validé, admin ou pro approuvé */}
           {(isPro || isAdmin || isProApproved) && (
             <Pressable
-              onPress={() => router.push('/gestion-commandes')}
+              onPress={() => router.push('/(tabs)/gestion')}
               className="px-3 py-2 rounded-xl flex-row items-center"
               style={{ backgroundColor: `${COLORS.primary.gold}30`, borderWidth: 1, borderColor: COLORS.primary.gold }}
             >

@@ -14,6 +14,7 @@ const uuidSchema = z.string().uuid('Invalid UUID format');
 const idOrPickupSchema = z.string().min(1, 'Invalid order identifier');
 const emailSchema = z.string().email('Invalid email format').max(255);
 const quantitySchema = z.number().int().positive().max(10000);
+const deliveryMethodSchema = z.enum(['pickup', 'shipping']);
 
 const localMarketOrderStatusSchema = z.enum([
   'pending',
@@ -31,6 +32,10 @@ const localMarketOrderActionSchema = z.discriminatedUnion('action', [
     quantity: quantitySchema,
     pickupLocation: z.string().max(200).optional(),
     pickupInstructions: z.string().max(500).optional(),
+    deliveryMethod: deliveryMethodSchema.optional(),
+    deliveryFee: z.number().min(0).max(999999.99).optional(),
+    deliveryAddress: z.string().max(500).optional(),
+    deliveryInstructions: z.string().max(1000).optional(),
     customerNotes: z.string().max(1000).optional(),
     customerName: z.string().max(200).optional(),
     customerEmail: emailSchema.optional(),
@@ -247,6 +252,9 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
         quantity,
         pickupLocation,
         pickupInstructions,
+        deliveryMethod,
+        deliveryAddress,
+        deliveryInstructions,
         customerNotes,
         customerName,
         customerEmail,
@@ -256,12 +264,13 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
       // Fetch producer
       const { data: producer, error: producerError } = await serviceClient
         .from('producers')
-        .select('id, name, email, phone, city, region')
+        .select('id, name, email, city, region, shipping_enabled, shipping_fee')
         .eq('id', producerId)
         .single();
 
       if (producerError || !producer) {
-        return new Response(JSON.stringify({ error: 'Producer not found' }), {
+        console.error('[local-market-orders] Producer lookup failed:', producerId, producerError?.message, producerError?.code);
+        return new Response(JSON.stringify({ error: 'Producer not found', producerId, details: producerError?.message }), {
           status: 404,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -288,8 +297,34 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
         });
       }
 
+      const resolvedDeliveryMethod = deliveryMethod ?? 'pickup';
+
+      if (resolvedDeliveryMethod === 'shipping' && !producer.shipping_enabled) {
+        return new Response(JSON.stringify({
+          error: 'DELIVERY_NOT_AVAILABLE',
+          message: 'La livraison n\'est pas disponible pour ce producteur.',
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (resolvedDeliveryMethod === 'shipping' && !deliveryAddress?.trim()) {
+        return new Response(JSON.stringify({
+          error: 'DELIVERY_ADDRESS_REQUIRED',
+          message: 'Adresse de livraison requise.',
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const resolvedDeliveryFee = resolvedDeliveryMethod === 'shipping'
+        ? Number(producer.shipping_fee ?? 0)
+        : 0;
+
       const unitPrice = Number(product.price_public ?? 0);
-      const totalAmount = unitPrice * quantity;
+      const totalAmount = unitPrice * quantity + resolvedDeliveryFee;
       const pickupCode = generatePickupCode();
 
       const resolvedCustomerName =
@@ -309,7 +344,7 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
         producer_id: producerId,
         producer_name: producer.name,
         producer_email: producer.email,
-        producer_phone: producer.phone,
+        producer_phone: null,
         producer_location: producer.city || producer.region || null,
         product_id: productId,
         product_name: product.name,
@@ -320,8 +355,12 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
         status: 'pending',
         pickup_code: pickupCode,
         pickup_date: null,
-        pickup_location: pickupLocation || null,
-        pickup_instructions: pickupInstructions || null,
+        pickup_location: resolvedDeliveryMethod === 'pickup' ? pickupLocation || null : null,
+        pickup_instructions: resolvedDeliveryMethod === 'pickup' ? pickupInstructions || null : null,
+        delivery_method: resolvedDeliveryMethod,
+        delivery_fee: resolvedDeliveryFee,
+        delivery_address: resolvedDeliveryMethod === 'shipping' ? deliveryAddress?.trim() || null : null,
+        delivery_instructions: resolvedDeliveryMethod === 'shipping' ? deliveryInstructions?.trim() || null : null,
         customer_notes: customerNotes || null,
         producer_notes: null,
         is_paid: false,

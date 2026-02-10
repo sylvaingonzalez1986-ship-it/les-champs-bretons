@@ -60,7 +60,7 @@ export async function secureFetch(
       const looksLikeSupabase = Boolean(supabaseHeaders) || Boolean(serverHeader);
 
       // Log warning si les headers Supabase sont manquants (possible MITM)
-      if (__DEV__ && !supabaseHeaders && response.ok) {
+      if (__DEV__ && !supabaseHeaders && !serverHeader && response.ok) {
         console.warn(
           '[SecureFetch] Warning: Headers Supabase manquants - verifier la connexion',
           {

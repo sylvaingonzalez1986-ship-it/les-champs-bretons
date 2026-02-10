@@ -84,6 +84,7 @@ const uuidSchema = z.string().uuid('Invalid UUID format');
 const emailSchema = z.string().email('Invalid email format').max(255);
 const quantitySchema = z.number().int().positive().max(10000);
 const priceSchema = z.number().positive().max(999999.99);
+const deliveryMethodSchema = z.enum(['pickup', 'shipping']);
 
 const localMarketOrderEmailSchema = z.object({
   orderId: uuidSchema,
@@ -99,6 +100,10 @@ const localMarketOrderEmailSchema = z.object({
   pickupCode: z.string().min(4).max(32),
   pickupLocation: z.string().max(200).optional(),
   pickupInstructions: z.string().max(500).optional(),
+  deliveryMethod: deliveryMethodSchema.optional(),
+  deliveryFee: z.number().min(0).max(999999.99).optional(),
+  deliveryAddress: z.string().max(500).optional(),
+  deliveryInstructions: z.string().max(1000).optional(),
   customerNotes: z.string().max(1000).optional(),
 });
 
@@ -283,6 +288,16 @@ async function sendEmail(
 
 // Générer le HTML de l'email pour le producteur
 function generateProducerEmailHTML(data: LocalMarketOrderEmailRequest): string {
+  const resolvedDeliveryMethod = data.deliveryMethod ?? 'pickup';
+  const isShipping = resolvedDeliveryMethod === 'shipping';
+  const resolvedDeliveryFee = Number(data.deliveryFee ?? 0);
+  const actionNotice = isShipping
+    ? 'Contactez le client pour lui communiquer vos instructions de paiement à distance. La commande sera expédiée une fois le paiement reçu.'
+    : 'Préparez la commande et attendez le client avec le code ci-dessus.';
+  const paymentNotice = isShipping
+    ? 'Le paiement s\'effectue à distance avant l\'expédition.'
+    : 'Le paiement s\'effectue sur place lors du retrait.';
+
   return `
     <!DOCTYPE html>
     <html>
@@ -342,6 +357,16 @@ function generateProducerEmailHTML(data: LocalMarketOrderEmailRequest): string {
                   <span class="info-label">Prix unitaire</span>
                   <span class="info-value">${data.unitPrice.toFixed(2)} €</span>
                 </div>
+                <div class="info-row">
+                  <span class="info-label">Mode</span>
+                  <span class="info-value">${isShipping ? 'Livraison' : 'Retrait'}</span>
+                </div>
+                ${isShipping ? `
+                <div class="info-row">
+                  <span class="info-label">Frais de livraison</span>
+                  <span class="info-value">${resolvedDeliveryFee.toFixed(2)} €</span>
+                </div>
+                ` : ''}
               </div>
               <div class="total-box" style="margin-top: 15px;">
                 <span class="label">Total à encaisser</span>
@@ -378,9 +403,27 @@ function generateProducerEmailHTML(data: LocalMarketOrderEmailRequest): string {
             </div>
             ` : ''}
 
+            ${isShipping && data.deliveryAddress ? `
+            <div class="section">
+              <div class="section-title">Livraison</div>
+              <div class="info-box">
+                <div class="info-row">
+                  <span class="info-label">Adresse</span>
+                  <span class="info-value">${data.deliveryAddress}</span>
+                </div>
+                ${data.deliveryInstructions ? `
+                <div class="info-row">
+                  <span class="info-label">Instructions</span>
+                  <span class="info-value">${data.deliveryInstructions}</span>
+                </div>
+                ` : ''}
+              </div>
+            </div>
+            ` : ''}
+
             <div class="action-notice">
-              <strong>Action requise:</strong> Préparez la commande et attendez le client avec le code <strong>${data.pickupCode}</strong>.<br>
-              Le paiement s'effectue sur place lors du retrait.
+              <strong>Action requise:</strong> ${actionNotice}<br>
+              ${paymentNotice}
             </div>
           </div>
 
@@ -396,6 +439,17 @@ function generateProducerEmailHTML(data: LocalMarketOrderEmailRequest): string {
 
 // Générer le HTML de l'email de confirmation pour le client
 function generateCustomerEmailHTML(data: LocalMarketOrderEmailRequest): string {
+  const resolvedDeliveryMethod = data.deliveryMethod ?? 'pickup';
+  const isShipping = resolvedDeliveryMethod === 'shipping';
+  const resolvedDeliveryFee = Number(data.deliveryFee ?? 0);
+  const codeLabel = isShipping ? 'VOTRE CODE DE COMMANDE' : 'VOTRE CODE DE RETRAIT';
+  const codeNote = isShipping
+    ? 'Gardez ce code pour le suivi de votre commande'
+    : 'Présentez ce code au producteur lors du retrait';
+  const paymentNotice = isShipping
+    ? 'Le paiement s\'effectue à distance en suivant les instructions du producteur reçues par email. Votre commande sera expédiée une fois le paiement reçu.'
+    : 'Le paiement s\'effectue directement auprès du producteur lors du retrait de votre commande.';
+
   return `
     <!DOCTYPE html>
     <html>
@@ -437,9 +491,9 @@ function generateCustomerEmailHTML(data: LocalMarketOrderEmailRequest): string {
 
           <div class="content">
             <div class="pickup-code">
-              <div class="label">VOTRE CODE DE RETRAIT</div>
+              <div class="label">${codeLabel}</div>
               <div class="code">${data.pickupCode}</div>
-              <div class="note">Présentez ce code au producteur lors du retrait</div>
+              <div class="note">${codeNote}</div>
             </div>
 
             <div class="section">
@@ -457,38 +511,60 @@ function generateCustomerEmailHTML(data: LocalMarketOrderEmailRequest): string {
                   <span class="info-label">Prix unitaire</span>
                   <span class="info-value">${data.unitPrice.toFixed(2)} €</span>
                 </div>
+                <div class="info-row">
+                  <span class="info-label">Mode</span>
+                  <span class="info-value">${isShipping ? 'Livraison' : 'Retrait'}</span>
+                </div>
+                ${isShipping ? `
+                <div class="info-row">
+                  <span class="info-label">Frais de livraison</span>
+                  <span class="info-value">${resolvedDeliveryFee.toFixed(2)} €</span>
+                </div>
+                ` : ''}
               </div>
               <div class="total-box" style="margin-top: 15px;">
-                <span class="label">Total à payer sur place</span>
+                <span class="label">${isShipping ? 'Total à régler' : 'Total à payer sur place'}</span>
                 <span class="amount">${data.totalAmount.toFixed(2)} €</span>
               </div>
             </div>
 
             <div class="section">
-              <div class="section-title">Lieu de retrait</div>
+              <div class="section-title">${isShipping ? 'Livraison' : 'Lieu de retrait'}</div>
               <div class="info-box">
                 <div class="info-row">
                   <span class="info-label">Producteur</span>
                   <span class="info-value">${data.producerName}</span>
                 </div>
-                ${data.pickupLocation ? `
+                ${!isShipping && data.pickupLocation ? `
                 <div class="info-row">
                   <span class="info-label">Adresse</span>
                   <span class="info-value">${data.pickupLocation}</span>
                 </div>
                 ` : ''}
-                ${data.pickupInstructions ? `
+                ${!isShipping && data.pickupInstructions ? `
                 <div class="info-row">
                   <span class="info-label">Instructions</span>
                   <span class="info-value">${data.pickupInstructions}</span>
+                </div>
+                ` : ''}
+                ${isShipping && data.deliveryAddress ? `
+                <div class="info-row">
+                  <span class="info-label">Adresse</span>
+                  <span class="info-value">${data.deliveryAddress}</span>
+                </div>
+                ` : ''}
+                ${isShipping && data.deliveryInstructions ? `
+                <div class="info-row">
+                  <span class="info-label">Instructions</span>
+                  <span class="info-value">${data.deliveryInstructions}</span>
                 </div>
                 ` : ''}
               </div>
             </div>
 
             <div class="payment-notice">
-              <strong>💰 Paiement sur place</strong><br>
-              Le paiement s'effectue directement auprès du producteur lors du retrait de votre commande.
+              <strong>💰 Paiement</strong><br>
+              ${paymentNotice}
             </div>
           </div>
 

@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
 import { LinearGradient } from 'expo-linear-gradient';
-import { X, Minus, Plus, ShoppingBag, MapPin, Clock, Check, AlertCircle, Phone, Mail, User, MessageSquare, Layers, TrendingDown } from 'lucide-react-native';
+import { X, Minus, Plus, ShoppingBag, MapPin, Clock, Check, AlertCircle, Phone, Mail, User, MessageSquare, Layers, TrendingDown, Truck } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { useLocalMarketOrders, CreateLocalOrderParams } from '@/lib/local-market-orders';
 import { useAuth } from '@/lib/useAuth';
@@ -44,6 +44,9 @@ interface ProducerInfo {
   adresse_retrait?: string;
   horaires_retrait?: string;
   instructions_retrait?: string;
+  shipping_enabled?: boolean | null;
+  shipping_fee?: number | null;
+  shipping_note?: string | null;
 }
 
 interface LocalMarketOrderModalProps {
@@ -70,6 +73,11 @@ export default function LocalMarketOrderModal({
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerNotes, setCustomerNotes] = useState('');
+
+  // Livraison
+  const [deliveryMethod, setDeliveryMethod] = useState<'pickup' | 'shipping'>('pickup');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryInstructions, setDeliveryInstructions] = useState('');
 
   // État de l'UI
   const [step, setStep] = useState<'details' | 'confirm' | 'success'>('details');
@@ -104,6 +112,9 @@ export default function LocalMarketOrderModal({
       setQuantity(1);
       setError(null);
       setPickupCode(null);
+      setDeliveryMethod('pickup');
+      setDeliveryAddress('');
+      setDeliveryInstructions('');
     }
   }, [visible]);
 
@@ -139,8 +150,20 @@ export default function LocalMarketOrderModal({
     ? getPriceForQuantity(pricingProduct, quantity, false)
     : product.price_public;
 
-  const totalPrice = quantity * unitPrice;
+  const hasShipping = Boolean(producer.shipping_enabled);
+  const deliveryFee = deliveryMethod === 'shipping' ? Number(producer.shipping_fee ?? 0) : 0;
+  const totalPrice = quantity * unitPrice + deliveryFee;
   const maxStock = typeof product.stock === 'number' ? product.stock : 99;
+
+  const isShipping = deliveryMethod === 'shipping';
+  const pickupCodeLabel = isShipping ? 'Votre code de commande' : 'Votre code de retrait';
+  const pickupCodeNote = isShipping
+    ? 'Gardez ce code pour le suivi de votre commande.'
+    : 'Présentez ce code au producteur lors du retrait.';
+  const paymentSummaryLabel = isShipping ? 'Total à régler' : 'Total à payer sur place';
+  const paymentNotice = isShipping
+    ? "Le paiement s'effectue à distance en suivant les instructions du producteur reçues par email. Votre commande sera expédiée une fois le paiement reçu."
+    : "Le paiement s'effectue en personne lors du retrait de votre commande.";
 
   // Calculer le prochain palier pour afficher les économies potentielles
   const nextTier = product.price_tiers && product.price_tiers.length > 0
@@ -163,6 +186,10 @@ export default function LocalMarketOrderModal({
     }
     if (!customerEmail.trim() || !customerEmail.includes('@')) {
       setError('Veuillez entrer une adresse email valide');
+      return;
+    }
+    if (deliveryMethod === 'shipping' && !deliveryAddress.trim()) {
+      setError('Veuillez entrer une adresse de livraison');
       return;
     }
 
@@ -198,6 +225,10 @@ export default function LocalMarketOrderModal({
         unit_price: unitPrice, // Utiliser le prix avec palier dégressif
         pickup_location: producer.adresse_retrait,
         pickup_instructions: producer.instructions_retrait,
+        delivery_method: deliveryMethod,
+        delivery_fee: deliveryFee,
+        delivery_address: deliveryMethod === 'shipping' ? deliveryAddress.trim() : undefined,
+        delivery_instructions: deliveryMethod === 'shipping' ? deliveryInstructions.trim() || undefined : undefined,
         customer_notes: customerNotes.trim() || undefined,
       };
 
@@ -262,7 +293,7 @@ export default function LocalMarketOrderModal({
                     {step === 'success' ? 'Commande confirmée !' : 'Commander directement'}
                   </Text>
                   <Text className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                    {step === 'success' ? 'Votre code de retrait' : `Chez ${producer.name}`}
+                    {step === 'success' ? pickupCodeLabel : `Chez ${producer.name}`}
                   </Text>
                 </View>
                 <Pressable
@@ -293,7 +324,7 @@ export default function LocalMarketOrderModal({
 
                   {/* Code de retrait */}
                   <Text className="text-sm mb-2" style={{ color: COLORS.text.muted }}>
-                    Votre code de retrait
+                    {pickupCodeLabel}
                   </Text>
                   <View
                     className="px-8 py-4 rounded-2xl mb-6"
@@ -305,8 +336,8 @@ export default function LocalMarketOrderModal({
                   </View>
 
                   <Text className="text-center text-sm mb-6" style={{ color: COLORS.text.lightGray }}>
-                    Présentez ce code au producteur lors du retrait.{'\n'}
-                    Le paiement se fait sur place.
+                    {pickupCodeNote}{'\n'}
+                    {paymentNotice}
                   </Text>
 
                   {/* Résumé */}
@@ -323,32 +354,59 @@ export default function LocalMarketOrderModal({
                         {totalPrice.toFixed(2)}€
                       </Text>
                     </View>
+                    {isShipping && (
+                      <Text className="text-xs mt-2" style={{ color: COLORS.text.muted }}>
+                        Frais de livraison: {deliveryFee.toFixed(2)}€
+                      </Text>
+                    )}
                   </View>
 
-                  {/* Infos retrait */}
-                  {producer.adresse_retrait && (
+                  {/* Infos livraison / retrait */}
+                  {isShipping ? (
                     <View
                       className="w-full p-4 rounded-xl"
                       style={{ backgroundColor: `${COLORS.accent.hemp}10` }}
                     >
                       <View className="flex-row items-center mb-2">
-                        <MapPin size={16} color={COLORS.accent.hemp} />
+                        <Truck size={16} color={COLORS.accent.hemp} />
                         <Text className="ml-2 font-semibold" style={{ color: COLORS.text.cream }}>
-                          Lieu de retrait
+                          Livraison
                         </Text>
                       </View>
                       <Text className="text-sm" style={{ color: COLORS.text.lightGray }}>
-                        {producer.adresse_retrait}
+                        {deliveryAddress}
                       </Text>
-                      {producer.horaires_retrait && (
-                        <View className="flex-row items-center mt-2">
-                          <Clock size={14} color={COLORS.text.muted} />
-                          <Text className="ml-2 text-xs" style={{ color: COLORS.text.muted }}>
-                            {producer.horaires_retrait}
+                      {deliveryInstructions ? (
+                        <Text className="text-xs mt-2" style={{ color: COLORS.text.muted }}>
+                          {deliveryInstructions}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : (
+                    producer.adresse_retrait && (
+                      <View
+                        className="w-full p-4 rounded-xl"
+                        style={{ backgroundColor: `${COLORS.accent.hemp}10` }}
+                      >
+                        <View className="flex-row items-center mb-2">
+                          <MapPin size={16} color={COLORS.accent.hemp} />
+                          <Text className="ml-2 font-semibold" style={{ color: COLORS.text.cream }}>
+                            Lieu de retrait
                           </Text>
                         </View>
-                      )}
-                    </View>
+                        <Text className="text-sm" style={{ color: COLORS.text.lightGray }}>
+                          {producer.adresse_retrait}
+                        </Text>
+                        {producer.horaires_retrait && (
+                          <View className="flex-row items-center mt-2">
+                            <Clock size={14} color={COLORS.text.muted} />
+                            <Text className="ml-2 text-xs" style={{ color: COLORS.text.muted }}>
+                              {producer.horaires_retrait}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    )
                   )}
 
                   {/* Bouton fermer */}
@@ -441,6 +499,11 @@ export default function LocalMarketOrderModal({
                         <Text className="text-2xl font-bold" style={{ color: COLORS.primary.gold }}>
                           {totalPrice.toFixed(2)}€
                         </Text>
+                        {isShipping && (
+                          <Text className="text-xs" style={{ color: COLORS.text.muted }}>
+                            Frais de livraison: {deliveryFee.toFixed(2)}€
+                          </Text>
+                        )}
                         {/* Afficher le prix unitaire si différent du prix de base */}
                         {unitPrice !== product.price_public && (
                           <Text className="text-xs" style={{ color: COLORS.accent.hemp }}>
@@ -518,6 +581,107 @@ export default function LocalMarketOrderModal({
                             );
                           })}
                       </View>
+                    </View>
+                  )}
+
+                  {/* Mode de réception */}
+                  {hasShipping && (
+                    <View className="mb-6">
+                      <Text className="text-sm font-semibold mb-3" style={{ color: COLORS.text.lightGray }}>
+                        Mode de réception
+                      </Text>
+                      <View className="flex-row gap-3">
+                        <Pressable
+                          onPress={() => setDeliveryMethod('pickup')}
+                          className="flex-1 py-3 rounded-xl items-center flex-row justify-center"
+                          style={{
+                            backgroundColor: deliveryMethod === 'pickup' ? COLORS.accent.hemp : `${COLORS.text.white}08`,
+                            borderWidth: 1,
+                            borderColor: deliveryMethod === 'pickup' ? COLORS.accent.hemp : `${COLORS.accent.hemp}30`,
+                          }}
+                        >
+                          <MapPin size={16} color={deliveryMethod === 'pickup' ? COLORS.text.white : COLORS.text.muted} />
+                          <Text className="ml-2 font-semibold" style={{ color: deliveryMethod === 'pickup' ? COLORS.text.white : COLORS.text.lightGray }}>
+                            Retrait
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => setDeliveryMethod('shipping')}
+                          className="flex-1 py-3 rounded-xl items-center flex-row justify-center"
+                          style={{
+                            backgroundColor: deliveryMethod === 'shipping' ? COLORS.accent.hemp : `${COLORS.text.white}08`,
+                            borderWidth: 1,
+                            borderColor: deliveryMethod === 'shipping' ? COLORS.accent.hemp : `${COLORS.accent.hemp}30`,
+                          }}
+                        >
+                          <Truck size={16} color={deliveryMethod === 'shipping' ? COLORS.text.white : COLORS.text.muted} />
+                          <Text className="ml-2 font-semibold" style={{ color: deliveryMethod === 'shipping' ? COLORS.text.white : COLORS.text.lightGray }}>
+                            Livraison
+                          </Text>
+                        </Pressable>
+                      </View>
+
+                      {deliveryMethod === 'shipping' && (
+                        <View className="mt-4">
+                          <View className="flex-row items-center mb-2">
+                            <Truck size={14} color={COLORS.text.muted} />
+                            <Text className="ml-2 text-xs" style={{ color: COLORS.text.muted }}>
+                              Frais de livraison: {deliveryFee.toFixed(2)}€
+                            </Text>
+                          </View>
+                          {producer.shipping_note ? (
+                            <Text className="text-xs mb-3" style={{ color: COLORS.text.muted }}>
+                              {producer.shipping_note}
+                            </Text>
+                          ) : null}
+
+                          <View className="mb-3">
+                            <Text className="text-xs mb-1" style={{ color: COLORS.text.muted }}>
+                              Adresse de livraison *
+                            </Text>
+                            <TextInput
+                              value={deliveryAddress}
+                              onChangeText={setDeliveryAddress}
+                              placeholder="Votre adresse complète"
+                              placeholderTextColor={COLORS.text.muted}
+                              multiline
+                              numberOfLines={3}
+                              className="px-4 py-3 rounded-xl"
+                              style={{
+                                backgroundColor: `${COLORS.text.white}08`,
+                                color: COLORS.text.cream,
+                                borderWidth: 1,
+                                borderColor: `${COLORS.accent.hemp}30`,
+                                minHeight: 80,
+                                textAlignVertical: 'top',
+                              }}
+                            />
+                          </View>
+
+                          <View>
+                            <Text className="text-xs mb-1" style={{ color: COLORS.text.muted }}>
+                              Instructions de livraison (optionnel)
+                            </Text>
+                            <TextInput
+                              value={deliveryInstructions}
+                              onChangeText={setDeliveryInstructions}
+                              placeholder="Code, étage, horaires..."
+                              placeholderTextColor={COLORS.text.muted}
+                              multiline
+                              numberOfLines={2}
+                              className="px-4 py-3 rounded-xl"
+                              style={{
+                                backgroundColor: `${COLORS.text.white}08`,
+                                color: COLORS.text.cream,
+                                borderWidth: 1,
+                                borderColor: `${COLORS.accent.hemp}30`,
+                                minHeight: 70,
+                                textAlignVertical: 'top',
+                              }}
+                            />
+                          </View>
+                        </View>
+                      )}
                     </View>
                   )}
 
@@ -693,12 +857,21 @@ export default function LocalMarketOrderModal({
                       </View>
                     </View>
 
+                    {isShipping && (
+                      <View className="flex-row justify-between mb-2">
+                        <Text style={{ color: COLORS.text.lightGray }}>Frais de livraison</Text>
+                        <Text style={{ color: COLORS.text.cream }}>
+                          {deliveryFee.toFixed(2)}€
+                        </Text>
+                      </View>
+                    )}
+
                     <View
                       className="flex-row justify-between pt-3 mt-2"
                       style={{ borderTopWidth: 1, borderTopColor: `${COLORS.text.white}10` }}
                     >
                       <Text className="font-bold" style={{ color: COLORS.text.lightGray }}>
-                        Total à payer sur place
+                        {paymentSummaryLabel}
                       </Text>
                       <Text className="text-xl font-bold" style={{ color: COLORS.primary.gold }}>
                         {totalPrice.toFixed(2)}€
@@ -727,37 +900,56 @@ export default function LocalMarketOrderModal({
                     )}
                   </View>
 
-                  {/* Infos retrait */}
+                  {/* Infos livraison / retrait */}
                   <View
                     className="rounded-xl p-4 mb-6"
                     style={{ backgroundColor: `${COLORS.accent.hemp}10` }}
                   >
                     <View className="flex-row items-center mb-3">
-                      <MapPin size={18} color={COLORS.accent.hemp} />
+                      {isShipping ? (
+                        <Truck size={18} color={COLORS.accent.hemp} />
+                      ) : (
+                        <MapPin size={18} color={COLORS.accent.hemp} />
+                      )}
                       <Text className="ml-2 font-bold" style={{ color: COLORS.text.cream }}>
-                        Retrait chez {producer.name}
+                        {isShipping ? 'Livraison' : `Retrait chez ${producer.name}`}
                       </Text>
                     </View>
 
-                    {producer.adresse_retrait && (
-                      <Text className="text-sm mb-2" style={{ color: COLORS.text.lightGray }}>
-                        {producer.adresse_retrait}
-                      </Text>
-                    )}
-
-                    {producer.horaires_retrait && (
-                      <View className="flex-row items-center">
-                        <Clock size={14} color={COLORS.text.muted} />
-                        <Text className="ml-2 text-xs" style={{ color: COLORS.text.muted }}>
-                          {producer.horaires_retrait}
+                    {isShipping ? (
+                      <>
+                        <Text className="text-sm mb-2" style={{ color: COLORS.text.lightGray }}>
+                          {deliveryAddress}
                         </Text>
-                      </View>
-                    )}
+                        {deliveryInstructions ? (
+                          <Text className="text-xs mt-2" style={{ color: COLORS.text.muted }}>
+                            {deliveryInstructions}
+                          </Text>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        {producer.adresse_retrait && (
+                          <Text className="text-sm mb-2" style={{ color: COLORS.text.lightGray }}>
+                            {producer.adresse_retrait}
+                          </Text>
+                        )}
 
-                    {producer.instructions_retrait && (
-                      <Text className="text-xs mt-2 italic" style={{ color: COLORS.text.muted }}>
-                        {producer.instructions_retrait}
-                      </Text>
+                        {producer.horaires_retrait && (
+                          <View className="flex-row items-center">
+                            <Clock size={14} color={COLORS.text.muted} />
+                            <Text className="ml-2 text-xs" style={{ color: COLORS.text.muted }}>
+                              {producer.horaires_retrait}
+                            </Text>
+                          </View>
+                        )}
+
+                        {producer.instructions_retrait && (
+                          <Text className="text-xs mt-2 italic" style={{ color: COLORS.text.muted }}>
+                            {producer.instructions_retrait}
+                          </Text>
+                        )}
+                      </>
                     )}
                   </View>
 
@@ -768,7 +960,7 @@ export default function LocalMarketOrderModal({
                   >
                     <AlertCircle size={18} color={COLORS.primary.gold} />
                     <Text className="ml-2 flex-1 text-sm" style={{ color: COLORS.primary.gold }}>
-                      Le paiement s'effectue en personne lors du retrait de votre commande.
+                      {paymentNotice}
                     </Text>
                   </View>
 

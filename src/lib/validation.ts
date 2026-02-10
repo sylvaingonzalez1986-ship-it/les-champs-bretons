@@ -82,6 +82,9 @@ export const userProfileSchema = z.object({
   adresse_retrait: z.string().max(500).nullable().optional(),
   horaires_retrait: z.string().max(1000).nullable().optional(),
   instructions_retrait: z.string().max(2000).nullable().optional(),
+  shipping_enabled: z.boolean().nullable().optional(),
+  shipping_fee: z.number().min(0).max(999999.99).nullable().optional(),
+  shipping_note: z.string().max(500).nullable().optional(),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 }).passthrough(); // Accepter des champs supplementaires non definis
@@ -114,6 +117,16 @@ export const producerSchema = z.object({
   culture_outdoor: z.boolean().nullable(),
   culture_greenhouse: z.boolean().nullable(),
   culture_indoor: z.boolean().nullable(),
+  instagram_url: z.string().max(500).nullable().optional(),
+  facebook_url: z.string().max(500).nullable().optional(),
+  twitter_url: z.string().max(500).nullable().optional(),
+  tiktok_url: z.string().max(500).nullable().optional(),
+  linkedin_url: z.string().max(500).nullable().optional(),
+  youtube_url: z.string().max(500).nullable().optional(),
+  website_url: z.string().max(500).nullable().optional(),
+  shipping_enabled: z.boolean().nullable().optional(),
+  shipping_fee: z.number().min(0).max(999999.99).nullable().optional(),
+  shipping_note: z.string().max(500).nullable().optional(),
 });
 
 export type ValidatedProducer = z.infer<typeof producerSchema>;

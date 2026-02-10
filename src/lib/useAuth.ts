@@ -25,7 +25,7 @@ import {
   refreshSession,
   resendConfirmationEmail,
 } from './supabase-auth';
-import { useReferralStore, useCollectionStore, useSubscriptionStore } from './store';
+import { useReferralStore, useCollectionStore, useSubscriptionStore, useCartStore } from './store';
 import { getAuthErrorType, AuthErrorType } from '@/components/AuthErrorBanner';
 
 // Query keys
@@ -58,6 +58,11 @@ export function useAuth() {
       setIsInitialized(true);
     }
   }, [isLoadingSession]);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+    useCartStore.getState().setOwnerId(session?.user?.id ?? null);
+  }, [isInitialized, session?.user?.id]);
 
   // Charger le profil si connecté
   // La queryKey inclut le user.id pour isoler le cache entre utilisateurs

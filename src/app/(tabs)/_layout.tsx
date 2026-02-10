@@ -21,6 +21,7 @@ import {
   Warehouse,
   FlaskConical,
   Handshake,
+  BarChart3,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { useCartStore, useTabVisibilityStore, TabRole } from '@/lib/store';
@@ -71,7 +72,7 @@ function useTabVisibility() {
 
   // Helper to check tab visibility
   const shouldShowTab = useMemo(() => {
-    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'marche-local' | 'reseau-pro') => {
+    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'marche-local' | 'reseau-pro' | 'gestion') => {
       // Admin sees everything
       if (isAdmin) return true;
       // Use role-based configuration
@@ -280,11 +281,24 @@ export default function TabLayout() {
       <Tabs.Screen
         name="ma-boutique"
         options={{
-          title: 'Boutique',
+          title: 'Ma Boutique',
           href: shouldShowTab('ma-boutique') ? '/(tabs)/ma-boutique' : null,
           tabBarIcon: ({ color, size, focused }) => (
             <TabIcon focused={focused} focusColor={COLORS.accent.hemp}>
               <Store size={size} color={focused ? COLORS.accent.hemp : color} strokeWidth={focused ? 2.5 : 2} />
+            </TabIcon>
+          ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="gestion"
+        options={{
+          title: 'Gestion',
+          href: shouldShowTab('gestion') ? '/(tabs)/gestion' : null,
+          tabBarIcon: ({ color, size, focused }) => (
+            <TabIcon focused={focused} focusColor={COLORS.primary.gold}>
+              <BarChart3 size={size} color={focused ? COLORS.primary.gold : color} strokeWidth={focused ? 2.5 : 2} />
             </TabIcon>
           ),
         }}

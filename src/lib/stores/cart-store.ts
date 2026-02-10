@@ -14,10 +14,12 @@ export interface CartItem {
 
 interface CartStore {
   items: CartItem[];
+  ownerId: string | null;
   addToCart: (product: ProducerProduct, producerId: string, producerName: string, promoDiscount?: number) => void;
   removeFromCart: (productId: string) => void;
   updateQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
+  setOwnerId: (ownerId: string | null) => void;
   getTotal: () => number;
   getItemCount: () => number;
 }
@@ -26,6 +28,7 @@ export const useCartStore = create<CartStore>()(
   persist(
     (set, get) => ({
       items: [],
+      ownerId: null,
       addToCart: (product: ProducerProduct, producerId: string, producerName: string, promoDiscount?: number) =>
         set((state) => {
           // Pour les produits promo, on crée une entrée séparée avec un ID unique
@@ -62,6 +65,13 @@ export const useCartStore = create<CartStore>()(
               ),
         })),
       clearCart: () => set({ items: [] }),
+      setOwnerId: (ownerId: string | null) =>
+        set((state) => {
+          if (state.ownerId === ownerId) {
+            return state;
+          }
+          return { ownerId, items: [] };
+        }),
       getTotal: () => {
         const state = get();
         return state.items.reduce((sum, item) => {

@@ -152,6 +152,9 @@ interface DirectSalesProducer {
   adresse_retrait: string | null;
   horaires_retrait: string | null;
   instructions_retrait: string | null;
+  shipping_enabled?: boolean | null;
+  shipping_fee?: number | null;
+  shipping_note?: string | null;
   soil_type?: string;
   climate_type?: string;
   culture_outdoor?: boolean;
@@ -621,6 +624,9 @@ export default function MarcheLocal() {
             adresse_retrait: selectedProducer.adresse_retrait || undefined,
             horaires_retrait: selectedProducer.horaires_retrait || undefined,
             instructions_retrait: selectedProducer.instructions_retrait || undefined,
+            shipping_enabled: selectedProducer.shipping_enabled ?? undefined,
+            shipping_fee: selectedProducer.shipping_fee ?? undefined,
+            shipping_note: selectedProducer.shipping_note ?? undefined,
           }}
           onOrderSuccess={handleOrderSuccess}
         />

@@ -3,9 +3,9 @@ import { View, Pressable, ScrollView, Image, Modal, Alert, ActivityIndicator } f
 import { Text, TextInput } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { User, Package, Award, Settings, ChevronRight, Leaf, Camera, Lock, LogOut, X, Ticket, Check, Grid3X3, ChevronDown, ChevronUp, Mail, Phone, MapPin, Home, ShoppingBag, Clock, Truck, CreditCard, XCircle, Copy, ExternalLink, Gift, RefreshCw, Shield, Building2, FileText, UserCircle, Users, BarChart3 } from 'lucide-react-native';
+import { User, Package, Award, Settings, ChevronRight, Leaf, Camera, Lock, LogOut, X, Ticket, Check, Grid3X3, ChevronDown, ChevronUp, Mail, Phone, MapPin, Home, ShoppingBag, Clock, Truck, CreditCard, XCircle, Copy, ExternalLink, Gift, RefreshCw, Shield, Building2, FileText, UserCircle, Users } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
-import { safeOpenExternalUrl } from '@/lib/safe-linking';
+import { getSafeMailtoUrl, getSafeTelUrl, safeOpenExternalUrl } from '@/lib/safe-linking';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQueryClient } from '@tanstack/react-query';
@@ -32,7 +32,7 @@ import { ProProfileForm } from '@/components/ProProfileForm';
 import { UserProfile } from '@/lib/supabase-auth';
 import { AdminDashboard } from '@/components/AdminDashboard';
 import { Toast, useToast } from '@/components/Toast';
-import { useAdminOrdersQuery, useMyProducerQuery, useProducerProOrdersQuery } from '@/api/orders';
+import { useAdminOrdersQuery, useMyProducerQuery, useProducerLocalOrdersQuery, useProducerProOrdersQuery } from '@/api/orders';
 import { useLocalMarketOrdersInfinite } from '@/api/local-market';
 
 const PROFILE_IMAGE_KEY = 'user-profile-image';
@@ -67,6 +67,8 @@ export default function ProfileScreen() {
   const [showOrders, setShowOrders] = useState(false);
   const [showProducerProfile, setShowProducerProfile] = useState(false); // Fiche producteur
   const [copiedTrackingId, setCopiedTrackingId] = useState<string | null>(null);
+  const [showProducerClients, setShowProducerClients] = useState(false);
+  const [showProducerProClients, setShowProducerProClients] = useState(false);
 
   // Toast pour les feedbacks
   const { toast, showToast, hideToast } = useToast();
@@ -144,7 +146,7 @@ export default function ProfileScreen() {
   const setOrders = useOrdersStore((s) => s.setOrders);
   const [isManualRefresh, setIsManualRefresh] = useState(false);
   const ordersEnabled = showOrders && isSupabaseSyncConfigured();
-  const producerIdForOrders = ordersEnabled && isProducer ? myProducer?.id ?? '' : '';
+  const producerIdForOrders = isProducer ? myProducer?.id ?? '' : '';
 
   const {
     data: userOrders,
@@ -158,13 +160,19 @@ export default function ProfileScreen() {
     refetch: refetchProducerOrders,
   } = useProducerProOrdersQuery(producerIdForOrders);
 
+  const {
+    data: producerLocalOrders = [],
+    isLoading: isProducerLocalOrdersLoading,
+    refetch: refetchProducerLocalOrders,
+  } = useProducerLocalOrdersQuery(producerIdForOrders, session?.access_token ?? '');
+
   const { refetch: refetchLocalMarketOrders } = useLocalMarketOrdersInfinite(
     ordersEnabled ? session?.user?.id : undefined,
     ordersEnabled ? session?.access_token : undefined,
     10
   );
 
-  const ordersLoading = isManualRefresh || isUserOrdersFetching || isProducerOrdersFetching;
+  const ordersLoading = isManualRefresh || isUserOrdersFetching || isProducerOrdersFetching || isProducerLocalOrdersLoading;
 
   const ordersFromQuery = useMemo(() => {
     if (isProducer) {
@@ -199,6 +207,42 @@ export default function ProfileScreen() {
       )
     : allOrders; // RLS filtre déjà par user_id
 
+  const producerClientListMax = 8;
+
+  const producerProClients = useMemo(() => {
+    const entries = new Map<string, { name: string; email?: string; phone?: string }>();
+
+    (producerOrders ?? []).forEach((order) => {
+      const info = order.customerInfo;
+      const email = info.email?.toLowerCase();
+      const phone = info.phone?.trim();
+      const fullName = `${info.firstName ?? ''} ${info.lastName ?? ''}`.trim();
+      const name = fullName || info.email || 'Client pro';
+      const key = email || phone || name.toLowerCase();
+
+      if (!key || entries.has(key)) return;
+      entries.set(key, { name, email: info.email ?? undefined, phone: info.phone ?? undefined });
+    });
+
+    return Array.from(entries.values());
+  }, [producerOrders]);
+
+  const producerLocalClients = useMemo(() => {
+    const entries = new Map<string, { name: string; email?: string; phone?: string }>();
+
+    producerLocalOrders.forEach((order) => {
+      const email = order.customer_email?.toLowerCase();
+      const phone = order.customer_phone?.trim() ?? undefined;
+      const name = order.customer_name?.trim() || order.customer_email || 'Client particulier';
+      const key = email || phone || name.toLowerCase();
+
+      if (!key || entries.has(key)) return;
+      entries.set(key, { name, email: order.customer_email ?? undefined, phone });
+    });
+
+    return Array.from(entries.values());
+  }, [producerLocalOrders]);
+
   const handleManualRefresh = useCallback(async () => {
     if (!isSupabaseSyncConfigured()) {
       return;
@@ -214,8 +258,11 @@ export default function ProfileScreen() {
       let refreshedOrdersCount = 0;
 
       if (isProducer) {
-        const result = await refetchProducerOrders();
-        refreshedOrdersCount = result.data?.length ?? 0;
+        const [proResult, localResult] = await Promise.all([
+          refetchProducerOrders(),
+          refetchProducerLocalOrders(),
+        ]);
+        refreshedOrdersCount = (proResult.data?.length ?? 0) + (localResult.data?.length ?? 0);
       } else {
         const [ordersResult] = await Promise.all([
           refetchUserOrders(),
@@ -238,10 +285,43 @@ export default function ProfileScreen() {
     isProducer,
     producerIdForOrders,
     refetchProducerOrders,
+    refetchProducerLocalOrders,
     refetchUserOrders,
     refetchLocalMarketOrders,
     showToast,
   ]);
+
+  const openMailTo = useCallback(async (email?: string) => {
+    if (!email) {
+      showToast('Contact indisponible', 'warning');
+      return;
+    }
+    const mailUrl = getSafeMailtoUrl(email);
+    if (!mailUrl) {
+      showToast('Contact indisponible', 'warning');
+      return;
+    }
+    const opened = await safeOpenExternalUrl(mailUrl, { allowMailto: true });
+    if (!opened) {
+      showToast('Contact indisponible', 'warning');
+    }
+  }, [showToast]);
+
+  const openTel = useCallback(async (phone?: string) => {
+    if (!phone) {
+      showToast('Contact indisponible', 'warning');
+      return;
+    }
+    const telUrl = getSafeTelUrl(phone);
+    if (!telUrl) {
+      showToast('Contact indisponible', 'warning');
+      return;
+    }
+    const opened = await safeOpenExternalUrl(telUrl, { allowTel: true });
+    if (!opened) {
+      showToast('Contact indisponible', 'warning');
+    }
+  }, [showToast]);
 
   useEffect(() => {
     if (!showOrders || !isProducer || !producerIdForOrders) {
@@ -1297,64 +1377,63 @@ export default function ProfileScreen() {
         {/* PRODUCER SECTION - Simplified Accès rapide */}
         {isProducer && isAuthenticated && (
           <View className="mx-6 mb-6">
-            <View className="bg-white/5 rounded-2xl p-4 border border-white/10">
-              <Text className="text-white font-semibold mb-3">Accès rapide</Text>
+            <View className="bg-amber-900/15 rounded-2xl p-4 border border-amber-600/40">
 
               {/* Ma Fiche Producteur */}
               <Pressable
                 onPress={() => setShowProducerProfile(!showProducerProfile)}
                 className="flex-row items-center py-2.5 px-3 rounded-xl mb-2 active:opacity-70"
                 style={{
-                  backgroundColor: isProducerProfileIncomplete ? 'rgba(239, 68, 68, 0.15)' : 'rgba(13, 148, 136, 0.15)',
+                  backgroundColor: isProducerProfileIncomplete ? 'rgba(239, 68, 68, 0.18)' : 'rgba(251, 146, 60, 0.22)',
                   borderWidth: 1,
-                  borderColor: isProducerProfileIncomplete ? 'rgba(239, 68, 68, 0.25)' : '#0D948825'
+                  borderColor: isProducerProfileIncomplete ? 'rgba(239, 68, 68, 0.25)' : 'rgba(251, 146, 60, 0.35)'
                 }}
               >
                 <View
                   className="w-8 h-8 rounded-full items-center justify-center"
-                  style={{ backgroundColor: isProducerProfileIncomplete ? 'rgba(239, 68, 68, 0.25)' : 'rgba(13, 148, 136, 0.25)' }}
+                  style={{ backgroundColor: isProducerProfileIncomplete ? 'rgba(239, 68, 68, 0.3)' : 'rgba(251, 146, 60, 0.3)' }}
                 >
-                  <UserCircle size={16} color={isProducerProfileIncomplete ? '#EF4444' : '#0D9488'} />
+                  <UserCircle size={16} color={isProducerProfileIncomplete ? '#EF4444' : '#FB923C'} />
                 </View>
-                <Text className="text-white text-sm font-medium ml-2.5 flex-1">Ma fiche producteur</Text>
+                <Text className="text-white text-sm font-medium ml-2.5 flex-1">Mes Infos</Text>
                 {isProducerProfileIncomplete && (
                   <View className="bg-red-500 rounded-full w-5 h-5 items-center justify-center mr-1.5">
                     <Text className="text-white text-[10px] font-bold">!</Text>
                   </View>
                 )}
                 {showProducerProfile ? (
-                  <ChevronUp size={16} color={isProducerProfileIncomplete ? '#EF4444' : '#0D9488'} />
+                  <ChevronUp size={16} color={isProducerProfileIncomplete ? '#EF4444' : '#FB923C'} />
                 ) : (
-                  <ChevronDown size={16} color={isProducerProfileIncomplete ? '#EF4444' : '#0D9488'} />
+                  <ChevronDown size={16} color={isProducerProfileIncomplete ? '#EF4444' : '#FB923C'} />
                 )}
               </Pressable>
 
               {/* Formulaire fiche producteur (collapsible) */}
               {showProducerProfile && (
-                <View className="mb-2 bg-teal-900/20 rounded-xl p-3 border border-teal-700/30">
+                <View className="mb-2 bg-orange-900/25 rounded-xl p-3 border border-orange-600/40">
                   {/* Informations du compte */}
-                  <View className="mb-4 pb-3 border-b border-teal-700/30">
+                  <View className="mb-4 pb-3 border-b border-orange-700/30">
                     <View className="flex-row items-center mb-2">
-                      <UserCircle size={14} color="#0D9488" />
-                      <Text className="text-teal-400 text-xs ml-1.5 font-medium">Mon compte</Text>
+                      <UserCircle size={14} color="#F59E0B" />
+                      <Text className="text-amber-400 text-xs ml-1.5 font-medium">Mon compte</Text>
                     </View>
                     <View className="flex-row mb-2">
-                      <View className="flex-1 bg-white/5 rounded-lg p-2 mr-1">
-                        <Text className="text-gray-500 text-[10px]">Email</Text>
+                      <View className="flex-1 bg-white/10 rounded-lg p-2 mr-1">
+                        <Text className="text-amber-200 text-[10px]">Email</Text>
                         <Text className="text-white text-xs" numberOfLines={1}>{authEmail || 'Non renseigné'}</Text>
                       </View>
-                      <View className="flex-1 bg-white/5 rounded-lg p-2 ml-1">
-                        <Text className="text-gray-500 text-[10px]">Rôle</Text>
-                        <Text className="text-emerald-400 text-xs font-medium">Producteur</Text>
+                      <View className="flex-1 bg-white/10 rounded-lg p-2 ml-1">
+                        <Text className="text-amber-200 text-[10px]">Rôle</Text>
+                        <Text className="text-amber-400 text-xs font-medium">Producteur</Text>
                       </View>
                     </View>
                     <View className="flex-row">
                       <Pressable
                         onPress={() => router.push('/edit-profile')}
-                        className="flex-1 bg-teal-600/20 rounded-lg py-2 flex-row items-center justify-center mr-1 active:opacity-70"
+                        className="flex-1 bg-amber-600/20 rounded-lg py-2 flex-row items-center justify-center mr-1 active:opacity-70"
                       >
-                        <FileText size={12} color="#0D9488" />
-                        <Text className="text-teal-400 text-xs font-medium ml-1">Modifier</Text>
+                        <FileText size={12} color="#F59E0B" />
+                        <Text className="text-amber-300 text-xs font-medium ml-1">Modifier</Text>
                       </Pressable>
                       <Pressable
                         onPress={() => signOut()}
@@ -1402,163 +1481,141 @@ export default function ProfileScreen() {
                 </View>
               )}
 
-              {/* Ma Boutique */}
-              <Pressable
-                onPress={() => router.push('/(tabs)/ma-boutique')}
-                className="flex-row items-center py-2.5 px-3 bg-indigo-600/15 rounded-xl mb-2 active:opacity-70"
-                style={{ borderWidth: 1, borderColor: '#818CF825' }}
-              >
-                <View className="w-8 h-8 rounded-full bg-indigo-600/25 items-center justify-center">
-                  <ShoppingBag size={16} color="#818CF8" />
-                </View>
-                <Text className="text-white text-sm font-medium ml-2.5 flex-1">Ma Boutique</Text>
-                <ChevronRight size={16} color="#818CF8" />
-              </Pressable>
-
-              {/* Commandes PRO */}
-              <Pressable
-                onPress={() => setShowOrders(!showOrders)}
-                className="flex-row items-center py-2.5 px-3 bg-emerald-600/15 rounded-xl mb-2 active:opacity-70"
-                style={{ borderWidth: 1, borderColor: '#10B98125' }}
-              >
-                <View className="w-8 h-8 rounded-full bg-emerald-600/25 items-center justify-center">
-                  <Package size={16} color="#10B981" />
-                </View>
-                <Text className="text-white text-sm font-medium ml-2.5 flex-1">Commandes PRO</Text>
-                {myOrders.length > 0 && (
-                  <View className="bg-emerald-500 rounded-full px-2 py-0.5 mr-1.5">
-                    <Text className="text-white text-xs font-bold">{myOrders.length}</Text>
+              {/* Dashboard clients producteur */}
+              <View className="mt-2 bg-amber-950/25 rounded-xl p-3 border border-amber-700/40">
+                <View className="flex-row items-center mb-2">
+                  <View className="w-7 h-7 rounded-full items-center justify-center bg-amber-500/30">
+                    <Users size={14} color="#F59E0B" />
                   </View>
-                )}
-                {showOrders ? (
-                  <ChevronUp size={16} color="#10B981" />
-                ) : (
-                  <ChevronDown size={16} color="#10B981" />
-                )}
-              </Pressable>
+                  <Text className="text-amber-100 text-sm font-semibold ml-2">Mes Clients</Text>
+                </View>
 
-              {/* Liste Commandes PRO (collapsible) */}
-              {showOrders && (
-                <View className="mb-2 bg-emerald-900/20 rounded-xl p-3 border border-emerald-700/30">
-                  <Pressable
-                    onPress={handleManualRefresh}
-                    disabled={ordersLoading}
-                    className="flex-row items-center justify-center py-2 rounded-lg mb-2 active:opacity-70"
-                    style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', opacity: ordersLoading ? 0.6 : 1 }}
-                  >
-                    {ordersLoading ? (
-                      <ActivityIndicator size="small" color="#10B981" />
+                <View className="flex-row" style={{ gap: 8 }}>
+                  <View className="flex-1 bg-white/10 rounded-lg p-2 items-center border border-white/10">
+                    <Text className="text-white text-lg font-bold">{producerLocalClients.length}</Text>
+                    <Text className="text-amber-100 text-[10px]">Clients particuliers</Text>
+                  </View>
+                  <View className="flex-1 bg-white/10 rounded-lg p-2 items-center border border-white/10">
+                    <Text className="text-white text-lg font-bold">{producerProClients.length}</Text>
+                    <Text className="text-amber-100 text-[10px]">Clients pro</Text>
+                  </View>
+                </View>
+
+                <Pressable
+                  onPress={() => setShowProducerClients(!showProducerClients)}
+                  className="flex-row items-center justify-between mt-3 p-2 rounded-lg bg-amber-500/20 active:opacity-70"
+                >
+                  <Text className="text-amber-100 text-xs font-medium">Clients particuliers</Text>
+                  <View className="flex-row items-center">
+                    <Text className="text-amber-100 text-xs mr-2">{producerLocalClients.length}</Text>
+                    {showProducerClients ? (
+                      <ChevronUp size={14} color="#F59E0B" />
                     ) : (
-                      <RefreshCw size={14} color="#10B981" />
+                      <ChevronDown size={14} color="#F59E0B" />
                     )}
-                    <Text className="text-emerald-400 text-xs font-medium ml-1.5">
-                      {ordersLoading ? 'Actualisation...' : 'Actualiser'}
-                    </Text>
-                  </Pressable>
+                  </View>
+                </Pressable>
 
-                  {myOrders.length === 0 ? (
-                    <Text className="text-gray-400 text-xs text-center py-2">Aucune commande PRO</Text>
-                  ) : (
-                    myOrders.slice(0, 3).map((order) => {
-                      const statusConfig = ORDER_STATUS_CONFIG[order.status];
-                      return (
-                        <View key={order.id} className="bg-white/5 rounded-lg p-2.5 mb-1.5">
-                          <View className="flex-row justify-between items-center">
-                            <Text className="text-white text-xs font-medium">
-                              {order.customerInfo.firstName} {order.customerInfo.lastName}
-                            </Text>
-                            <Text className="text-emerald-400 text-xs font-bold">{order.total.toFixed(2)}€</Text>
+                {showProducerClients && (
+                  <View className="mt-2">
+                    {producerLocalClients.length === 0 ? (
+                      <Text className="text-amber-100 text-xs text-center py-2">Aucun client particulier</Text>
+                    ) : (
+                      producerLocalClients.slice(0, producerClientListMax).map((client, index) => (
+                        <View key={`${client.email ?? client.name}-${index}`} className="flex-row items-center justify-between bg-white/10 rounded-lg p-2 mb-1.5 border border-white/5">
+                          <View className="flex-1 mr-2">
+                            <Text className="text-white text-xs font-semibold" numberOfLines={1}>{client.name}</Text>
+                            {client.email && (
+                              <Text className="text-amber-100 text-[10px]" numberOfLines={1}>{client.email}</Text>
+                            )}
                           </View>
-                          <View className="flex-row justify-between items-center mt-1">
-                            <Text className="text-gray-500 text-[10px]">
-                              {new Date(order.createdAt).toLocaleDateString('fr-FR')}
-                            </Text>
-                            <Text className="text-[10px]" style={{ color: statusConfig.color }}>
-                              {statusConfig.label}
-                            </Text>
+                          <View className="flex-row items-center">
+                            <Pressable
+                              onPress={() => openMailTo(client.email)}
+                              className="w-7 h-7 rounded-full items-center justify-center mr-2 active:opacity-70"
+                              style={{ backgroundColor: 'rgba(217, 119, 6, 0.2)', opacity: client.email ? 1 : 0.4 }}
+                            >
+                              <Mail size={12} color={client.email ? '#D97706' : '#94A3B8'} />
+                            </Pressable>
+                            <Pressable
+                              onPress={() => openTel(client.phone)}
+                              className="w-7 h-7 rounded-full items-center justify-center active:opacity-70"
+                              style={{ backgroundColor: 'rgba(234, 88, 12, 0.2)', opacity: client.phone ? 1 : 0.4 }}
+                            >
+                              <Phone size={12} color={client.phone ? '#EA580C' : '#94A3B8'} />
+                            </Pressable>
                           </View>
                         </View>
-                      );
-                    })
-                  )}
-
-                  {myOrders.length > 3 && (
-                    <Pressable
-                      onPress={() => router.push('/gestion-commandes')}
-                      className="py-1.5 active:opacity-70"
-                    >
-                      <Text className="text-emerald-400 text-xs text-center">
-                        Voir les {myOrders.length} commandes →
+                      ))
+                    )}
+                    {producerLocalClients.length > producerClientListMax && (
+                      <Text className="text-amber-100 text-[10px] text-center mt-1">
+                        +{producerLocalClients.length - producerClientListMax} autres clients
                       </Text>
-                    </Pressable>
-                  )}
-                </View>
-              )}
+                    )}
+                  </View>
+                )}
 
-              {/* Gestion Commandes - Export */}
-              <Pressable
-                onPress={() => router.push('/gestion-commandes')}
-                className="flex-row items-center py-2.5 px-3 rounded-xl active:opacity-70"
-                style={{ backgroundColor: COLORS.primary.gold + '15', borderWidth: 1, borderColor: COLORS.primary.gold + '25' }}
-              >
-                <View className="w-8 h-8 rounded-full items-center justify-center" style={{ backgroundColor: COLORS.primary.gold + '25' }}>
-                  <BarChart3 size={16} color={COLORS.primary.gold} />
-                </View>
-                <Text className="text-white text-sm font-medium ml-2.5 flex-1">Gestion & Export</Text>
-                <ChevronRight size={16} color={COLORS.primary.gold} />
-              </Pressable>
+                <Pressable
+                  onPress={() => setShowProducerProClients(!showProducerProClients)}
+                  className="flex-row items-center justify-between mt-3 p-2 rounded-lg bg-orange-500/20 active:opacity-70"
+                >
+                  <Text className="text-amber-100 text-xs font-medium">Clients pro</Text>
+                  <View className="flex-row items-center">
+                    <Text className="text-amber-100 text-xs mr-2">{producerProClients.length}</Text>
+                    {showProducerProClients ? (
+                      <ChevronUp size={14} color="#FB923C" />
+                    ) : (
+                      <ChevronDown size={14} color="#FB923C" />
+                    )}
+                  </View>
+                </Pressable>
+
+                {showProducerProClients && (
+                  <View className="mt-2">
+                    {producerProClients.length === 0 ? (
+                      <Text className="text-amber-100 text-xs text-center py-2">Aucun client pro</Text>
+                    ) : (
+                      producerProClients.slice(0, producerClientListMax).map((client, index) => (
+                        <View key={`${client.email ?? client.name}-${index}`} className="flex-row items-center justify-between bg-white/10 rounded-lg p-2 mb-1.5 border border-white/5">
+                          <View className="flex-1 mr-2">
+                            <Text className="text-white text-xs font-semibold" numberOfLines={1}>{client.name}</Text>
+                            {client.email && (
+                              <Text className="text-amber-100 text-[10px]" numberOfLines={1}>{client.email}</Text>
+                            )}
+                          </View>
+                          <View className="flex-row items-center">
+                            <Pressable
+                              onPress={() => openMailTo(client.email)}
+                              className="w-7 h-7 rounded-full items-center justify-center mr-2 active:opacity-70"
+                              style={{ backgroundColor: 'rgba(217, 119, 6, 0.2)', opacity: client.email ? 1 : 0.4 }}
+                            >
+                              <Mail size={12} color={client.email ? '#D97706' : '#94A3B8'} />
+                            </Pressable>
+                            <Pressable
+                              onPress={() => openTel(client.phone)}
+                              className="w-7 h-7 rounded-full items-center justify-center active:opacity-70"
+                              style={{ backgroundColor: 'rgba(234, 88, 12, 0.2)', opacity: client.phone ? 1 : 0.4 }}
+                            >
+                              <Phone size={12} color={client.phone ? '#EA580C' : '#94A3B8'} />
+                            </Pressable>
+                          </View>
+                        </View>
+                      ))
+                    )}
+                    {producerProClients.length > producerClientListMax && (
+                      <Text className="text-amber-100 text-[10px] text-center mt-1">
+                        +{producerProClients.length - producerClientListMax} autres clients
+                      </Text>
+                    )}
+                  </View>
+                )}
+              </View>
             </View>
           </View>
         )}
 
-        {/* PRO (not producer) Section */}
-        {isPro && !isProducer && isAuthenticated && (
-          <View className="mx-6 mb-6">
-            <View className="bg-indigo-900/30 rounded-2xl p-4 border border-indigo-700/50">
-              <View className="flex-row items-center mb-4">
-                <Building2 size={24} color="#818CF8" />
-                <Text className="text-white font-bold text-lg ml-2">Espace Professionnel</Text>
-              </View>
 
-              <View className="bg-white/5 rounded-xl p-4 mb-4">
-                <Text className="text-indigo-300 font-semibold mb-3">Avantages professionnels</Text>
-                <View className="flex-row items-center mb-2">
-                  <Check size={16} color="#818CF8" />
-                  <Text className="text-gray-300 text-sm ml-2">Accès aux tarifs professionnels</Text>
-                </View>
-                <View className="flex-row items-center mb-2">
-                  <Check size={16} color="#818CF8" />
-                  <Text className="text-gray-300 text-sm ml-2">Commandes en gros volumes</Text>
-                </View>
-                <View className="flex-row items-center mb-2">
-                  <Check size={16} color="#818CF8" />
-                  <Text className="text-gray-300 text-sm ml-2">Factures conformes pour la comptabilité</Text>
-                </View>
-                <View className="flex-row items-center">
-                  <Check size={16} color="#818CF8" />
-                  <Text className="text-gray-300 text-sm ml-2">Support dédié</Text>
-                </View>
-              </View>
-
-              <View className="flex-row" style={{ gap: 12 }}>
-                <View className="flex-1 bg-white/5 rounded-xl p-3 items-center">
-                  <Text className="text-indigo-400 text-2xl font-bold">{myOrders.length}</Text>
-                  <Text className="text-gray-400 text-xs">Commandes</Text>
-                </View>
-                <View className="flex-1 bg-white/5 rounded-xl p-3 items-center">
-                  <Text className="text-indigo-400 text-2xl font-bold">
-                    {myOrders.reduce((sum, order) => sum + order.total, 0).toFixed(0)}€
-                  </Text>
-                  <Text className="text-gray-400 text-xs">Total dépensé</Text>
-                </View>
-              </View>
-
-              <Text className="text-gray-500 text-xs mt-3 text-center">
-                Le système de récompenses professionnelles arrive bientôt
-              </Text>
-            </View>
-          </View>
-        )}
 
         {/* Referral Card - ONLY FOR CLIENTS */}
         {isClient && (
@@ -1717,11 +1774,24 @@ export default function ProfileScreen() {
         {/* Menu Items */}
         <View className="mx-6 mb-8">
           {isProUser && (
-            <MenuItem
-              icon={<Users size={20} color="#10B981" />}
-              label="Rejoindre le groupe Signal"
-              onPress={handleOpenSignalGroup}
-            />
+            <View className="mb-4 rounded-2xl p-4 border" style={{ backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.35)' }}>
+              <View className="flex-row items-start">
+                <View className="w-10 h-10 rounded-full items-center justify-center mr-3" style={{ backgroundColor: 'rgba(16, 185, 129, 0.25)' }}>
+                  <Users size={20} color="#10B981" />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-white font-semibold">Des questions ? Des idées ? Besoin d'aide ?</Text>
+                  <Text className="text-emerald-200 text-sm mt-1">Rejoins la commu sur Signal</Text>
+                </View>
+              </View>
+              <Pressable
+                onPress={handleOpenSignalGroup}
+                className="mt-3 py-2.5 rounded-xl items-center justify-center active:opacity-80"
+                style={{ backgroundColor: '#10B981' }}
+              >
+                <Text className="text-white font-bold">Rejoindre le groupe Signal</Text>
+              </Pressable>
+            </View>
           )}
           <MenuItem
             icon={<Settings size={20} color="#0D9488" />}

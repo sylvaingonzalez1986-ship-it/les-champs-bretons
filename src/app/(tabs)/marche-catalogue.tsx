@@ -44,6 +44,9 @@ interface ProducerInfo {
   adresse_retrait?: string;
   horaires_retrait?: string;
   instructions_retrait?: string;
+  shipping_enabled?: boolean | null;
+  shipping_fee?: number | null;
+  shipping_note?: string | null;
 }
 
 export default function MarcheCatalogue() {
@@ -258,6 +261,9 @@ export default function MarcheCatalogue() {
             adresse_retrait: producer.adresse_retrait,
             horaires_retrait: producer.horaires_retrait,
             instructions_retrait: producer.instructions_retrait,
+            shipping_enabled: producer.shipping_enabled ?? undefined,
+            shipping_fee: producer.shipping_fee ?? undefined,
+            shipping_note: producer.shipping_note ?? undefined,
           }}
           onOrderSuccess={() => {}}
         />

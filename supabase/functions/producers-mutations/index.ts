@@ -32,6 +32,13 @@ const producerSchema = z.object({
   adresse_retrait: z.string().max(255).optional().nullable(),
   horaires_retrait: z.string().max(255).optional().nullable(),
   instructions_retrait: z.string().max(1000).optional().nullable(),
+  instagram_url: z.string().max(500).optional().nullable(),
+  facebook_url: z.string().max(500).optional().nullable(),
+  twitter_url: z.string().max(500).optional().nullable(),
+  tiktok_url: z.string().max(500).optional().nullable(),
+  youtube_url: z.string().max(500).optional().nullable(),
+  website_url: z.string().max(500).optional().nullable(),
+  linkedin_url: z.string().max(500).optional().nullable(),
 });
 
 const requestSchema = z.discriminatedUnion('action', [
@@ -77,6 +84,13 @@ const PRODUCER_FIELDS = new Set([
   'adresse_retrait',
   'horaires_retrait',
   'instructions_retrait',
+  'instagram_url',
+  'facebook_url',
+  'twitter_url',
+  'tiktok_url',
+  'youtube_url',
+  'website_url',
+  'linkedin_url',
 ]);
 
 const UPDATE_FIELDS = new Set([...PRODUCER_FIELDS].filter((field) => field !== 'id' && field !== 'profile_id'));

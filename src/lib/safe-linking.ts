@@ -59,3 +59,26 @@ export async function safeOpenExternalUrl(
   await Linking.openURL(safeUrl);
   return true;
 }
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function getSafeMailtoUrl(email: string): string | null {
+  const trimmed = email.trim();
+  if (!trimmed || !EMAIL_REGEX.test(trimmed)) return null;
+
+  return `mailto:${trimmed}`;
+}
+
+export function getSafeTelUrl(phone: string): string | null {
+  const trimmed = phone.trim();
+  if (!trimmed) return null;
+
+  let cleaned = trimmed.replace(/[^\d+]/g, '');
+  if (cleaned.startsWith('00')) {
+    cleaned = `+${cleaned.slice(2)}`;
+  }
+  const digitsOnly = cleaned.replace(/\+/g, '');
+  if (digitsOnly.length < 6) return null;
+
+  return `tel:${cleaned}`;
+}

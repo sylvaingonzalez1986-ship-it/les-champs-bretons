@@ -70,3 +70,14 @@ export function useAdminOrdersQuery(enabled: boolean): UseQueryResult<Order[]> {
     refetchInterval: enabled ? 30 * 1000 : false,
   });
 }
+
+export function useUserOrdersQuery(enabled: boolean): UseQueryResult<Order[]> {
+  const { session } = useAuth();
+
+  return useQuery<Order[]>({
+    queryKey: ['orders', 'user', session?.user?.id],
+    queryFn: fetchOrders,
+    enabled: enabled && !!session?.access_token,
+    staleTime: 30 * 1000,
+  });
+}

@@ -75,6 +75,8 @@ export interface Order {
   notes?: string;
   // Order type - permet de distinguer les commandes PRO des commandes classiques
   isProOrder?: boolean;
+  // Delivery method for local market orders
+  deliveryMethod?: 'pickup' | 'shipping';
   // Payment validation fields (optionnels - système simplifié)
   paymentValidated?: boolean;
   paymentValidatedAt?: number;

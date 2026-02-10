@@ -13,6 +13,7 @@ import {
   Info,
   Check,
   AlertCircle,
+  Truck,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { UserProfile } from '@/lib/supabase-auth';
@@ -30,6 +31,10 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
   const [horairesRetrait, setHorairesRetrait] = useState('');
   const [instructionsRetrait, setInstructionsRetrait] = useState('');
 
+  const [shippingEnabled, setShippingEnabled] = useState(false);
+  const [shippingFee, setShippingFee] = useState('');
+  const [shippingNote, setShippingNote] = useState('');
+
   // Validation errors
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successMessage, setSuccessMessage] = useState('');
@@ -41,6 +46,9 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
       setAdresseRetrait(profile.adresse_retrait || '');
       setHorairesRetrait(profile.horaires_retrait || '');
       setInstructionsRetrait(profile.instructions_retrait || '');
+      setShippingEnabled(profile.shipping_enabled || false);
+      setShippingFee(profile.shipping_fee != null ? String(profile.shipping_fee) : '');
+      setShippingNote(profile.shipping_note || '');
     }
   }, [profile]);
 
@@ -54,6 +62,14 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
       }
     }
 
+    if (shippingEnabled) {
+      const normalizedFee = shippingFee.replace(',', '.').trim();
+      const feeValue = normalizedFee ? Number(normalizedFee) : 0;
+      if (Number.isNaN(feeValue) || feeValue < 0) {
+        newErrors.shippingFee = 'Frais de livraison invalides';
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -63,11 +79,17 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
     if (!validate()) return;
 
     try {
+      const normalizedFee = shippingFee.replace(',', '.').trim();
+      const shippingFeeValue = shippingEnabled ? (normalizedFee ? Number(normalizedFee) : 0) : 0;
+
       await onSave({
         vente_directe_ferme: venteDirecteFerme,
         adresse_retrait: venteDirecteFerme ? adresseRetrait : null,
         horaires_retrait: venteDirecteFerme ? horairesRetrait || null : null,
         instructions_retrait: venteDirecteFerme ? instructionsRetrait || null : null,
+        shipping_enabled: shippingEnabled,
+        shipping_fee: shippingEnabled ? shippingFeeValue : 0,
+        shipping_note: shippingEnabled ? shippingNote || null : null,
       });
 
       setSuccessMessage('Paramètres enregistrés !');
@@ -200,6 +222,97 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
                   value={instructionsRetrait}
                   onChangeText={setInstructionsRetrait}
                   placeholder="Ex: Accès par la cour intérieure, parking gratuit"
+                  placeholderTextColor={COLORS.text.muted}
+                  multiline
+                  numberOfLines={3}
+                  className="flex-1 py-3 pr-3"
+                  style={{ color: COLORS.text.white }}
+                />
+              </View>
+            </View>
+          </View>
+        )}
+      </View>
+
+      {/* SHIPPING SECTION */}
+      <View
+        className="rounded-xl p-4 mt-4"
+        style={{ backgroundColor: `${COLORS.primary.gold}10`, borderWidth: 1, borderColor: `${COLORS.primary.gold}30` }}
+      >
+        <View className="flex-row items-center mb-4">
+          <Truck size={20} color={COLORS.primary.gold} style={{ marginRight: 8 }} />
+          <Text style={{ color: COLORS.text.white }} className="font-semibold text-base flex-1">
+            Livraison postale
+          </Text>
+          <Switch
+            value={shippingEnabled}
+            onValueChange={setShippingEnabled}
+            trackColor={{ false: COLORS.text.muted, true: COLORS.primary.gold }}
+            thumbColor={shippingEnabled ? COLORS.primary.gold : COLORS.text.lightGray}
+          />
+        </View>
+
+        {shippingEnabled && (
+          <View>
+            <View className="mb-4">
+              <Text style={{ color: COLORS.text.lightGray }} className="text-xs mb-1">
+                Frais de livraison (€)
+              </Text>
+              <View
+                className="flex-row items-center rounded-xl overflow-hidden"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: errors.shippingFee ? COLORS.accent.red : `${COLORS.primary.paleGold}20`,
+                }}
+              >
+                <View className="px-3">
+                  <Info size={18} color={COLORS.text.muted} />
+                </View>
+                <TextInput
+                  value={shippingFee}
+                  onChangeText={(text) => {
+                    setShippingFee(text);
+                    if (errors.shippingFee) setErrors((e) => ({ ...e, shippingFee: '' }));
+                  }}
+                  placeholder="0.00"
+                  placeholderTextColor={COLORS.text.muted}
+                  keyboardType="decimal-pad"
+                  className="flex-1 py-3 pr-3"
+                  style={{ color: COLORS.text.white }}
+                />
+              </View>
+              {errors.shippingFee && (
+                <View className="flex-row items-center mt-1">
+                  <AlertCircle size={14} color={COLORS.accent.red} />
+                  <Text style={{ color: COLORS.accent.red }} className="text-xs ml-1">
+                    {errors.shippingFee}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <View>
+              <Text style={{ color: COLORS.text.lightGray }} className="text-xs mb-1">
+                Note de livraison (optionnel)
+              </Text>
+              <View
+                className="flex-row items-start rounded-xl overflow-hidden"
+                style={{
+                  backgroundColor: `${COLORS.text.white}05`,
+                  borderWidth: 1,
+                  borderColor: `${COLORS.primary.paleGold}20`,
+                  minHeight: 80,
+                  paddingTop: 12,
+                }}
+              >
+                <View className="px-3 pt-1">
+                  <Info size={18} color={COLORS.text.muted} />
+                </View>
+                <TextInput
+                  value={shippingNote}
+                  onChangeText={setShippingNote}
+                  placeholder="Ex: Livraison sous 3-5 jours ouvrés"
                   placeholderTextColor={COLORS.text.muted}
                   multiline
                   numberOfLines={3}
