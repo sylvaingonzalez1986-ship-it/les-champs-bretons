@@ -43,7 +43,7 @@ const DEFAULT_TABS: TabConfig[] = [
   { id: 'cart', name: 'Panier', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
   { id: 'tirage', name: 'Tirage', visible: true, roleVisibility: { client: true, pro: false, producer: false } },
   { id: 'profile', name: 'Profil', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
-  { id: 'marche-local', name: 'Marché Local', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
+  { id: 'marche-local', name: 'Marché Local', visible: true, roleVisibility: { client: true, pro: false, producer: false } },
 ];
 
 export const useTabVisibilityStore = create<TabVisibilityStore>()(
@@ -84,9 +84,9 @@ export const useTabVisibilityStore = create<TabVisibilityStore>()(
         // If no role (not logged in), treat as client
         const effectiveRole = role ?? 'client';
 
-        // Enforce pro tabs: Carte / Chat / Marché Local / Profil only
+        // Enforce pro tabs: Carte / Chat / Profil only
         if (effectiveRole === 'pro') {
-          const proAllowed: TabId[] = ['map', 'marche-local', 'cart', 'profile', 'gestion'];
+          const proAllowed: TabId[] = ['map', 'cart', 'profile', 'gestion'];
           return proAllowed.includes(tabId);
         }
 

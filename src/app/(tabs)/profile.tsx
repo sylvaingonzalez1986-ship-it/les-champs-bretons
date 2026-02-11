@@ -570,7 +570,7 @@ export default function ProfileScreen() {
                 <Text className="text-white text-xl font-bold">
                   {customerInfo.firstName && customerInfo.lastName
                     ? `${customerInfo.firstName} ${customerInfo.lastName}`
-                    : 'Collectionneur'}
+                    : 'Utilisateur'}
                 </Text>
               </View>
             </View>

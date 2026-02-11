@@ -28,7 +28,6 @@ import {
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { getSupabaseConfig } from '@/lib/env-validation';
-import { getSession } from '@/lib/supabase-auth';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -311,7 +310,6 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
   const [showViewer, setShowViewer] = useState(false);
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
-  const [isResolving, setIsResolving] = useState(false);
 
   // Zoom pour la visualisation d'image
   const scale = useSharedValue(1);
@@ -323,68 +321,27 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
   const isPdf = displayUrl?.toLowerCase().endsWith('.pdf') || displayUrl?.includes('application/pdf');
 
   useEffect(() => {
-    let isMounted = true;
+    if (!url) {
+      setResolvedUrl(null);
+      return;
+    }
 
-    const resolveSignedUrl = async () => {
-      setResolveError(null);
+    const isRemote = url.startsWith('http://') || url.startsWith('https://');
+    const isLocal = url.startsWith('file://') || url.startsWith('/data/') || url.includes('/cache/');
+    if (isRemote || isLocal) {
+      setResolvedUrl(url);
+      return;
+    }
 
-      if (!url) {
-        setResolvedUrl(null);
-        return;
-      }
-
-      const isRemote = url.startsWith('http://') || url.startsWith('https://');
-      const isLocal = url.startsWith('file://') || url.startsWith('/data/') || url.includes('/cache/');
-      if (isRemote || isLocal) {
-        setResolvedUrl(url);
-        return;
-      }
-
-      const session = getSession();
-      if (!session?.access_token) {
-        setResolveError('Connexion requise pour accéder à l’analyse.');
-        setResolvedUrl(null);
-        return;
-      }
-
-      try {
-        setIsResolving(true);
-        const { url: supabaseUrl, anonKey } = getSupabaseConfig();
-        const response = await fetch(`${supabaseUrl}/functions/v1/lab-analyses-url`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': anonKey,
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ path: url }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Impossible de générer l\'URL sécurisée');
-        }
-
-        const data = await response.json();
-        if (isMounted) {
-          setResolvedUrl(data?.url || null);
-        }
-      } catch (error) {
-        if (isMounted) {
-          setResolveError(error instanceof Error ? error.message : 'Erreur de chargement');
-          setResolvedUrl(null);
-        }
-      } finally {
-        if (isMounted) {
-          setIsResolving(false);
-        }
-      }
-    };
-
-    resolveSignedUrl();
-
-    return () => {
-      isMounted = false;
-    };
+    // Le bucket lab-analyses est public — construire l'URL publique directement
+    try {
+      const { url: supabaseUrl } = getSupabaseConfig();
+      const storagePath = url.startsWith('lab-analyses/') ? url : `lab-analyses/${url}`;
+      setResolvedUrl(`${supabaseUrl}/storage/v1/object/public/${storagePath}`);
+    } catch {
+      setResolveError('Configuration Supabase manquante');
+      setResolvedUrl(null);
+    }
   }, [url]);
 
   // Ouvrir le visualiseur
@@ -579,14 +536,7 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
           </View>
 
           {/* Contenu */}
-          {isResolving && !displayUrl ? (
-            <View className="flex-1 items-center justify-center">
-              <ActivityIndicator size="large" color={COLORS.primary.gold} />
-              <Text style={{ color: COLORS.text.cream }} className="mt-4">
-                Chargement de l'analyse...
-              </Text>
-            </View>
-          ) : resolveError && !displayUrl ? (
+          {resolveError && !displayUrl ? (
             <View className="flex-1 items-center justify-center px-6">
               <Text style={{ color: COLORS.text.cream }} className="text-lg font-bold text-center">
                 {resolveError}
