@@ -1,0 +1,5232 @@
+
+
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+
+CREATE SCHEMA IF NOT EXISTS "public";
+
+
+ALTER SCHEMA "public" OWNER TO "pg_database_owner";
+
+
+COMMENT ON SCHEMA "public" IS 'standard public schema';
+
+
+
+CREATE TYPE "public"."commande_status" AS ENUM (
+    'en_attente',
+    'confirmee',
+    'prete',
+    'recuperee',
+    'annulee'
+);
+
+
+ALTER TYPE "public"."commande_status" OWNER TO "postgres";
+
+
+CREATE TYPE "public"."product_status" AS ENUM (
+    'draft',
+    'published',
+    'archived'
+);
+
+
+ALTER TYPE "public"."product_status" OWNER TO "postgres";
+
+
+CREATE TYPE "public"."user_category" AS ENUM (
+    'restaurateur',
+    'epicerie',
+    'grossiste',
+    'producteur_maraicher',
+    'autre'
+);
+
+
+ALTER TYPE "public"."user_category" OWNER TO "postgres";
+
+
+CREATE TYPE "public"."user_role" AS ENUM (
+    'client',
+    'pro',
+    'producer',
+    'admin'
+);
+
+
+ALTER TYPE "public"."user_role" OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."add_user_lot"("p_user_id" "uuid", "p_lot_id" "text", "p_lot_name" "text", "p_lot_description" "text" DEFAULT NULL::"text", "p_lot_rarity" "text" DEFAULT NULL::"text", "p_lot_image" "text" DEFAULT NULL::"text", "p_lot_value" numeric DEFAULT 0, "p_lot_type" "text" DEFAULT 'product'::"text", "p_discount_percent" integer DEFAULT NULL::integer, "p_discount_amount" numeric DEFAULT NULL::numeric, "p_min_order_amount" numeric DEFAULT NULL::numeric) RETURNS "uuid"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_new_id UUID;
+BEGIN
+  INSERT INTO user_lots (
+    user_id, lot_id, lot_name, lot_description, lot_rarity, lot_image,
+    lot_value, lot_type, discount_percent, discount_amount, min_order_amount, won_at
+  ) VALUES (
+    p_user_id, p_lot_id, p_lot_name, p_lot_description, p_lot_rarity, p_lot_image,
+    p_lot_value, p_lot_type, p_discount_percent, p_discount_amount, p_min_order_amount,
+    NOW()
+  )
+  RETURNING id INTO v_new_id;
+  
+  RETURN v_new_id;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."add_user_lot"("p_user_id" "uuid", "p_lot_id" "text", "p_lot_name" "text", "p_lot_description" "text", "p_lot_rarity" "text", "p_lot_image" "text", "p_lot_value" numeric, "p_lot_type" "text", "p_discount_percent" integer, "p_discount_amount" numeric, "p_min_order_amount" numeric) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."admin_reset_rate_limit"("p_ip_address" "inet", "p_action_type" "text" DEFAULT NULL::"text") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF p_action_type IS NULL THEN
+    DELETE FROM public.rate_limit_attempts WHERE ip_address = p_ip_address;
+  ELSE
+    DELETE FROM public.rate_limit_attempts 
+    WHERE ip_address = p_ip_address AND action_type = p_action_type;
+  END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."admin_reset_rate_limit"("p_ip_address" "inet", "p_action_type" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."auth_is_admin"() RETURNS boolean
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."auth_is_admin"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."auth_is_pro"() RETURNS boolean
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'pro'
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."auth_is_pro"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."auth_is_producer"() RETURNS boolean
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'producer'
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."auth_is_producer"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."award_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text", "p_source_details" "jsonb" DEFAULT NULL::"jsonb") RETURNS TABLE("new_balance" integer)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_new_balance INTEGER;
+BEGIN
+  IF p_amount <= 0 THEN
+    RAISE EXCEPTION 'Amount must be positive';
+  END IF;
+
+  INSERT INTO user_tickets (user_id, balance, lifetime_earned)
+  VALUES (p_user_id, p_amount, p_amount)
+  ON CONFLICT (user_id) DO UPDATE SET
+    balance = user_tickets.balance + p_amount,
+    lifetime_earned = user_tickets.lifetime_earned + p_amount,
+    updated_at = now()
+  RETURNING user_tickets.balance INTO v_new_balance;
+
+  INSERT INTO ticket_transactions (
+    user_id,
+    amount,
+    balance_after,
+    source,
+    source_details
+  ) VALUES (
+    p_user_id,
+    p_amount,
+    v_new_balance,
+    p_source,
+    p_source_details
+  );
+
+  RETURN QUERY SELECT v_new_balance;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."award_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text", "p_source_details" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."check_is_admin"() RETURNS boolean
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."check_is_admin"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."check_rate_limit"("p_ip_address" "inet", "p_action_type" "text", "p_user_id" "uuid" DEFAULT NULL::"uuid", "p_max_attempts" integer DEFAULT 5, "p_window_seconds" integer DEFAULT 60, "p_block_duration_seconds" integer DEFAULT 300) RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_record RECORD;
+  v_now TIMESTAMPTZ := NOW();
+  v_window_start TIMESTAMPTZ := v_now - (p_window_seconds || ' seconds')::INTERVAL;
+BEGIN
+  -- Nettoyer les anciennes entrées (plus de 24h)
+  DELETE FROM public.rate_limit_attempts 
+  WHERE last_attempt_at < v_now - INTERVAL '24 hours';
+  
+  -- Chercher tentative existante
+  SELECT * INTO v_record
+  FROM public.rate_limit_attempts
+  WHERE ip_address = p_ip_address 
+    AND action_type = p_action_type
+    AND (p_user_id IS NULL OR user_id = p_user_id);
+  
+  -- Si bloqué actuellement
+  IF v_record.blocked_until IS NOT NULL AND v_record.blocked_until > v_now THEN
+    RETURN jsonb_build_object(
+      'allowed', false,
+      'reason', 'rate_limited',
+      'blocked_until', v_record.blocked_until,
+      'retry_after_seconds', EXTRACT(EPOCH FROM (v_record.blocked_until - v_now))::INTEGER
+    );
+  END IF;
+  
+  -- Si window expirée, reset
+  IF v_record.first_attempt_at IS NULL OR v_record.first_attempt_at < v_window_start THEN
+    IF v_record.id IS NOT NULL THEN
+      UPDATE public.rate_limit_attempts
+      SET attempts_count = 1,
+          first_attempt_at = v_now,
+          last_attempt_at = v_now,
+          blocked_until = NULL
+      WHERE id = v_record.id;
+    ELSE
+      INSERT INTO public.rate_limit_attempts (ip_address, action_type, user_id, attempts_count, first_attempt_at, last_attempt_at)
+      VALUES (p_ip_address, p_action_type, p_user_id, 1, v_now, v_now);
+    END IF;
+    
+    RETURN jsonb_build_object('allowed', true, 'attempts_remaining', p_max_attempts - 1);
+  END IF;
+  
+  -- Incrémenter tentatives
+  IF v_record.attempts_count >= p_max_attempts THEN
+    -- Bloquer
+    UPDATE public.rate_limit_attempts
+    SET blocked_until = v_now + (p_block_duration_seconds || ' seconds')::INTERVAL,
+        last_attempt_at = v_now
+    WHERE id = v_record.id;
+    
+    RETURN jsonb_build_object(
+      'allowed', false,
+      'reason', 'rate_limited',
+      'blocked_until', v_now + (p_block_duration_seconds || ' seconds')::INTERVAL,
+      'retry_after_seconds', p_block_duration_seconds
+    );
+  ELSE
+    -- Incrémenter
+    UPDATE public.rate_limit_attempts
+    SET attempts_count = attempts_count + 1,
+        last_attempt_at = v_now
+    WHERE id = v_record.id;
+    
+    RETURN jsonb_build_object(
+      'allowed', true, 
+      'attempts_remaining', p_max_attempts - v_record.attempts_count - 1
+    );
+  END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."check_rate_limit"("p_ip_address" "inet", "p_action_type" "text", "p_user_id" "uuid", "p_max_attempts" integer, "p_window_seconds" integer, "p_block_duration_seconds" integer) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."create_direct_sale_order"("p_user_id" "uuid", "p_producer_id" "text", "p_items" "jsonb") RETURNS "uuid"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_order_id uuid;
+  v_item jsonb;
+  v_product record;
+  v_total numeric := 0;
+  v_qty integer;
+  v_unit numeric;
+  v_line_total numeric;
+  v_producer record;
+BEGIN
+  IF jsonb_typeof(p_items) <> 'array' THEN
+    RAISE EXCEPTION 'INVALID_ITEMS';
+  END IF;
+
+  SELECT adresse_retrait, horaires_retrait, instructions_retrait
+    INTO v_producer
+  FROM producers
+  WHERE id = p_producer_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PRODUCER_NOT_FOUND';
+  END IF;
+
+  INSERT INTO commandes_vente_directe (
+    user_id,
+    producer_id,
+    total,
+    statut,
+    adresse_retrait,
+    horaires_retrait,
+    instructions_retrait
+  ) VALUES (
+    p_user_id,
+    p_producer_id,
+    0,
+    'en_attente',
+    COALESCE(v_producer.adresse_retrait, ''),
+    COALESCE(v_producer.horaires_retrait, ''),
+    v_producer.instructions_retrait
+  )
+  RETURNING id INTO v_order_id;
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items)
+  LOOP
+    v_qty := COALESCE((v_item->>'quantity')::int, 0);
+    IF v_qty <= 0 THEN
+      RAISE EXCEPTION 'INVALID_QUANTITY';
+    END IF;
+
+    SELECT id, producer_id, price_public
+      INTO v_product
+    FROM products
+    WHERE id = (v_item->>'productId')::text;
+
+    IF NOT FOUND OR v_product.producer_id <> p_producer_id THEN
+      RAISE EXCEPTION 'INVALID_PRODUCT';
+    END IF;
+
+    v_unit := COALESCE(v_product.price_public, 0);
+    v_line_total := v_unit * v_qty;
+    v_total := v_total + v_line_total;
+
+    INSERT INTO lignes_commande_vente_directe (
+      commande_id,
+      product_id,
+      quantite,
+      prix_unitaire,
+      sous_total
+    ) VALUES (
+      v_order_id,
+      v_product.id,
+      v_qty,
+      v_unit,
+      v_line_total
+    );
+  END LOOP;
+
+  IF v_total < 20 THEN
+    RAISE EXCEPTION 'MINIMUM_AMOUNT_NOT_MET';
+  END IF;
+
+  UPDATE commandes_vente_directe
+    SET total = v_total
+  WHERE id = v_order_id;
+
+  RETURN v_order_id;
+EXCEPTION WHEN OTHERS THEN
+  IF v_order_id IS NOT NULL THEN
+    DELETE FROM commandes_vente_directe WHERE id = v_order_id;
+  END IF;
+  RAISE;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."create_direct_sale_order"("p_user_id" "uuid", "p_producer_id" "text", "p_items" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."create_user_code_mapping"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- Cette fonction sera appelée quand l'utilisateur met à jour son user_code
+  -- Elle crée automatiquement le mapping
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."create_user_code_mapping"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."create_user_data"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  INSERT INTO user_subscriptions (user_id, subscription_tier, tickets)
+  VALUES (NEW.id, 'none', 0)
+  ON CONFLICT (user_id) DO NOTHING;
+  
+  INSERT INTO user_referrals (user_id, referral_code, points)
+  VALUES (NEW.id, UPPER(SUBSTRING(MD5(NEW.id::text || NOW()::text) FROM 1 FOR 8)), 0)
+  ON CONFLICT (user_id) DO NOTHING;
+  
+  INSERT INTO user_stats (user_id, total_spins)
+  VALUES (NEW.id, 0)
+  ON CONFLICT (user_id) DO NOTHING;
+  
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."create_user_data"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."delete_user_account"("p_confirmation_text" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_user_id uuid;
+  v_user_email text;
+  v_user_code text;
+  v_producer_id text;
+  v_request_id uuid;
+  v_orders_count int;
+  v_products_count int;
+BEGIN
+  IF p_confirmation_text != 'SUPPRIMER MON COMPTE' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Confirmation invalide');
+  END IF;
+
+  v_user_id := auth.uid();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'Non authentifié');
+  END IF;
+
+  SELECT email, user_code INTO v_user_email, v_user_code FROM profiles WHERE id = v_user_id;
+  SELECT id INTO v_producer_id FROM producers WHERE profile_id = v_user_id;
+
+  INSERT INTO rgpd_requests (user_id, request_type, status)
+  VALUES (v_user_id, 'delete', 'processing') RETURNING id INTO v_request_id;
+
+  -- Anonymiser les commandes
+  UPDATE orders SET
+    customer_name = 'Utilisateur supprimé',
+    customer_email = 'deleted-' || v_user_id || '@anonymized.local',
+    customer_phone = NULL, delivery_address = 'Adresse supprimée',
+    delivery_name = NULL, notes = NULL, user_id = NULL
+  WHERE customer_email = v_user_email OR user_id = v_user_id;
+  GET DIAGNOSTICS v_orders_count = ROW_COUNT;
+
+  -- Supprimer produits et producteur
+  IF v_producer_id IS NOT NULL THEN
+    DELETE FROM products WHERE producer_id = v_producer_id;
+    GET DIAGNOSTICS v_products_count = ROW_COUNT;
+    DELETE FROM producers WHERE id = v_producer_id;
+  ELSE
+    v_products_count := 0;
+  END IF;
+
+  -- Supprimer lots et profil
+  DELETE FROM user_lots WHERE user_id = v_user_id OR user_code = v_user_code;
+  DELETE FROM profiles WHERE id = v_user_id;
+
+  UPDATE rgpd_requests SET status = 'completed', processed_at = now(),
+    notes = format('Commandes: %s, Produits: %s', v_orders_count, v_products_count)
+  WHERE id = v_request_id;
+
+  RETURN jsonb_build_object(
+    'success', true, 'message', 'Compte supprimé', 'request_id', v_request_id,
+    'details', jsonb_build_object('orders_anonymized', v_orders_count, 'products_deleted', v_products_count)
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."delete_user_account"("p_confirmation_text" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."export_user_data"() RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_user_id uuid;
+  v_user_email text;
+  v_export_data jsonb;
+  v_profile_data jsonb;
+  v_orders_data jsonb;
+  v_products_data jsonb;
+  v_lots_data jsonb;
+  v_request_id uuid;
+BEGIN
+  v_user_id := auth.uid();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'Non authentifié');
+  END IF;
+
+  SELECT email INTO v_user_email FROM profiles WHERE id = v_user_id;
+
+  SELECT to_jsonb(p.*) - 'id' INTO v_profile_data FROM profiles p WHERE p.id = v_user_id;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'order_id', o.id, 'created_at', o.created_at, 'status', o.status,
+    'total', o.total, 'items_count', jsonb_array_length(o.items)
+  ) ORDER BY o.created_at DESC), '[]'::jsonb) INTO v_orders_data
+  FROM orders o WHERE o.customer_email = v_user_email OR o.user_id = v_user_id;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'product_id', prod.id, 'name', prod.name, 'category', prod.category,
+    'price', prod.price, 'created_at', prod.created_at
+  ) ORDER BY prod.created_at DESC), '[]'::jsonb) INTO v_products_data
+  FROM products prod JOIN producers pr ON prod.producer_id = pr.id WHERE pr.profile_id = v_user_id;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'lot_name', ul.lot_name, 'won_at', ul.won_at, 'used', ul.used
+  ) ORDER BY ul.won_at DESC), '[]'::jsonb) INTO v_lots_data
+  FROM user_lots ul WHERE ul.user_id = v_user_id;
+
+  INSERT INTO rgpd_requests (user_id, request_type, status, processed_at)
+  VALUES (v_user_id, 'export', 'completed', now()) RETURNING id INTO v_request_id;
+
+  v_export_data := jsonb_build_object(
+    'export_info', jsonb_build_object(
+      'generated_at', now(), 'request_id', v_request_id, 'user_email', v_user_email,
+      'data_controller', 'SASU Les Champs Bretons'
+    ),
+    'profile', v_profile_data,
+    'orders', v_orders_data,
+    'products_created', v_products_data,
+    'lots_won', v_lots_data
+  );
+
+  RETURN v_export_data;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."export_user_data"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_allowed_mime_types"("p_category" "text" DEFAULT NULL::"text") RETURNS TABLE("mime_type" "text", "max_size_mb" integer, "description" "text")
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    amt.mime_type,
+    (amt.max_size_bytes / 1048576)::int as max_size_mb,
+    amt.description
+  FROM allowed_mime_types amt
+  WHERE amt.active = true
+    AND (p_category IS NULL OR amt.category = p_category)
+  ORDER BY amt.category, amt.mime_type;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_allowed_mime_types"("p_category" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_current_profile"() RETURNS TABLE("id" "uuid", "role" "public"."user_role", "category" "public"."user_category", "full_name" "text", "email" "text", "phone" "text", "siret" "text", "tva_number" "text", "company_name" "text", "user_code" "text", "created_at" timestamp with time zone, "updated_at" timestamp with time zone)
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN QUERY SELECT p.id, p.role, p.category, p.full_name, p.email, p.phone, p.siret, p.tva_number, p.company_name, p.user_code, p.created_at, p.updated_at FROM profiles p WHERE p.id = auth.uid();
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_current_profile"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_current_user_email"() RETURNS "text"
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN (
+    SELECT email FROM public.profiles
+    WHERE id = auth.uid()
+    LIMIT 1
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_current_user_email"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_my_producer_id"() RETURNS "text"
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+  SELECT id FROM producers WHERE profile_id = auth.uid() LIMIT 1;
+$$;
+
+
+ALTER FUNCTION "public"."get_my_producer_id"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_ticket_balance"("p_user_id" "uuid") RETURNS integer
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_balance INTEGER;
+BEGIN
+  SELECT balance INTO v_balance
+  FROM user_tickets
+  WHERE user_id = p_user_id;
+  
+  RETURN COALESCE(v_balance, 0);
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_ticket_balance"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_upload_statistics"("p_days" integer DEFAULT 30) RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_stats jsonb;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
+    RETURN jsonb_build_object('error', 'Non autorisé');
+  END IF;
+
+  SELECT jsonb_build_object(
+    'total_uploads', COUNT(*),
+    'accepted', COUNT(*) FILTER (WHERE validation_status = 'accepted'),
+    'rejected', COUNT(*) FILTER (WHERE validation_status = 'rejected'),
+    'suspicious', COUNT(*) FILTER (WHERE validation_status = 'suspicious'),
+    'total_size_mb', COALESCE(SUM(file_size) / 1048576, 0),
+    'by_mime_type', (
+      SELECT jsonb_object_agg(mime_type, cnt)
+      FROM (
+        SELECT mime_type, COUNT(*) as cnt
+        FROM upload_logs
+        WHERE created_at > now() - (p_days || ' days')::interval
+        GROUP BY mime_type
+      ) sub
+    ),
+    'recent_rejections', (
+      SELECT jsonb_agg(jsonb_build_object(
+        'file_path', file_path,
+        'mime_type', mime_type,
+        'reason', rejection_reason,
+        'created_at', created_at
+      ))
+      FROM (
+        SELECT file_path, mime_type, rejection_reason, created_at
+        FROM upload_logs
+        WHERE validation_status IN ('rejected', 'suspicious')
+          AND created_at > now() - (p_days || ' days')::interval
+        ORDER BY created_at DESC
+        LIMIT 10
+      ) sub
+    )
+  ) INTO v_stats
+  FROM upload_logs
+  WHERE created_at > now() - (p_days || ' days')::interval;
+
+  RETURN v_stats;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_upload_statistics"("p_days" integer) OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."get_user_producer_id"() RETURNS "text"
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN (
+    SELECT p.id FROM public.producers p
+    WHERE p.profile_id = auth.uid()
+    LIMIT 1
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."get_user_producer_id"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  user_role TEXT;
+  user_full_name TEXT;
+BEGIN
+  -- Extraire le rôle des metadata (passé lors de l'inscription)
+  -- Valeurs acceptées: 'client', 'pro', 'producer'
+  user_role := COALESCE(
+    NEW.raw_user_meta_data->>'role',
+    'client'  -- Rôle par défaut si non spécifié
+  );
+
+  -- Valider que le rôle est valide
+  IF user_role NOT IN ('client', 'pro', 'producer') THEN
+    user_role := 'client';
+  END IF;
+
+  -- Extraire le nom complet des metadata
+  user_full_name := NEW.raw_user_meta_data->>'full_name';
+
+  -- Log pour debug
+  RAISE LOG 'handle_new_user: Creating profile for user % with role %', NEW.id, user_role;
+
+  INSERT INTO public.profiles (id, email, role, full_name, created_at, updated_at)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    user_role,  -- Utiliser le rôle des metadata
+    user_full_name,
+    NOW(),
+    NOW()
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    -- Ne pas écraser le rôle si le profil existe déjà
+    -- role = COALESCE(profiles.role, EXCLUDED.role),
+    updated_at = NOW();
+
+  RETURN NEW;
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Log l'erreur mais ne bloque pas l'inscription
+    RAISE WARNING 'Could not create profile for user %: %', NEW.id, SQLERRM;
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."handle_new_user"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."handle_profile_as_producer"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF NEW.role = 'producer' THEN
+    UPDATE producers
+    SET
+      email = NEW.email,
+      name = COALESCE(NEW.full_name, NEW.email),
+      pro_status = COALESCE(NEW.pro_status, 'approved')
+    WHERE profile_id = NEW.id;
+
+    IF NOT FOUND THEN
+      INSERT INTO producers (id, profile_id, email, name, pro_status)
+      VALUES (
+        gen_random_uuid(),
+        NEW.id,
+        NEW.email,
+        COALESCE(NEW.full_name, NEW.email),
+        COALESCE(NEW.pro_status, 'approved')
+      );
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."handle_profile_as_producer"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."is_admin"() RETURNS boolean
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."is_admin"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."is_pro"() RETURNS boolean
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'pro'
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."is_pro"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."is_producer"() RETURNS boolean
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'producer'
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."is_producer"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."is_valid_email"("email_input" "text") RETURNS boolean
+    LANGUAGE "plpgsql" IMMUTABLE
+    SET "search_path" TO ''
+    AS $_$
+BEGIN
+  RETURN email_input ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$';
+END;
+$_$;
+
+
+ALTER FUNCTION "public"."is_valid_email"("email_input" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."link_producer_to_profile"("p_producer_id" "text", "p_profile_id" "uuid") RETURNS boolean
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- Vérifier que l'appelant est admin
+  IF NOT auth_is_admin() THEN
+    RAISE EXCEPTION 'Seuls les admins peuvent lier un producteur à un profil';
+  END IF;
+
+  -- Vérifier que le profil a le rôle producer
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = p_profile_id AND role = 'producer') THEN
+    RAISE EXCEPTION 'Le profil doit avoir le rôle producer';
+  END IF;
+
+  -- Lier le producteur au profil
+  UPDATE producers
+  SET profile_id = p_profile_id
+  WHERE id = p_producer_id;
+
+  RETURN TRUE;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."link_producer_to_profile"("p_producer_id" "text", "p_profile_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."link_user_code"("p_user_code" "text") RETURNS boolean
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_existing_profile_id UUID;
+BEGIN
+  SELECT id INTO v_existing_profile_id FROM profiles WHERE user_code = p_user_code AND id != auth.uid();
+  IF v_existing_profile_id IS NOT NULL THEN
+    RAISE EXCEPTION 'Ce code utilisateur est déjà lié à un autre compte';
+  END IF;
+  UPDATE profiles SET user_code = p_user_code WHERE id = auth.uid();
+  RETURN TRUE;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."link_user_code"("p_user_code" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."log_product_update"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- Logger si changement de prix important
+  IF OLD.price_public IS DISTINCT FROM NEW.price_public THEN
+    PERFORM public.log_security_event(
+      'product_price_change',
+      'products',
+      NEW.id::TEXT,
+      TRUE,
+      NULL,
+      jsonb_build_object(
+        'old_price', OLD.price_public,
+        'new_price', NEW.price_public,
+        'product_name', NEW.name
+      )
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."log_product_update"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."log_security_event"("p_action_type" "text", "p_resource_type" "text" DEFAULT NULL::"text", "p_resource_id" "text" DEFAULT NULL::"text", "p_success" boolean DEFAULT true, "p_error_message" "text" DEFAULT NULL::"text", "p_metadata" "jsonb" DEFAULT NULL::"jsonb") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  INSERT INTO public.security_audit_log (
+    user_id,
+    action_type,
+    resource_type,
+    resource_id,
+    ip_address,
+    success,
+    error_message,
+    metadata
+  ) VALUES (
+    auth.uid(),
+    p_action_type,
+    p_resource_type,
+    p_resource_id,
+    inet_client_addr(),
+    p_success,
+    p_error_message,
+    p_metadata
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."log_security_event"("p_action_type" "text", "p_resource_type" "text", "p_resource_id" "text", "p_success" boolean, "p_error_message" "text", "p_metadata" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_cdv_identity_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+    BEGIN
+      IF NEW.user_id IS DISTINCT FROM OLD.user_id THEN
+        RAISE EXCEPTION 'user_id is immutable';
+      END IF;
+      IF NEW.producer_id IS DISTINCT FROM OLD.producer_id THEN
+        RAISE EXCEPTION 'producer_id is immutable';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+
+
+ALTER FUNCTION "public"."prevent_cdv_identity_change"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_cdv_line_identity_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+    BEGIN
+      IF NEW.commande_id IS DISTINCT FROM OLD.commande_id THEN
+        RAISE EXCEPTION 'commande_id is immutable';
+      END IF;
+      IF NEW.product_id IS DISTINCT FROM OLD.product_id THEN
+        RAISE EXCEPTION 'product_id is immutable';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+
+
+ALTER FUNCTION "public"."prevent_cdv_line_identity_change"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_device_id_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF NEW.device_id IS DISTINCT FROM OLD.device_id THEN
+    IF auth.role() <> 'service_role' AND NOT is_admin() THEN
+      RAISE EXCEPTION 'device_id is immutable';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."prevent_device_id_change"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_lmo_identity_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+    BEGIN
+      IF NEW.customer_id IS DISTINCT FROM OLD.customer_id THEN
+        RAISE EXCEPTION 'customer_id is immutable';
+      END IF;
+      IF NEW.producer_id IS DISTINCT FROM OLD.producer_id THEN
+        RAISE EXCEPTION 'producer_id is immutable';
+      END IF;
+      IF NEW.product_id IS DISTINCT FROM OLD.product_id THEN
+        RAISE EXCEPTION 'product_id is immutable';
+      END IF;
+      IF NEW.pickup_code IS DISTINCT FROM OLD.pickup_code THEN
+        RAISE EXCEPTION 'pickup_code is immutable';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+
+
+ALTER FUNCTION "public"."prevent_lmo_identity_change"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_mass_enumeration"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_query_count INTEGER;
+  v_time_window INTERVAL := '10 seconds';
+BEGIN
+  -- Compter requêtes récentes de cet utilisateur
+  SELECT COUNT(*) INTO v_query_count
+  FROM public.security_audit_log
+  WHERE user_id = auth.uid()
+    AND action_type = 'mass_query_detected'
+    AND created_at > NOW() - v_time_window;
+  
+  -- Si trop de requêtes, bloquer
+  IF v_query_count > 100 THEN
+    RAISE EXCEPTION 'Rate limit exceeded. Please wait before retrying.'
+      USING HINT = 'Too many requests in short time window';
+  END IF;
+  
+  RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."prevent_mass_enumeration"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_orders_identity_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+    BEGIN
+      IF NEW.user_id IS DISTINCT FROM OLD.user_id THEN
+        RAISE EXCEPTION 'user_id is immutable';
+      END IF;
+      IF NEW.customer_email IS DISTINCT FROM OLD.customer_email THEN
+        RAISE EXCEPTION 'customer_email is immutable';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+
+
+ALTER FUNCTION "public"."prevent_orders_identity_change"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."prevent_producer_profile_change"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+    BEGIN
+      IF NEW.profile_id IS DISTINCT FROM OLD.profile_id THEN
+        RAISE EXCEPTION 'profile_id is immutable';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
+
+
+ALTER FUNCTION "public"."prevent_producer_profile_change"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."preview_account_deletion"() RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_user_id uuid;
+  v_user_email text;
+  v_orders_count int;
+  v_products_count int;
+  v_lots_count int;
+  v_is_producer boolean;
+BEGIN
+  v_user_id := auth.uid();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('error', 'Non authentifié');
+  END IF;
+
+  SELECT email INTO v_user_email FROM profiles WHERE id = v_user_id;
+  SELECT COUNT(*) INTO v_orders_count FROM orders WHERE customer_email = v_user_email OR user_id = v_user_id;
+  SELECT EXISTS(SELECT 1 FROM producers WHERE profile_id = v_user_id) INTO v_is_producer;
+
+  IF v_is_producer THEN
+    SELECT COUNT(*) INTO v_products_count FROM products p JOIN producers pr ON p.producer_id = pr.id WHERE pr.profile_id = v_user_id;
+  ELSE
+    v_products_count := 0;
+  END IF;
+
+  SELECT COUNT(*) INTO v_lots_count FROM user_lots WHERE user_id = v_user_id;
+
+  RETURN jsonb_build_object(
+    'email', v_user_email,
+    'is_producer', v_is_producer,
+    'data_to_delete', jsonb_build_object(
+      'profile', true,
+      'orders_to_anonymize', v_orders_count,
+      'products_to_delete', v_products_count,
+      'lots_to_delete', v_lots_count
+    ),
+    'warning', CASE WHEN v_is_producer THEN 'Attention: Tous vos produits seront supprimés.' 
+      ELSE 'Vos données seront supprimées. Les commandes seront anonymisées.' END,
+    'confirmation_required', 'SUPPRIMER MON COMPTE'
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."preview_account_deletion"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."protect_profile_sensitive_columns"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- ── Fast path: service_role can do anything ──
+  IF auth.role() = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+
+  -- ── Fast path: admins can do anything ──
+  IF public.is_admin() THEN
+    RETURN NEW;
+  END IF;
+
+  -- ════════════════════════════════════════════════════════════════════
+  -- ROLE: Users can self-assign 'client', 'pro', 'producer' during
+  -- signup, but NEVER 'admin'.
+  -- ════════════════════════════════════════════════════════════════════
+  IF NEW.role IS DISTINCT FROM OLD.role THEN
+    IF NEW.role = 'admin' THEN
+      RAISE EXCEPTION 'Cannot self-assign admin role'
+        USING ERRCODE = '42501'; -- insufficient_privilege
+    END IF;
+    -- Additional guard: once you're 'pro' or 'producer', you can't
+    -- downgrade back to 'client' to re-trigger signup flow
+    IF OLD.role IN ('pro', 'producer') AND NEW.role = 'client' THEN
+      RAISE EXCEPTION 'Cannot downgrade role — contact support'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  -- ════════════════════════════════════════════════════════════════════
+  -- PRO_STATUS: Users can set 'pending' (signup) but never
+  -- 'approved' or 'rejected' (admin-only workflow).
+  -- ════════════════════════════════════════════════════════════════════
+  IF NEW.pro_status IS DISTINCT FROM OLD.pro_status THEN
+    IF NEW.pro_status IN ('approved', 'rejected') THEN
+      RAISE EXCEPTION 'Cannot self-approve or self-reject pro status'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  -- ════════════════════════════════════════════════════════════════════
+  -- HARD-BLOCKED columns: never modifiable by regular users.
+  -- ════════════════════════════════════════════════════════════════════
+  IF NEW.email IS DISTINCT FROM OLD.email THEN
+    RAISE EXCEPTION 'Cannot modify email via profile update — use auth flow'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.is_adult IS DISTINCT FROM OLD.is_adult THEN
+    RAISE EXCEPTION 'Cannot modify is_adult — server-side verification only'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.age_verified_at IS DISTINCT FROM OLD.age_verified_at THEN
+    RAISE EXCEPTION 'Cannot modify age_verified_at — server-side verification only'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NEW.user_code IS DISTINCT FROM OLD.user_code THEN
+    RAISE EXCEPTION 'Cannot modify user_code — use the dedicated link flow'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."protect_profile_sensitive_columns"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."refresh_producers_catalog"() RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- CONCURRENTLY allows reads during refresh (requires unique index)
+  REFRESH MATERIALIZED VIEW CONCURRENTLY public.producers_catalog;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."refresh_producers_catalog"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."request_account_deletion"("p_user_id" "uuid") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- Vérifier que l'utilisateur supprime SON compte
+  IF auth.uid() != p_user_id THEN
+    RAISE EXCEPTION 'Unauthorized: Can only delete your own account';
+  END IF;
+  
+  -- Anonymiser les données (ne pas supprimer pour intégrité commandes)
+  UPDATE public.profiles
+  SET 
+    email = 'deleted_' || id::TEXT || '@anonymized.local',
+    first_name = 'Deleted',
+    last_name = 'User',
+    phone = NULL,
+    siret = NULL,
+    address = NULL,
+    full_name = 'Deleted User',
+    updated_at = NOW()
+  WHERE id = p_user_id;
+  
+  -- Logger l'événement
+  PERFORM public.log_security_event(
+    'account_deletion_requested',
+    'profiles',
+    p_user_id::TEXT,
+    TRUE
+  );
+END;
+$$;
+
+
+ALTER FUNCTION "public"."request_account_deletion"("p_user_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."sanitize_text"("input_text" "text") RETURNS "text"
+    LANGUAGE "plpgsql" IMMUTABLE
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF input_text IS NULL THEN
+    RETURN NULL;
+  END IF;
+  -- Remove control characters except newlines and tabs
+  RETURN regexp_replace(input_text, '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', 'g');
+END;
+$$;
+
+
+ALTER FUNCTION "public"."sanitize_text"("input_text" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."spend_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text" DEFAULT 'spin'::"text", "p_source_details" "jsonb" DEFAULT NULL::"jsonb") RETURNS TABLE("success" boolean, "new_balance" integer, "error_message" "text")
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+DECLARE
+  v_current_balance INTEGER;
+  v_new_balance INTEGER;
+BEGIN
+  -- Validate amount
+  IF p_amount <= 0 THEN
+    RETURN QUERY SELECT FALSE, 0, 'Amount must be positive'::TEXT;
+    RETURN;
+  END IF;
+  
+  -- Get current balance with lock
+  SELECT balance INTO v_current_balance
+  FROM user_tickets
+  WHERE user_id = p_user_id
+  FOR UPDATE;
+  
+  -- Check if user has tickets
+  IF v_current_balance IS NULL OR v_current_balance < p_amount THEN
+    RETURN QUERY SELECT FALSE, COALESCE(v_current_balance, 0), 'Insufficient tickets'::TEXT;
+    RETURN;
+  END IF;
+  
+  -- Deduct tickets
+  v_new_balance := v_current_balance - p_amount;
+  
+  UPDATE user_tickets SET
+    balance = v_new_balance,
+    lifetime_spent = lifetime_spent + p_amount,
+    updated_at = now()
+  WHERE user_id = p_user_id;
+  
+  -- Log transaction (negative amount)
+  INSERT INTO ticket_transactions (
+    user_id, 
+    amount, 
+    balance_after, 
+    source, 
+    source_details,
+    server_validated,
+    validated_by
+  ) VALUES (
+    p_user_id, 
+    -p_amount, 
+    v_new_balance, 
+    p_source, 
+    p_source_details,
+    TRUE,
+    'edge_function'
+  );
+  
+  RETURN QUERY SELECT TRUE, v_new_balance, NULL::TEXT;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."spend_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text", "p_source_details" "jsonb") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."sync_direct_sales_availability"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- Si vente_directe_ferme est désactivée, désactiver tous les produits avec vente directe
+  IF NEW.vente_directe_ferme = false AND OLD.vente_directe_ferme = true THEN
+    UPDATE products 
+    SET disponible_vente_directe = false
+    WHERE producer_id IN (
+      SELECT id FROM producers WHERE profile_id = NEW.id
+    );
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."sync_direct_sales_availability"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."sync_order_items_from_orders"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+BEGIN
+  -- Remove existing rows for this order (idempotent on update)
+  DELETE FROM order_items WHERE order_id = NEW.id;
+
+  -- Insert fresh rows from JSONB items
+  INSERT INTO order_items (order_id, producer_id, product_id, quantity, unit_price, total_price)
+  SELECT
+    NEW.id,
+    (item->>'producer_id')::TEXT,
+    (item->>'product_id')::TEXT,
+    COALESCE((item->>'quantity')::INTEGER, 1),
+    COALESCE((item->>'unit_price')::NUMERIC, 0),
+    COALESCE((item->>'total_price')::NUMERIC, 0)
+  FROM jsonb_array_elements(NEW.items) AS item
+  WHERE (item->>'product_id')::TEXT IS NOT NULL
+    AND (item->>'producer_id')::TEXT IS NOT NULL;
+
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."sync_order_items_from_orders"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."trigger_refresh_producers_catalog_on_producers"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  IF pg_try_advisory_xact_lock(12345) THEN
+    PERFORM public.refresh_producers_catalog();
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."trigger_refresh_producers_catalog_on_producers"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."trigger_refresh_producers_catalog_on_products"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  -- Use pg_try_advisory_lock to prevent concurrent refreshes
+  -- Lock ID 12345 is arbitrary but unique to this operation
+  IF pg_try_advisory_xact_lock(12345) THEN
+    PERFORM public.refresh_producers_catalog();
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."trigger_refresh_producers_catalog_on_products"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_orders_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_orders_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_pro_orders_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_pro_orders_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_pro_resource_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_pro_resource_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_profiles_updated_at"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_profiles_updated_at"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_user_tickets_timestamp"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_user_tickets_timestamp"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."validate_file_upload"("p_bucket_name" "text", "p_file_path" "text", "p_file_size" bigint, "p_mime_type" "text", "p_file_header" "bytea" DEFAULT NULL::"bytea") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    AS $$
+DECLARE
+  v_allowed allowed_mime_types%ROWTYPE;
+  v_is_valid boolean := false;
+  v_rejection_reason text := NULL;
+  v_status text := 'rejected';
+  v_result jsonb;
+BEGIN
+  SELECT * INTO v_allowed
+  FROM allowed_mime_types
+  WHERE mime_type = p_mime_type AND active = true;
+
+  IF NOT FOUND THEN
+    v_rejection_reason := 'Type de fichier non autorisé: ' || p_mime_type;
+    v_status := 'rejected';
+  ELSIF p_file_size > v_allowed.max_size_bytes THEN
+    v_rejection_reason := 'Fichier trop volumineux. Max: ' || (v_allowed.max_size_bytes / 1048576) || 'MB';
+    v_status := 'rejected';
+  ELSIF p_file_header IS NOT NULL THEN
+    v_is_valid := false;
+
+    IF v_allowed.magic_bytes IS NOT NULL THEN
+      FOR i IN 1..array_length(v_allowed.magic_bytes, 1) LOOP
+        IF position(v_allowed.magic_bytes[i] in p_file_header) = 1 THEN
+          v_is_valid := true;
+          EXIT;
+        END IF;
+      END LOOP;
+
+      IF NOT v_is_valid THEN
+        v_rejection_reason := 'Signature de fichier invalide. Le fichier ne correspond pas au type déclaré.';
+        v_status := 'suspicious';
+      ELSE
+        v_status := 'accepted';
+      END IF;
+    ELSE
+      v_status := 'accepted';
+    END IF;
+  ELSE
+    v_status := 'accepted';
+  END IF;
+
+  INSERT INTO upload_logs (
+    user_id,
+    bucket_name,
+    file_path,
+    file_size,
+    mime_type,
+    validation_status,
+    rejection_reason
+  ) VALUES (
+    auth.uid(),
+    p_bucket_name,
+    p_file_path,
+    p_file_size,
+    p_mime_type,
+    v_status,
+    v_rejection_reason
+  );
+
+  v_result := jsonb_build_object(
+    'valid', v_status = 'accepted',
+    'status', v_status,
+    'reason', v_rejection_reason,
+    'max_size_mb', (v_allowed.max_size_bytes / 1048576)::int
+  );
+
+  RETURN v_result;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."validate_file_upload"("p_bucket_name" "text", "p_file_path" "text", "p_file_size" bigint, "p_mime_type" "text", "p_file_header" "bytea") OWNER TO "postgres";
+
+SET default_tablespace = '';
+
+SET default_table_access_method = "heap";
+
+
+CREATE TABLE IF NOT EXISTS "public"."allowed_mime_types" (
+    "id" integer NOT NULL,
+    "category" "text" NOT NULL,
+    "mime_type" "text" NOT NULL,
+    "max_size_bytes" bigint NOT NULL,
+    "magic_bytes" "bytea"[],
+    "description" "text",
+    "active" boolean DEFAULT true
+);
+
+ALTER TABLE ONLY "public"."allowed_mime_types" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."allowed_mime_types" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."allowed_mime_types" IS 'Types MIME autorisés pour les uploads. RLS activé: lecture publique,
+modification réservée aux admins.';
+
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."allowed_mime_types_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."allowed_mime_types_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."allowed_mime_types_id_seq" OWNED BY "public"."allowed_mime_types"."id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."app_data" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "nom" "text",
+    "description" "text",
+    "valeur" "text",
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+ALTER TABLE ONLY "public"."app_data" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."app_data" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."audit_log_entries" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid",
+    "action" "text" NOT NULL,
+    "table_name" "text" NOT NULL,
+    "record_id" "text",
+    "old_data" "jsonb",
+    "new_data" "jsonb",
+    "ip_address" "inet",
+    "user_agent" "text",
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+ALTER TABLE ONLY "public"."audit_log_entries" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."audit_log_entries" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."audit_logs" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "event_type" "text" NOT NULL,
+    "user_id" "uuid",
+    "resource_type" "text" NOT NULL,
+    "resource_id" "uuid",
+    "metadata" "jsonb" DEFAULT '{}'::"jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."audit_logs" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."chat_messages__archived" (
+    "id" "uuid" DEFAULT "extensions"."uuid_generate_v4"() NOT NULL,
+    "producer_id" "uuid",
+    "producer_name" "text" NOT NULL,
+    "producer_avatar" "text",
+    "message" "text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "sender_id" "uuid",
+    "sender_name" "text"
+);
+
+
+ALTER TABLE "public"."chat_messages__archived" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."commandes_vente_directe" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "producer_id" "text" NOT NULL,
+    "total" numeric(10,2) NOT NULL,
+    "statut" "public"."commande_status" DEFAULT 'en_attente'::"public"."commande_status" NOT NULL,
+    "adresse_retrait" "text" NOT NULL,
+    "horaires_retrait" "text" NOT NULL,
+    "instructions_retrait" "text",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "commandes_vente_directe_total_check" CHECK (("total" >= (20)::numeric))
+);
+
+ALTER TABLE ONLY "public"."commandes_vente_directe" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."commandes_vente_directe" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."lignes_commande_vente_directe" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "commande_id" "uuid" NOT NULL,
+    "product_id" "text" NOT NULL,
+    "quantite" integer NOT NULL,
+    "prix_unitaire" numeric(10,2) NOT NULL,
+    "sous_total" numeric(10,2) NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "lignes_commande_vente_directe_quantite_check" CHECK (("quantite" > 0))
+);
+
+
+ALTER TABLE "public"."lignes_commande_vente_directe" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."local_market_orders" (
+    "id" bigint NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "customer_id" "uuid",
+    "customer_name" "text",
+    "customer_email" "text",
+    "customer_phone" "text",
+    "producer_id" "text",
+    "producer_name" "text",
+    "producer_email" "text",
+    "producer_phone" "text",
+    "producer_location" "text",
+    "product_id" "text",
+    "product_name" "text",
+    "product_description" "text",
+    "quantity" integer DEFAULT 1,
+    "unit_price" numeric(10,2),
+    "total_amount" numeric(10,2),
+    "status" "text" DEFAULT 'pending'::"text",
+    "pickup_code" "text",
+    "pickup_date" timestamp with time zone,
+    "pickup_location" "text",
+    "pickup_instructions" "text",
+    "customer_notes" "text",
+    "producer_notes" "text",
+    "is_paid" boolean DEFAULT false,
+    "payment_method" "text",
+    "completed_at" timestamp with time zone,
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "delivery_method" "text" DEFAULT 'pickup'::"text",
+    "delivery_fee" numeric(10,2) DEFAULT 0,
+    "delivery_address" "text",
+    "delivery_instructions" "text",
+    CONSTRAINT "local_market_orders_delivery_fee_check" CHECK (("delivery_fee" >= (0)::numeric)),
+    CONSTRAINT "local_market_orders_delivery_method_check" CHECK (("delivery_method" = ANY (ARRAY['pickup'::"text", 'shipping'::"text"])))
+);
+
+
+ALTER TABLE "public"."local_market_orders" OWNER TO "postgres";
+
+
+ALTER TABLE "public"."local_market_orders" ALTER COLUMN "id" ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME "public"."local_market_orders_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."lot_items" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "lot_id" "text",
+    "product_id" "text",
+    "producer_id" "text",
+    "product_name" "text",
+    "producer_name" "text",
+    "quantity" integer DEFAULT 1,
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+ALTER TABLE ONLY "public"."lot_items" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."lot_items" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."lots" (
+    "id" "text" NOT NULL,
+    "name" "text" NOT NULL,
+    "description" "text",
+    "rarity" "text" NOT NULL,
+    "image" "text",
+    "value" numeric DEFAULT 0,
+    "active" boolean DEFAULT true,
+    "lot_type" "text",
+    "discount_percent" numeric,
+    "discount_amount" numeric,
+    "min_order_amount" numeric,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+ALTER TABLE ONLY "public"."lots" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."lots" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."music_tracks" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "title" "text" NOT NULL,
+    "artist" "text" DEFAULT 'Les Chanvriers Bretons'::"text" NOT NULL,
+    "album" "text" DEFAULT 'Album Chanvre'::"text",
+    "audio_url" "text" NOT NULL,
+    "cover_url" "text",
+    "position" integer DEFAULT 0 NOT NULL,
+    "duration_ms" integer,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+ALTER TABLE ONLY "public"."music_tracks" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."music_tracks" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."order_items" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "order_id" "text" NOT NULL,
+    "producer_id" "text" NOT NULL,
+    "product_id" "text" NOT NULL,
+    "quantity" integer DEFAULT 1 NOT NULL,
+    "unit_price" numeric(10,2) DEFAULT 0 NOT NULL,
+    "total_price" numeric(10,2) DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."order_items" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."orders" (
+    "id" "text" NOT NULL,
+    "customer_first_name" "text" NOT NULL,
+    "customer_last_name" "text" NOT NULL,
+    "customer_email" "text" NOT NULL,
+    "customer_phone" "text",
+    "customer_address" "text",
+    "customer_city" "text",
+    "customer_postal_code" "text",
+    "items" "jsonb" NOT NULL,
+    "subtotal" numeric NOT NULL,
+    "shipping_fee" numeric DEFAULT 0,
+    "total" numeric NOT NULL,
+    "status" "text" DEFAULT 'pending'::"text",
+    "tracking_number" "text",
+    "notes" "text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "payment_validated" boolean DEFAULT false,
+    "payment_validated_at" timestamp with time zone,
+    "payment_validated_by" "uuid",
+    "tickets_distributed" boolean DEFAULT false,
+    "tickets_earned" integer DEFAULT 0,
+    "user_id" "uuid",
+    "is_pro_order" boolean DEFAULT false,
+    "customer_id" "uuid"
+);
+
+ALTER TABLE ONLY "public"."orders" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."orders" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."orders"."is_pro_order" IS 'True si commande passée par un client PRO, false pour client standard';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."pack_items" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "pack_id" "text",
+    "name" "text" NOT NULL,
+    "quantity" "text",
+    "value" numeric DEFAULT 0,
+    "images" "jsonb",
+    "producer_name" "text",
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."pack_items" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."packs" (
+    "id" "text" NOT NULL,
+    "name" "text" NOT NULL,
+    "description" "text",
+    "price" numeric NOT NULL,
+    "original_price" numeric,
+    "image" "text",
+    "tag" "text",
+    "color" "text",
+    "active" boolean DEFAULT true,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+ALTER TABLE ONLY "public"."packs" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."packs" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."perf_metrics" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid",
+    "name" "text" NOT NULL,
+    "metric_type" "text" NOT NULL,
+    "value" numeric NOT NULL,
+    "context" "jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "perf_metrics_metric_type_check" CHECK (("metric_type" = ANY (ARRAY['timing'::"text", 'count'::"text"])))
+);
+
+
+ALTER TABLE "public"."perf_metrics" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pro" (
+    "id" bigint NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."pro" OWNER TO "postgres";
+
+
+ALTER TABLE "public"."pro" ALTER COLUMN "id" ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME "public"."pro_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."pro_orders" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "product_id" "text" NOT NULL,
+    "pro_user_id" "uuid" NOT NULL,
+    "type" "text" DEFAULT 'buy_request'::"text" NOT NULL,
+    "quantity" integer NOT NULL,
+    "unit_price" numeric(10,2) NOT NULL,
+    "status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "pro_orders_quantity_check" CHECK (("quantity" > 0)),
+    CONSTRAINT "pro_orders_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'matched'::"text", 'cancelled'::"text"]))),
+    CONSTRAINT "pro_orders_unit_price_check" CHECK (("unit_price" >= (0)::numeric))
+);
+
+ALTER TABLE ONLY "public"."pro_orders" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pro_orders" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pro_resource_categories" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "name" "text" NOT NULL,
+    "slug" "text" NOT NULL,
+    "description" "text",
+    "color" "text" DEFAULT '#D4A853'::"text",
+    "sort_order" integer DEFAULT 0,
+    "active" boolean DEFAULT true,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."pro_resource_categories" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."pro_resources" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "category_id" "uuid" NOT NULL,
+    "name" "text" NOT NULL,
+    "description" "text",
+    "logo_url" "text",
+    "website_url" "text",
+    "email" "text",
+    "phone" "text",
+    "city" "text",
+    "region" "text",
+    "tags" "text"[] DEFAULT '{}'::"text"[],
+    "featured" boolean DEFAULT false,
+    "active" boolean DEFAULT true,
+    "sort_order" integer DEFAULT 0,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."pro_resources" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."producer_chat_messages__archived" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "sender_id" "text" NOT NULL,
+    "sender_name" "text" NOT NULL,
+    "sender_avatar" "text",
+    "sender_email" "text",
+    "content" "text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "timezone"('utc'::"text", "now"()) NOT NULL
+);
+
+ALTER TABLE ONLY "public"."producer_chat_messages__archived" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."producer_chat_messages__archived" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."producer_products" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "producer_id" "text" NOT NULL,
+    "name" "text" NOT NULL,
+    "description" "text",
+    "category" "text" NOT NULL,
+    "unit" "text" NOT NULL,
+    "price" numeric(10,2) NOT NULL,
+    "pro_price" numeric(10,2),
+    "stock" integer DEFAULT 0,
+    "is_available" boolean DEFAULT true,
+    "images" "text"[],
+    "price_tiers" "jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."producer_products" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."producers" (
+    "id" "text" NOT NULL,
+    "name" "text" NOT NULL,
+    "region" "text",
+    "department" "text",
+    "city" "text",
+    "image" "text",
+    "description" "text",
+    "latitude" numeric,
+    "longitude" numeric,
+    "soil_type" "text",
+    "soil_ph" "text",
+    "soil_characteristics" "text",
+    "climate_type" "text",
+    "climate_avg_temp" "text",
+    "climate_rainfall" "text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "map_position_x" numeric,
+    "map_position_y" numeric,
+    "profile_id" "uuid",
+    "siret" "text",
+    "tva_number" "text",
+    "email" "text",
+    "culture_outdoor" boolean DEFAULT false,
+    "culture_greenhouse" boolean DEFAULT false,
+    "culture_indoor" boolean DEFAULT false,
+    "vente_directe_ferme" boolean DEFAULT false,
+    "adresse_retrait" "text",
+    "horaires_retrait" "text",
+    "instructions_retrait" "text",
+    "pro_status" "text",
+    "instagram_url" "text",
+    "facebook_url" "text",
+    "twitter_url" "text",
+    "tiktok_url" "text",
+    "youtube_url" "text",
+    "website_url" "text",
+    "linkedin_url" "text",
+    "shipping_enabled" boolean DEFAULT false,
+    "shipping_fee" numeric(10,2) DEFAULT 0,
+    "shipping_note" "text"
+);
+
+ALTER TABLE ONLY "public"."producers" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."producers" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."products" (
+    "id" "text" NOT NULL,
+    "producer_id" "text",
+    "name" "text" NOT NULL,
+    "type" "text",
+    "cbd_percent" numeric,
+    "thc_percent" numeric,
+    "price_public" numeric,
+    "weight" "text",
+    "image" "text",
+    "images" "jsonb",
+    "description" "text",
+    "tva_rate" numeric DEFAULT 20,
+    "stock" integer,
+    "is_on_promo" boolean DEFAULT false,
+    "promo_percent" numeric,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "price_pro" numeric(10,2) DEFAULT NULL::numeric,
+    "visible_for_clients" boolean DEFAULT true,
+    "visible_for_pros" boolean DEFAULT false,
+    "status" "public"."product_status" DEFAULT 'published'::"public"."product_status",
+    "base_price" numeric,
+    "stock_available" integer DEFAULT 100,
+    "lab_analysis_url" "text",
+    "disponible_vente_directe" boolean DEFAULT false,
+    "price_tiers" "jsonb",
+    "price_pro_tiers" "jsonb"
+);
+
+ALTER TABLE ONLY "public"."products" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."products" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."products"."price_pro_tiers" IS 'Paliers de prix dégressifs pour les professionnels. Format: [{minQuantity: number, price: number}]';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."profiles" (
+    "id" "uuid" NOT NULL,
+    "role" "public"."user_role" DEFAULT 'client'::"public"."user_role" NOT NULL,
+    "category" "public"."user_category",
+    "full_name" "text",
+    "email" "text",
+    "phone" "text",
+    "siret" "text",
+    "tva_number" "text",
+    "user_code" "text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "company_name" "text",
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "first_name" "text",
+    "last_name" "text",
+    "birth_date" "date",
+    "address" "text",
+    "postal_code" "text",
+    "city" "text",
+    "business_name" "text",
+    "is_adult" boolean,
+    "age_verified_at" timestamp with time zone,
+    "pro_status" "text",
+    "vente_directe_ferme" boolean DEFAULT false,
+    "adresse_retrait" "text",
+    "horaires_retrait" "text",
+    "instructions_retrait" "text",
+    "device_id" "text",
+    "device_bound_at" timestamp with time zone,
+    "last_device_seen_at" timestamp with time zone,
+    "shipping_enabled" boolean DEFAULT false,
+    "shipping_fee" numeric(10,2) DEFAULT 0,
+    "shipping_note" "text",
+    CONSTRAINT "profiles_pro_status_check" CHECK (("pro_status" = ANY (ARRAY['pending'::"text", 'approved'::"text", 'rejected'::"text"])))
+);
+
+ALTER TABLE ONLY "public"."profiles" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."profiles" OWNER TO "postgres";
+
+
+CREATE MATERIALIZED VIEW "public"."producers_catalog" AS
+ SELECT "p"."id",
+    "p"."name",
+    "p"."email",
+    "p"."region",
+    "p"."department",
+    "p"."city",
+    "p"."image",
+    "p"."description",
+    "p"."latitude",
+    "p"."longitude",
+    "p"."map_position_x",
+    "p"."map_position_y",
+    "p"."soil_type",
+    "p"."soil_ph",
+    "p"."soil_characteristics",
+    "p"."climate_type",
+    "p"."climate_avg_temp",
+    "p"."climate_rainfall",
+    "p"."culture_outdoor",
+    "p"."culture_greenhouse",
+    "p"."culture_indoor",
+    "p"."vente_directe_ferme",
+    "p"."adresse_retrait",
+    "p"."horaires_retrait",
+    "p"."instructions_retrait",
+    "p"."shipping_enabled",
+    "p"."shipping_fee",
+    "p"."shipping_note",
+    "p"."instagram_url",
+    "p"."facebook_url",
+    "p"."twitter_url",
+    "p"."tiktok_url",
+    "p"."youtube_url",
+    "p"."website_url",
+    "p"."linkedin_url",
+    "p"."profile_id",
+    "p"."created_at",
+    "p"."updated_at",
+    "jsonb_build_object"('company_name', "prof"."company_name", 'business_name', "prof"."business_name") AS "profile",
+    COALESCE("jsonb_agg"("jsonb_build_object"('id', "prod"."id", 'producer_id', "prod"."producer_id", 'name', "prod"."name", 'type', "prod"."type", 'cbd_percent', "prod"."cbd_percent", 'thc_percent', "prod"."thc_percent", 'price_public', "prod"."price_public", 'price_pro', "prod"."price_pro", 'weight', "prod"."weight", 'image', "prod"."image", 'images', "prod"."images", 'description', "prod"."description", 'tva_rate', "prod"."tva_rate", 'stock', "prod"."stock", 'is_on_promo', "prod"."is_on_promo", 'promo_percent', "prod"."promo_percent", 'visible_for_clients', "prod"."visible_for_clients", 'visible_for_pros', "prod"."visible_for_pros", 'status', "prod"."status", 'lab_analysis_url', "prod"."lab_analysis_url", 'price_tiers', "prod"."price_tiers", 'price_pro_tiers', "prod"."price_pro_tiers", 'created_at', "prod"."created_at", 'updated_at', "prod"."updated_at") ORDER BY "prod"."name") FILTER (WHERE ("prod"."id" IS NOT NULL)), '[]'::"jsonb") AS "products"
+   FROM (("public"."producers" "p"
+     LEFT JOIN "public"."profiles" "prof" ON (("prof"."id" = "p"."profile_id")))
+     LEFT JOIN "public"."products" "prod" ON (("prod"."producer_id" = "p"."id")))
+  GROUP BY "p"."id", "p"."name", "p"."email", "p"."region", "p"."department", "p"."city", "p"."image", "p"."description", "p"."latitude", "p"."longitude", "p"."map_position_x", "p"."map_position_y", "p"."soil_type", "p"."soil_ph", "p"."soil_characteristics", "p"."climate_type", "p"."climate_avg_temp", "p"."climate_rainfall", "p"."culture_outdoor", "p"."culture_greenhouse", "p"."culture_indoor", "p"."vente_directe_ferme", "p"."adresse_retrait", "p"."horaires_retrait", "p"."instructions_retrait", "p"."shipping_enabled", "p"."shipping_fee", "p"."shipping_note", "p"."instagram_url", "p"."facebook_url", "p"."twitter_url", "p"."tiktok_url", "p"."youtube_url", "p"."website_url", "p"."linkedin_url", "p"."profile_id", "p"."created_at", "p"."updated_at", "prof"."company_name", "prof"."business_name"
+  WITH NO DATA;
+
+
+ALTER MATERIALIZED VIEW "public"."producers_catalog" OWNER TO "postgres";
+
+
+CREATE OR REPLACE VIEW "public"."products_for_clients" WITH ("security_invoker"='true') AS
+ SELECT "id",
+    "producer_id",
+    "name",
+    "type",
+    "cbd_percent",
+    "thc_percent",
+    "price_public" AS "price",
+    "weight",
+    "image",
+    "images",
+    "description",
+    "stock",
+    "is_on_promo",
+    "promo_percent",
+    "tva_rate"
+   FROM "public"."products"
+  WHERE (("status" = 'published'::"public"."product_status") AND ("visible_for_clients" = true));
+
+
+ALTER VIEW "public"."products_for_clients" OWNER TO "postgres";
+
+
+COMMENT ON VIEW "public"."products_for_clients" IS 'Vue des produits pour les clients - affiche uniquement le prix public.
+Utilise SECURITY INVOKER pour respecter RLS sur la table products.';
+
+
+
+CREATE OR REPLACE VIEW "public"."products_for_pros" WITH ("security_invoker"='true') AS
+ SELECT "id",
+    "producer_id",
+    "name",
+    "type",
+    "cbd_percent",
+    "thc_percent",
+    "price_public",
+    "price_pro",
+    COALESCE("price_pro", "price_public") AS "price",
+    "weight",
+    "image",
+    "images",
+    "description",
+    "stock",
+    "is_on_promo",
+    "promo_percent",
+    "tva_rate"
+   FROM "public"."products"
+  WHERE (("status" = 'published'::"public"."product_status") AND ("visible_for_pros" = true));
+
+
+ALTER VIEW "public"."products_for_pros" OWNER TO "postgres";
+
+
+COMMENT ON VIEW "public"."products_for_pros" IS 'Vue des produits pour les professionnels - inclut prix pro.
+Utilise SECURITY INVOKER pour respecter RLS sur la table products.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."promo_products" (
+    "id" "text" NOT NULL,
+    "product_id" "text" NOT NULL,
+    "producer_id" "text" NOT NULL,
+    "product_name" "text" NOT NULL,
+    "producer_name" "text" NOT NULL,
+    "original_price" numeric NOT NULL,
+    "promo_price" numeric NOT NULL,
+    "discount_percent" numeric NOT NULL,
+    "image" "text",
+    "valid_until" "text",
+    "active" boolean DEFAULT true,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+ALTER TABLE ONLY "public"."promo_products" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."promo_products" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."rate_limit_attempts" (
+    "id" bigint NOT NULL,
+    "ip_address" "inet" NOT NULL,
+    "action_type" "text" NOT NULL,
+    "user_id" "uuid",
+    "attempts_count" integer DEFAULT 1,
+    "first_attempt_at" timestamp with time zone DEFAULT "now"(),
+    "last_attempt_at" timestamp with time zone DEFAULT "now"(),
+    "blocked_until" timestamp with time zone
+);
+
+
+ALTER TABLE "public"."rate_limit_attempts" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."rate_limit_attempts_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."rate_limit_attempts_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."rate_limit_attempts_id_seq" OWNED BY "public"."rate_limit_attempts"."id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."rate_limits" (
+    "key" "text" NOT NULL,
+    "count" integer NOT NULL,
+    "reset_at" timestamp with time zone NOT NULL,
+    "blocked" boolean DEFAULT false NOT NULL,
+    "last_attempt" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+ALTER TABLE ONLY "public"."rate_limits" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."rate_limits" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."rgpd_requests" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "request_type" "text" NOT NULL,
+    "status" "text" DEFAULT 'pending'::"text" NOT NULL,
+    "requested_at" timestamp with time zone DEFAULT "now"(),
+    "processed_at" timestamp with time zone,
+    "processed_by" "uuid",
+    "notes" "text",
+    "export_url" "text",
+    "export_expires_at" timestamp with time zone,
+    CONSTRAINT "rgpd_requests_request_type_check" CHECK (("request_type" = ANY (ARRAY['export'::"text", 'delete'::"text", 'rectification'::"text"]))),
+    CONSTRAINT "rgpd_requests_status_check" CHECK (("status" = ANY (ARRAY['pending'::"text", 'processing'::"text", 'completed'::"text", 'failed'::"text"])))
+);
+
+
+ALTER TABLE "public"."rgpd_requests" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."security_audit_log" (
+    "id" bigint NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "user_id" "uuid",
+    "action_type" "text" NOT NULL,
+    "resource_type" "text",
+    "resource_id" "text",
+    "ip_address" "inet",
+    "user_agent" "text",
+    "success" boolean DEFAULT true,
+    "error_message" "text",
+    "metadata" "jsonb"
+);
+
+
+ALTER TABLE "public"."security_audit_log" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."security_audit_log_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."security_audit_log_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."security_audit_log_id_seq" OWNED BY "public"."security_audit_log"."id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."ticket_transactions" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "amount" integer NOT NULL,
+    "balance_after" integer NOT NULL,
+    "source" "text" NOT NULL,
+    "source_details" "jsonb",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "ticket_transactions_source_check" CHECK (("source" = ANY (ARRAY['purchase'::"text", 'subscription'::"text", 'spin'::"text", 'admin'::"text", 'refund'::"text", 'expired'::"text"])))
+);
+
+
+ALTER TABLE "public"."ticket_transactions" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."ticket_transactions" IS 'Audit trail for ticket transactions';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."upload_logs" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid",
+    "bucket_name" "text" NOT NULL,
+    "file_path" "text" NOT NULL,
+    "file_size" bigint,
+    "mime_type" "text",
+    "validation_status" "text" NOT NULL,
+    "rejection_reason" "text",
+    "ip_address" "inet",
+    "user_agent" "text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "upload_logs_validation_status_check" CHECK (("validation_status" = ANY (ARRAY['accepted'::"text", 'rejected'::"text", 'suspicious'::"text"])))
+);
+
+ALTER TABLE ONLY "public"."upload_logs" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."upload_logs" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."user_code_mapping" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_code" "text" NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "linked_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."user_code_mapping" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."user_collection" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "product_id" "text" NOT NULL,
+    "product_name" "text" NOT NULL,
+    "product_rarity" "text" NOT NULL,
+    "product_value" numeric(10,2) DEFAULT 0,
+    "product_image" "text",
+    "lot_id" "text",
+    "lot_type" "text",
+    "discount_percent" integer,
+    "discount_amount" numeric(10,2),
+    "min_order_amount" numeric(10,2),
+    "used" boolean DEFAULT false,
+    "obtained_at" timestamp with time zone DEFAULT "now"(),
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."user_collection" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."user_gifts" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "sender_id" "uuid" NOT NULL,
+    "recipient_id" "uuid",
+    "gift_code" "text" NOT NULL,
+    "collection_item_id" "text",
+    "product_id" "text" NOT NULL,
+    "product_name" "text" NOT NULL,
+    "product_rarity" "text",
+    "claimed_at" timestamp with time zone,
+    "used" boolean DEFAULT false,
+    "created_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."user_gifts" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."user_lots" (
+    "id" "text" NOT NULL,
+    "user_code" "text" NOT NULL,
+    "lot_id" "text",
+    "lot_name" "text",
+    "lot_description" "text",
+    "lot_rarity" "text",
+    "lot_image" "text",
+    "lot_type" "text",
+    "lot_value" numeric,
+    "discount_percent" numeric,
+    "discount_amount" numeric,
+    "min_order_amount" numeric,
+    "won_at" timestamp with time zone DEFAULT "now"(),
+    "used" boolean DEFAULT false,
+    "used_at" timestamp with time zone,
+    "gifted_to" "text",
+    "gifted_at" timestamp with time zone,
+    "gift_code" "text",
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "user_id" "uuid"
+);
+
+ALTER TABLE ONLY "public"."user_lots" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."user_lots" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."user_referrals" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "referral_code" "text" NOT NULL,
+    "points" integer DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+
+ALTER TABLE "public"."user_referrals" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."user_stats" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "total_spins" integer DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+ALTER TABLE ONLY "public"."user_stats" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."user_stats" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."user_subscriptions" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "subscription_tier" "text" DEFAULT 'none'::"text" NOT NULL,
+    "tickets" integer DEFAULT 0 NOT NULL,
+    "last_ticket_refresh" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"()
+);
+
+ALTER TABLE ONLY "public"."user_subscriptions" FORCE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."user_subscriptions" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."user_tickets" (
+    "user_id" "uuid" NOT NULL,
+    "balance" integer DEFAULT 0 NOT NULL,
+    "lifetime_earned" integer DEFAULT 0 NOT NULL,
+    "lifetime_spent" integer DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"(),
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    CONSTRAINT "user_tickets_balance_check" CHECK (("balance" >= 0))
+);
+
+
+ALTER TABLE "public"."user_tickets" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."user_tickets" IS 'Centralized ticket balance for Les Chanvriers';
+
+
+
+ALTER TABLE ONLY "public"."allowed_mime_types" ALTER COLUMN "id" SET DEFAULT "nextval"('"public"."allowed_mime_types_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."rate_limit_attempts" ALTER COLUMN "id" SET DEFAULT "nextval"('"public"."rate_limit_attempts_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."security_audit_log" ALTER COLUMN "id" SET DEFAULT "nextval"('"public"."security_audit_log_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."allowed_mime_types"
+    ADD CONSTRAINT "allowed_mime_types_mime_type_key" UNIQUE ("mime_type");
+
+
+
+ALTER TABLE ONLY "public"."allowed_mime_types"
+    ADD CONSTRAINT "allowed_mime_types_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."app_data"
+    ADD CONSTRAINT "app_data_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."audit_log_entries"
+    ADD CONSTRAINT "audit_log_entries_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."audit_logs"
+    ADD CONSTRAINT "audit_logs_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_messages__archived"
+    ADD CONSTRAINT "chat_messages_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."commandes_vente_directe"
+    ADD CONSTRAINT "commandes_vente_directe_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."lignes_commande_vente_directe"
+    ADD CONSTRAINT "lignes_commande_vente_directe_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."local_market_orders"
+    ADD CONSTRAINT "local_market_orders_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."lot_items"
+    ADD CONSTRAINT "lot_items_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."lots"
+    ADD CONSTRAINT "lots_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."music_tracks"
+    ADD CONSTRAINT "music_tracks_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."order_items"
+    ADD CONSTRAINT "order_items_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."orders"
+    ADD CONSTRAINT "orders_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pack_items"
+    ADD CONSTRAINT "pack_items_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."packs"
+    ADD CONSTRAINT "packs_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."perf_metrics"
+    ADD CONSTRAINT "perf_metrics_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pro_orders"
+    ADD CONSTRAINT "pro_orders_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pro"
+    ADD CONSTRAINT "pro_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pro_resource_categories"
+    ADD CONSTRAINT "pro_resource_categories_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."pro_resource_categories"
+    ADD CONSTRAINT "pro_resource_categories_slug_key" UNIQUE ("slug");
+
+
+
+ALTER TABLE ONLY "public"."pro_resources"
+    ADD CONSTRAINT "pro_resources_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."producer_chat_messages__archived"
+    ADD CONSTRAINT "producer_chat_messages_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."producer_products"
+    ADD CONSTRAINT "producer_products_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."producers"
+    ADD CONSTRAINT "producers_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."products"
+    ADD CONSTRAINT "products_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."promo_products"
+    ADD CONSTRAINT "promo_products_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."rate_limit_attempts"
+    ADD CONSTRAINT "rate_limit_attempts_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."rate_limits"
+    ADD CONSTRAINT "rate_limits_pkey" PRIMARY KEY ("key");
+
+
+
+ALTER TABLE ONLY "public"."rgpd_requests"
+    ADD CONSTRAINT "rgpd_requests_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."security_audit_log"
+    ADD CONSTRAINT "security_audit_log_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."ticket_transactions"
+    ADD CONSTRAINT "ticket_transactions_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."rate_limit_attempts"
+    ADD CONSTRAINT "unique_ip_action" UNIQUE ("ip_address", "action_type", "user_id");
+
+
+
+ALTER TABLE ONLY "public"."upload_logs"
+    ADD CONSTRAINT "upload_logs_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."user_code_mapping"
+    ADD CONSTRAINT "user_code_mapping_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."user_code_mapping"
+    ADD CONSTRAINT "user_code_mapping_user_code_key" UNIQUE ("user_code");
+
+
+
+ALTER TABLE ONLY "public"."user_code_mapping"
+    ADD CONSTRAINT "user_code_mapping_user_id_key" UNIQUE ("user_id");
+
+
+
+ALTER TABLE ONLY "public"."user_collection"
+    ADD CONSTRAINT "user_collection_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."user_gifts"
+    ADD CONSTRAINT "user_gifts_gift_code_key" UNIQUE ("gift_code");
+
+
+
+ALTER TABLE ONLY "public"."user_gifts"
+    ADD CONSTRAINT "user_gifts_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."user_lots"
+    ADD CONSTRAINT "user_lots_gift_code_key" UNIQUE ("gift_code");
+
+
+
+ALTER TABLE ONLY "public"."user_lots"
+    ADD CONSTRAINT "user_lots_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."user_referrals"
+    ADD CONSTRAINT "user_referrals_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."user_referrals"
+    ADD CONSTRAINT "user_referrals_referral_code_key" UNIQUE ("referral_code");
+
+
+
+ALTER TABLE ONLY "public"."user_referrals"
+    ADD CONSTRAINT "user_referrals_user_id_key" UNIQUE ("user_id");
+
+
+
+ALTER TABLE ONLY "public"."user_stats"
+    ADD CONSTRAINT "user_stats_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."user_stats"
+    ADD CONSTRAINT "user_stats_user_id_key" UNIQUE ("user_id");
+
+
+
+ALTER TABLE ONLY "public"."user_subscriptions"
+    ADD CONSTRAINT "user_subscriptions_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."user_subscriptions"
+    ADD CONSTRAINT "user_subscriptions_user_id_key" UNIQUE ("user_id");
+
+
+
+ALTER TABLE ONLY "public"."user_tickets"
+    ADD CONSTRAINT "user_tickets_pkey" PRIMARY KEY ("user_id");
+
+
+
+CREATE INDEX "idx_audit_log_action" ON "public"."security_audit_log" USING "btree" ("action_type");
+
+
+
+CREATE INDEX "idx_audit_log_created" ON "public"."security_audit_log" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_audit_log_created_at" ON "public"."audit_log_entries" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_audit_log_user" ON "public"."security_audit_log" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_audit_log_user_id" ON "public"."audit_log_entries" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_audit_logs_created_at" ON "public"."audit_logs" USING "btree" ("created_at");
+
+
+
+CREATE INDEX "idx_audit_logs_event_type" ON "public"."audit_logs" USING "btree" ("event_type");
+
+
+
+CREATE INDEX "idx_audit_logs_user_id" ON "public"."audit_logs" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_chat_messages_created_at" ON "public"."chat_messages__archived" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_chat_messages_producer_id" ON "public"."chat_messages__archived" USING "btree" ("producer_id");
+
+
+
+CREATE INDEX "idx_chat_messages_sender" ON "public"."chat_messages__archived" USING "btree" ("sender_id");
+
+
+
+CREATE INDEX "idx_commandes_producer_id" ON "public"."commandes_vente_directe" USING "btree" ("producer_id");
+
+
+
+CREATE INDEX "idx_commandes_statut" ON "public"."commandes_vente_directe" USING "btree" ("statut");
+
+
+
+CREATE INDEX "idx_commandes_user_id" ON "public"."commandes_vente_directe" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_lignes_commande_id" ON "public"."lignes_commande_vente_directe" USING "btree" ("commande_id");
+
+
+
+CREATE INDEX "idx_lignes_product_id" ON "public"."lignes_commande_vente_directe" USING "btree" ("product_id");
+
+
+
+CREATE INDEX "idx_local_market_orders_pickup_code" ON "public"."local_market_orders" USING "btree" ("pickup_code") WHERE ("status" = ANY (ARRAY['pending'::"text", 'confirmed'::"text", 'ready'::"text"]));
+
+
+
+CREATE INDEX "idx_local_market_orders_producer_status" ON "public"."local_market_orders" USING "btree" ("producer_id", "status", "created_at" DESC);
+
+
+
+CREATE INDEX "idx_music_tracks_position" ON "public"."music_tracks" USING "btree" ("position");
+
+
+
+CREATE INDEX "idx_order_items_order_id" ON "public"."order_items" USING "btree" ("order_id");
+
+
+
+CREATE INDEX "idx_order_items_producer_id" ON "public"."order_items" USING "btree" ("producer_id");
+
+
+
+CREATE UNIQUE INDEX "idx_order_items_unique" ON "public"."order_items" USING "btree" ("order_id", "product_id", "producer_id");
+
+
+
+CREATE INDEX "idx_orders_created_at" ON "public"."orders" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_orders_customer_email" ON "public"."orders" USING "btree" ("customer_email");
+
+
+
+CREATE INDEX "idx_orders_is_pro_order" ON "public"."orders" USING "btree" ("is_pro_order");
+
+
+
+CREATE INDEX "idx_orders_items" ON "public"."orders" USING "gin" ("items");
+
+
+
+CREATE INDEX "idx_orders_status" ON "public"."orders" USING "btree" ("status");
+
+
+
+CREATE INDEX "idx_orders_user_id" ON "public"."orders" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_orders_user_status_date" ON "public"."orders" USING "btree" ("user_id", "status", "created_at" DESC);
+
+
+
+CREATE INDEX "idx_perf_metrics_created_at" ON "public"."perf_metrics" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_perf_metrics_name" ON "public"."perf_metrics" USING "btree" ("name");
+
+
+
+CREATE INDEX "idx_pro_orders_created_at" ON "public"."pro_orders" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_pro_orders_pro_user_id" ON "public"."pro_orders" USING "btree" ("pro_user_id");
+
+
+
+CREATE INDEX "idx_pro_orders_product_id" ON "public"."pro_orders" USING "btree" ("product_id");
+
+
+
+CREATE INDEX "idx_pro_orders_product_pending" ON "public"."pro_orders" USING "btree" ("product_id") INCLUDE ("quantity") WHERE ("status" = 'pending'::"text");
+
+
+
+CREATE INDEX "idx_pro_orders_status" ON "public"."pro_orders" USING "btree" ("status");
+
+
+
+CREATE INDEX "idx_pro_resource_categories_active" ON "public"."pro_resource_categories" USING "btree" ("active") WHERE ("active" = true);
+
+
+
+CREATE INDEX "idx_pro_resources_active" ON "public"."pro_resources" USING "btree" ("active") WHERE ("active" = true);
+
+
+
+CREATE INDEX "idx_pro_resources_category" ON "public"."pro_resources" USING "btree" ("category_id");
+
+
+
+CREATE INDEX "idx_producer_chat_messages_created_at" ON "public"."producer_chat_messages__archived" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_producer_chat_messages_sender_id" ON "public"."producer_chat_messages__archived" USING "btree" ("sender_id");
+
+
+
+CREATE INDEX "idx_producer_products_category" ON "public"."producer_products" USING "btree" ("category");
+
+
+
+CREATE INDEX "idx_producer_products_producer_id" ON "public"."producer_products" USING "btree" ("producer_id");
+
+
+
+CREATE UNIQUE INDEX "idx_producers_catalog_id" ON "public"."producers_catalog" USING "btree" ("id");
+
+
+
+CREATE INDEX "idx_producers_catalog_name" ON "public"."producers_catalog" USING "btree" ("name");
+
+
+
+CREATE INDEX "idx_producers_catalog_region" ON "public"."producers_catalog" USING "btree" ("region", "department");
+
+
+
+CREATE INDEX "idx_producers_department" ON "public"."producers" USING "btree" ("department");
+
+
+
+CREATE INDEX "idx_producers_profile_id" ON "public"."producers" USING "btree" ("profile_id") WHERE ("profile_id" IS NOT NULL);
+
+
+
+CREATE INDEX "idx_producers_region" ON "public"."producers" USING "btree" ("region");
+
+
+
+CREATE INDEX "idx_producers_vente_directe_ferme" ON "public"."producers" USING "btree" ("vente_directe_ferme") WHERE ("vente_directe_ferme" = true);
+
+
+
+CREATE INDEX "idx_products_bourse_pagination" ON "public"."products" USING "btree" ("visible_for_pros", "id") WHERE (("visible_for_pros" = true) AND ("status" = 'published'::"public"."product_status"));
+
+
+
+CREATE INDEX "idx_products_direct_sales" ON "public"."products" USING "btree" ("disponible_vente_directe") WHERE ("disponible_vente_directe" = true);
+
+
+
+CREATE INDEX "idx_products_producer_id" ON "public"."products" USING "btree" ("producer_id");
+
+
+
+CREATE INDEX "idx_products_producer_status" ON "public"."products" USING "btree" ("producer_id", "status") WHERE ("status" = 'published'::"public"."product_status");
+
+
+
+CREATE INDEX "idx_products_status" ON "public"."products" USING "btree" ("status");
+
+
+
+CREATE INDEX "idx_products_stock_lookup" ON "public"."products" USING "btree" ("id") INCLUDE ("stock", "stock_available");
+
+
+
+CREATE INDEX "idx_products_type" ON "public"."products" USING "btree" ("type");
+
+
+
+CREATE INDEX "idx_products_type_visibility" ON "public"."products" USING "btree" ("type", "visible_for_clients", "visible_for_pros");
+
+
+
+CREATE INDEX "idx_products_vente_directe" ON "public"."products" USING "btree" ("disponible_vente_directe") WHERE ("disponible_vente_directe" = true);
+
+
+
+CREATE INDEX "idx_products_visible_clients" ON "public"."products" USING "btree" ("visible_for_clients") WHERE ("visible_for_clients" = true);
+
+
+
+CREATE INDEX "idx_products_visible_pros" ON "public"."products" USING "btree" ("visible_for_pros") WHERE ("visible_for_pros" = true);
+
+
+
+CREATE INDEX "idx_profiles_email" ON "public"."profiles" USING "btree" ("email");
+
+
+
+CREATE INDEX "idx_profiles_role" ON "public"."profiles" USING "btree" ("role");
+
+
+
+CREATE INDEX "idx_profiles_user_code" ON "public"."profiles" USING "btree" ("user_code") WHERE ("user_code" IS NOT NULL);
+
+
+
+CREATE INDEX "idx_profiles_vente_directe_ferme" ON "public"."profiles" USING "btree" ("vente_directe_ferme") WHERE ("vente_directe_ferme" = true);
+
+
+
+CREATE INDEX "idx_rate_limit_blocked" ON "public"."rate_limit_attempts" USING "btree" ("blocked_until") WHERE ("blocked_until" IS NOT NULL);
+
+
+
+CREATE INDEX "idx_rate_limit_ip_action" ON "public"."rate_limit_attempts" USING "btree" ("ip_address", "action_type");
+
+
+
+CREATE INDEX "idx_rate_limits_reset_at" ON "public"."rate_limits" USING "btree" ("reset_at");
+
+
+
+CREATE INDEX "idx_rgpd_requests_status" ON "public"."rgpd_requests" USING "btree" ("status");
+
+
+
+CREATE INDEX "idx_rgpd_requests_user_id" ON "public"."rgpd_requests" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_ticket_tx_created" ON "public"."ticket_transactions" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_ticket_tx_source" ON "public"."ticket_transactions" USING "btree" ("source");
+
+
+
+CREATE INDEX "idx_ticket_tx_user" ON "public"."ticket_transactions" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_upload_logs_created_at" ON "public"."upload_logs" USING "btree" ("created_at" DESC);
+
+
+
+CREATE INDEX "idx_upload_logs_status" ON "public"."upload_logs" USING "btree" ("validation_status");
+
+
+
+CREATE INDEX "idx_upload_logs_user_id" ON "public"."upload_logs" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_user_code_mapping_code" ON "public"."user_code_mapping" USING "btree" ("user_code");
+
+
+
+CREATE INDEX "idx_user_code_mapping_user" ON "public"."user_code_mapping" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_user_collection_user_id" ON "public"."user_collection" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_user_gifts_code" ON "public"."user_gifts" USING "btree" ("gift_code");
+
+
+
+CREATE INDEX "idx_user_gifts_recipient_id" ON "public"."user_gifts" USING "btree" ("recipient_id");
+
+
+
+CREATE INDEX "idx_user_gifts_sender_id" ON "public"."user_gifts" USING "btree" ("sender_id");
+
+
+
+CREATE INDEX "idx_user_lots_user" ON "public"."user_lots" USING "btree" ("user_id", "won_at" DESC);
+
+
+
+CREATE INDEX "idx_user_lots_user_code" ON "public"."user_lots" USING "btree" ("user_code");
+
+
+
+CREATE INDEX "idx_user_lots_user_id" ON "public"."user_lots" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_user_tickets_balance" ON "public"."user_tickets" USING "btree" ("balance") WHERE ("balance" > 0);
+
+
+
+CREATE OR REPLACE TRIGGER "cdv_identity_immutable" BEFORE UPDATE ON "public"."commandes_vente_directe" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_cdv_identity_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "cdv_line_identity_immutable" BEFORE UPDATE ON "public"."lignes_commande_vente_directe" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_cdv_line_identity_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "lmo_identity_immutable" BEFORE UPDATE ON "public"."local_market_orders" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_lmo_identity_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "on_profile_changed" AFTER INSERT OR UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "public"."handle_profile_as_producer"();
+
+
+
+CREATE OR REPLACE TRIGGER "orders_identity_immutable" BEFORE UPDATE ON "public"."orders" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_orders_identity_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "orders_sync_order_items" AFTER INSERT OR UPDATE OF "items" ON "public"."orders" FOR EACH ROW EXECUTE FUNCTION "public"."sync_order_items_from_orders"();
+
+
+
+CREATE OR REPLACE TRIGGER "orders_updated_at_trigger" BEFORE UPDATE ON "public"."orders" FOR EACH ROW EXECUTE FUNCTION "public"."update_orders_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "pro_orders_updated_at_trigger" BEFORE UPDATE ON "public"."pro_orders" FOR EACH ROW EXECUTE FUNCTION "public"."update_pro_orders_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "pro_resource_categories_updated_at" BEFORE UPDATE ON "public"."pro_resource_categories" FOR EACH ROW EXECUTE FUNCTION "public"."update_pro_resource_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "pro_resources_updated_at" BEFORE UPDATE ON "public"."pro_resources" FOR EACH ROW EXECUTE FUNCTION "public"."update_pro_resource_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "producers_profile_immutable" BEFORE UPDATE ON "public"."producers" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_producer_profile_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "profiles_device_id_immutable" BEFORE UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "public"."prevent_device_id_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "profiles_protect_sensitive_columns" BEFORE UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "public"."protect_profile_sensitive_columns"();
+
+
+
+CREATE OR REPLACE TRIGGER "profiles_updated_at" BEFORE UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "public"."update_profiles_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "refresh_catalog_on_producers_change" AFTER INSERT OR DELETE OR UPDATE ON "public"."producers" FOR EACH STATEMENT EXECUTE FUNCTION "public"."trigger_refresh_producers_catalog_on_producers"();
+
+
+
+CREATE OR REPLACE TRIGGER "refresh_catalog_on_products_change" AFTER INSERT OR DELETE OR UPDATE ON "public"."products" FOR EACH STATEMENT EXECUTE FUNCTION "public"."trigger_refresh_producers_catalog_on_products"();
+
+
+
+CREATE OR REPLACE TRIGGER "trigger_log_product_update" AFTER UPDATE ON "public"."products" FOR EACH ROW EXECUTE FUNCTION "public"."log_product_update"();
+
+
+
+CREATE OR REPLACE TRIGGER "trigger_sync_direct_sales" AFTER UPDATE ON "public"."profiles" FOR EACH ROW EXECUTE FUNCTION "public"."sync_direct_sales_availability"();
+
+
+
+CREATE OR REPLACE TRIGGER "trigger_user_tickets_updated" BEFORE UPDATE ON "public"."user_tickets" FOR EACH ROW EXECUTE FUNCTION "public"."update_user_tickets_timestamp"();
+
+
+
+ALTER TABLE ONLY "public"."audit_log_entries"
+    ADD CONSTRAINT "audit_log_entries_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."audit_logs"
+    ADD CONSTRAINT "audit_logs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_messages__archived"
+    ADD CONSTRAINT "chat_messages_producer_id_fkey" FOREIGN KEY ("producer_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."commandes_vente_directe"
+    ADD CONSTRAINT "commandes_vente_directe_producer_id_fkey" FOREIGN KEY ("producer_id") REFERENCES "public"."producers"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."commandes_vente_directe"
+    ADD CONSTRAINT "commandes_vente_directe_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."lignes_commande_vente_directe"
+    ADD CONSTRAINT "lignes_commande_vente_directe_commande_id_fkey" FOREIGN KEY ("commande_id") REFERENCES "public"."commandes_vente_directe"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."lignes_commande_vente_directe"
+    ADD CONSTRAINT "lignes_commande_vente_directe_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."local_market_orders"
+    ADD CONSTRAINT "local_market_orders_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."lot_items"
+    ADD CONSTRAINT "lot_items_lot_id_fkey" FOREIGN KEY ("lot_id") REFERENCES "public"."lots"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."order_items"
+    ADD CONSTRAINT "order_items_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."order_items"
+    ADD CONSTRAINT "order_items_producer_id_fkey" FOREIGN KEY ("producer_id") REFERENCES "public"."producers"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."order_items"
+    ADD CONSTRAINT "order_items_product_id_fkey" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."orders"
+    ADD CONSTRAINT "orders_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."orders"
+    ADD CONSTRAINT "orders_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."pack_items"
+    ADD CONSTRAINT "pack_items_pack_id_fkey" FOREIGN KEY ("pack_id") REFERENCES "public"."packs"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pro_orders"
+    ADD CONSTRAINT "pro_orders_pro_user_id_fkey" FOREIGN KEY ("pro_user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."pro_resources"
+    ADD CONSTRAINT "pro_resources_category_id_fkey" FOREIGN KEY ("category_id") REFERENCES "public"."pro_resource_categories"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."producer_products"
+    ADD CONSTRAINT "producer_products_producer_id_fkey" FOREIGN KEY ("producer_id") REFERENCES "public"."producers"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."producers"
+    ADD CONSTRAINT "producers_profile_id_fkey" FOREIGN KEY ("profile_id") REFERENCES "public"."profiles"("id");
+
+
+
+ALTER TABLE ONLY "public"."products"
+    ADD CONSTRAINT "products_producer_id_fkey" FOREIGN KEY ("producer_id") REFERENCES "public"."producers"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."profiles"
+    ADD CONSTRAINT "profiles_id_fkey" FOREIGN KEY ("id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."rgpd_requests"
+    ADD CONSTRAINT "rgpd_requests_processed_by_fkey" FOREIGN KEY ("processed_by") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."rgpd_requests"
+    ADD CONSTRAINT "rgpd_requests_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."ticket_transactions"
+    ADD CONSTRAINT "ticket_transactions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."upload_logs"
+    ADD CONSTRAINT "upload_logs_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."user_code_mapping"
+    ADD CONSTRAINT "user_code_mapping_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."user_collection"
+    ADD CONSTRAINT "user_collection_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."user_gifts"
+    ADD CONSTRAINT "user_gifts_recipient_id_fkey" FOREIGN KEY ("recipient_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."user_gifts"
+    ADD CONSTRAINT "user_gifts_sender_id_fkey" FOREIGN KEY ("sender_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."user_lots"
+    ADD CONSTRAINT "user_lots_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."user_referrals"
+    ADD CONSTRAINT "user_referrals_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."user_stats"
+    ADD CONSTRAINT "user_stats_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."user_subscriptions"
+    ADD CONSTRAINT "user_subscriptions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."user_tickets"
+    ADD CONSTRAINT "user_tickets_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+CREATE POLICY "Admins can delete profiles" ON "public"."profiles" FOR DELETE USING ("public"."check_is_admin"());
+
+
+
+CREATE POLICY "Admins can manage all products" ON "public"."products" USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "Admins can read audit logs" ON "public"."audit_logs" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "Admins can update all profiles" ON "public"."profiles" FOR UPDATE USING ("public"."check_is_admin"());
+
+
+
+CREATE POLICY "Admins can view audit logs" ON "public"."audit_log_entries" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "Admins view all ticket balances" ON "public"."user_tickets" FOR SELECT USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "Admins view all transactions" ON "public"."ticket_transactions" FOR SELECT USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "Anyone can view allowed MIME types" ON "public"."allowed_mime_types" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "Lecture publique des types MIME autorisés" ON "public"."allowed_mime_types" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "Only admins can modify MIME types" ON "public"."allowed_mime_types" TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'admin'::"public"."user_role"))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "Permettre modification de ses propres messages" ON "public"."producer_chat_messages__archived" FOR UPDATE TO "authenticated" USING (((( SELECT "auth"."uid"() AS "uid"))::"text" = "sender_id")) WITH CHECK (((( SELECT "auth"."uid"() AS "uid"))::"text" = "sender_id"));
+
+
+
+CREATE POLICY "Producers can delete their products" ON "public"."producer_products" FOR DELETE USING ((("auth"."uid"())::"text" = "producer_id"));
+
+
+
+CREATE POLICY "Producers can insert their products" ON "public"."producer_products" FOR INSERT WITH CHECK ((("auth"."uid"())::"text" = "producer_id"));
+
+
+
+CREATE POLICY "Producers can update their products" ON "public"."producer_products" FOR UPDATE USING ((("auth"."uid"())::"text" = "producer_id"));
+
+
+
+CREATE POLICY "Products are viewable by everyone" ON "public"."producer_products" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "Public can read lot_items" ON "public"."lot_items" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "Public can read lots" ON "public"."lots" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "Public can read pack_items" ON "public"."pack_items" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "Public can read packs" ON "public"."packs" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "Public can read promo_products" ON "public"."promo_products" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "Service can insert audit logs" ON "public"."audit_logs" FOR INSERT TO "service_role" WITH CHECK (true);
+
+
+
+CREATE POLICY "Service role inserts transactions" ON "public"."ticket_transactions" FOR INSERT WITH CHECK (("auth"."role"() = 'service_role'::"text"));
+
+
+
+CREATE POLICY "Service role manages tickets" ON "public"."user_tickets" USING (("auth"."role"() = 'service_role'::"text"));
+
+
+
+CREATE POLICY "Seuls les admins peuvent modifier les types MIME" ON "public"."allowed_mime_types" TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "System can insert audit logs" ON "public"."audit_log_entries" FOR INSERT WITH CHECK (true);
+
+
+
+CREATE POLICY "Users can create order lines" ON "public"."lignes_commande_vente_directe" FOR INSERT WITH CHECK (("commande_id" IN ( SELECT "commandes_vente_directe"."id"
+   FROM "public"."commandes_vente_directe"
+  WHERE ("commandes_vente_directe"."user_id" = ( SELECT "auth"."uid"() AS "uid")))));
+
+
+
+CREATE POLICY "Users can create orders" ON "public"."commandes_vente_directe" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can insert own mapping" ON "public"."user_code_mapping" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can insert own profile" ON "public"."profiles" FOR INSERT WITH CHECK (("auth"."uid"() = "id"));
+
+
+
+CREATE POLICY "Users can insert their own profile during signup" ON "public"."profiles" FOR INSERT TO "authenticated" WITH CHECK (("auth"."uid"() = "id"));
+
+
+
+CREATE POLICY "Users can update own mapping" ON "public"."user_code_mapping" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users can update own profile" ON "public"."profiles" FOR UPDATE TO "authenticated" USING (("auth"."uid"() = "id")) WITH CHECK (("auth"."uid"() = "id"));
+
+
+
+CREATE POLICY "Users can view own mapping" ON "public"."user_code_mapping" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "Users read own ticket balance" ON "public"."user_tickets" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "Users read own transactions" ON "public"."ticket_transactions" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "allow_read_producers" ON "public"."producers" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "allow_read_products" ON "public"."products" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "allow_read_profiles" ON "public"."profiles" FOR SELECT USING (true);
+
+
+
+ALTER TABLE "public"."allowed_mime_types" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."app_data" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "app_data_delete" ON "public"."app_data" FOR DELETE TO "authenticated" USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "app_data_insert" ON "public"."app_data" FOR INSERT TO "authenticated" WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "app_data_select" ON "public"."app_data" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "app_data_update" ON "public"."app_data" FOR UPDATE TO "authenticated" USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+ALTER TABLE "public"."audit_log_entries" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "audit_log_insert" ON "public"."audit_log_entries" FOR INSERT WITH CHECK (("auth"."uid"() IS NOT NULL));
+
+
+
+CREATE POLICY "audit_log_own_or_admin" ON "public"."security_audit_log" FOR SELECT USING ((("auth"."uid"() = "user_id") OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+CREATE POLICY "audit_log_select_admin" ON "public"."audit_log_entries" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "audit_log_select_own" ON "public"."audit_log_entries" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
+
+
+ALTER TABLE "public"."audit_logs" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "cdv_insert_customer" ON "public"."commandes_vente_directe" FOR INSERT WITH CHECK (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "cdv_lines_insert_customer" ON "public"."lignes_commande_vente_directe" FOR INSERT WITH CHECK (("commande_id" IN ( SELECT "commandes_vente_directe"."id"
+   FROM "public"."commandes_vente_directe"
+  WHERE ("commandes_vente_directe"."user_id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "cdv_lines_select_admin" ON "public"."lignes_commande_vente_directe" FOR SELECT USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "cdv_lines_select_customer" ON "public"."lignes_commande_vente_directe" FOR SELECT USING (("commande_id" IN ( SELECT "commandes_vente_directe"."id"
+   FROM "public"."commandes_vente_directe"
+  WHERE ("commandes_vente_directe"."user_id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "cdv_lines_select_producer" ON "public"."lignes_commande_vente_directe" FOR SELECT USING (("commande_id" IN ( SELECT "commandes_vente_directe"."id"
+   FROM "public"."commandes_vente_directe"
+  WHERE ("commandes_vente_directe"."producer_id" IN ( SELECT "producers"."id"
+           FROM "public"."producers"
+          WHERE ("producers"."profile_id" = "auth"."uid"()))))));
+
+
+
+CREATE POLICY "cdv_select_admin" ON "public"."commandes_vente_directe" FOR SELECT USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "cdv_select_customer" ON "public"."commandes_vente_directe" FOR SELECT USING (("auth"."uid"() = "user_id"));
+
+
+
+CREATE POLICY "cdv_select_producer" ON "public"."commandes_vente_directe" FOR SELECT USING (("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "cdv_update_admin" ON "public"."commandes_vente_directe" FOR UPDATE USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "cdv_update_producer" ON "public"."commandes_vente_directe" FOR UPDATE USING (("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"())))) WITH CHECK (("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))));
+
+
+
+ALTER TABLE "public"."chat_messages__archived" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "col_delete" ON "public"."user_collection" FOR DELETE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "col_insert" ON "public"."user_collection" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "col_select" ON "public"."user_collection" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "col_update" ON "public"."user_collection" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "combined_delete_policy" ON "public"."chat_messages__archived" FOR DELETE USING (((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'admin'::"public"."user_role")))) OR ((( SELECT "auth"."uid"() AS "uid") = "producer_id") AND (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'producer'::"public"."user_role"))))) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+CREATE POLICY "combined_delete_policy" ON "public"."producer_chat_messages__archived" FOR DELETE USING ((((( SELECT "auth"."uid"() AS "uid"))::"text" = "sender_id") OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "combined_delete_policy" ON "public"."producers" FOR DELETE USING (((( SELECT "auth"."uid"() AS "uid") = "profile_id") OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'admin'::"public"."user_role")))) OR "public"."is_admin"() OR "public"."auth_is_admin"()));
+
+
+
+CREATE POLICY "combined_insert_policy" ON "public"."chat_messages__archived" FOR INSERT TO "authenticated" WITH CHECK ((("sender_id" = "auth"."uid"()) AND (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND (("profiles"."role")::"text" = ANY (ARRAY['pro'::"text", 'producer'::"text", 'admin'::"text"])))))));
+
+
+
+CREATE POLICY "combined_insert_policy" ON "public"."producers" FOR INSERT WITH CHECK (((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'admin'::"public"."user_role")))) OR ("public"."is_admin"() OR ("profile_id" = ( SELECT "auth"."uid"() AS "uid"))) OR ("public"."is_admin"() OR (( SELECT "auth"."uid"() AS "uid") = "profile_id"))));
+
+
+
+CREATE POLICY "combined_insert_policy" ON "public"."products" FOR INSERT WITH CHECK ((("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid")))) OR (("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid")))) OR "public"."is_admin"())));
+
+
+
+CREATE POLICY "combined_insert_policy" ON "public"."user_lots" FOR INSERT WITH CHECK (((( SELECT "auth"."uid"() AS "uid") = "user_id") OR (("user_id" = ( SELECT "auth"."uid"() AS "uid")) OR "public"."is_admin"())));
+
+
+
+CREATE POLICY "combined_select_policy" ON "public"."audit_log_entries" FOR SELECT USING (("public"."is_admin"() OR (( SELECT "auth"."uid"() AS "uid") = "user_id")));
+
+
+
+CREATE POLICY "combined_select_policy" ON "public"."chat_messages__archived" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = ANY (ARRAY['pro'::"public"."user_role", 'producer'::"public"."user_role", 'admin'::"public"."user_role"]))))));
+
+
+
+CREATE POLICY "combined_select_policy" ON "public"."commandes_vente_directe" FOR SELECT USING ((((( SELECT "auth"."jwt"() AS "jwt") ->> 'role'::"text") = 'admin'::"text") OR (EXISTS ( SELECT 1
+   FROM "public"."producers"
+  WHERE (("producers"."id" = "commandes_vente_directe"."producer_id") AND ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid"))))) OR (( SELECT "auth"."uid"() AS "uid") = "user_id")));
+
+
+
+CREATE POLICY "combined_select_policy" ON "public"."lignes_commande_vente_directe" FOR SELECT USING ((((( SELECT "auth"."jwt"() AS "jwt") ->> 'role'::"text") = 'admin'::"text") OR ("commande_id" IN ( SELECT "commandes_vente_directe"."id"
+   FROM "public"."commandes_vente_directe"
+  WHERE ("commandes_vente_directe"."producer_id" IN ( SELECT "producers"."id"
+           FROM "public"."producers"
+          WHERE ("commandes_vente_directe"."user_id" = ( SELECT "auth"."uid"() AS "uid")))))) OR ("commande_id" IN ( SELECT "commandes_vente_directe"."id"
+   FROM "public"."commandes_vente_directe"
+  WHERE ("commandes_vente_directe"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
+
+
+
+CREATE POLICY "combined_select_policy" ON "public"."local_market_orders" FOR SELECT USING ((("customer_id" = "auth"."uid"()) OR ("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "combined_select_policy" ON "public"."producer_chat_messages__archived" FOR SELECT USING ((true OR ("public"."is_producer"() OR "public"."is_admin"())));
+
+
+
+CREATE POLICY "combined_select_policy" ON "public"."upload_logs" FOR SELECT USING ((("user_id" = ( SELECT "auth"."uid"() AS "uid")) OR "public"."is_admin"() OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+CREATE POLICY "combined_select_policy" ON "public"."user_gifts" FOR SELECT USING (((( SELECT "auth"."uid"() AS "uid") = "recipient_id") OR (( SELECT "auth"."uid"() AS "uid") = "sender_id")));
+
+
+
+CREATE POLICY "combined_select_policy" ON "public"."user_lots" FOR SELECT USING (((( SELECT "auth"."uid"() AS "uid") = "user_id") OR ("user_id" IS NULL) OR (("user_id" = ( SELECT "auth"."uid"() AS "uid")) OR "public"."is_admin"()) OR ("user_code" = ( SELECT "profiles"."user_code"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = ( SELECT "auth"."uid"() AS "uid"))))));
+
+
+
+CREATE POLICY "combined_update_policy" ON "public"."commandes_vente_directe" FOR UPDATE USING ((((( SELECT "auth"."jwt"() AS "jwt") ->> 'role'::"text") = 'admin'::"text") OR (EXISTS ( SELECT 1
+   FROM "public"."producers"
+  WHERE (("producers"."id" = "commandes_vente_directe"."producer_id") AND ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid"))))))) WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."producers"
+  WHERE (("producers"."id" = "commandes_vente_directe"."producer_id") AND ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid"))))));
+
+
+
+CREATE POLICY "combined_update_policy" ON "public"."local_market_orders" FOR UPDATE USING ((("customer_id" = "auth"."uid"()) OR ("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "combined_update_policy" ON "public"."producers" FOR UPDATE USING (((( SELECT "auth"."uid"() AS "uid") = "profile_id") OR ("public"."auth_is_admin"() OR (("profile_id" = ( SELECT "auth"."uid"() AS "uid")) AND (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'producer'::"public"."user_role")))))) OR "public"."is_admin"() OR ("profile_id" = ( SELECT "auth"."uid"() AS "uid")))) WITH CHECK (("public"."is_admin"() OR ("profile_id" = ( SELECT "auth"."uid"() AS "uid"))));
+
+
+
+CREATE POLICY "combined_update_policy" ON "public"."products" FOR UPDATE USING ((("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid")))) OR (("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid")))) OR "public"."is_admin"()))) WITH CHECK ((("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid")))) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "combined_update_policy" ON "public"."user_lots" FOR UPDATE USING (((( SELECT "auth"."uid"() AS "uid") = "user_id") OR (("user_id" = ( SELECT "auth"."uid"() AS "uid")) OR "public"."is_admin"()))) WITH CHECK ((("user_id" = ( SELECT "auth"."uid"() AS "uid")) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "commandes_vd_insert" ON "public"."commandes_vente_directe" FOR INSERT WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "commandes_vd_select" ON "public"."commandes_vente_directe" FOR SELECT USING ((("user_id" = "auth"."uid"()) OR ("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+CREATE POLICY "commandes_vd_update" ON "public"."commandes_vente_directe" FOR UPDATE USING ((("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+ALTER TABLE "public"."commandes_vente_directe" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "direct_sales_select_policy" ON "public"."commandes_vente_directe" FOR SELECT USING ((("auth"."uid"() = "user_id") OR ("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+CREATE POLICY "direct_sales_update_policy" ON "public"."commandes_vente_directe" FOR UPDATE USING ((("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+CREATE POLICY "gift_insert" ON "public"."user_gifts" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "sender_id"));
+
+
+
+CREATE POLICY "gift_update" ON "public"."user_gifts" FOR UPDATE USING (((( SELECT "auth"."uid"() AS "uid") = "sender_id") OR (( SELECT "auth"."uid"() AS "uid") = "recipient_id")));
+
+
+
+ALTER TABLE "public"."lignes_commande_vente_directe" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "lmo_insert_customer" ON "public"."local_market_orders" FOR INSERT WITH CHECK (("customer_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "lmo_select_admin" ON "public"."local_market_orders" FOR SELECT USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "lmo_select_customer" ON "public"."local_market_orders" FOR SELECT USING (("customer_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "lmo_select_producer" ON "public"."local_market_orders" FOR SELECT USING (("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "lmo_update_admin" ON "public"."local_market_orders" FOR UPDATE USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "lmo_update_customer_cancel" ON "public"."local_market_orders" FOR UPDATE USING (("customer_id" = "auth"."uid"())) WITH CHECK ((("customer_id" = "auth"."uid"()) AND ("status" = 'cancelled'::"text")));
+
+
+
+CREATE POLICY "lmo_update_producer" ON "public"."local_market_orders" FOR UPDATE USING (("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"())))) WITH CHECK (("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))));
+
+
+
+ALTER TABLE "public"."local_market_orders" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "local_market_orders_insert_own" ON "public"."local_market_orders" FOR INSERT TO "authenticated" WITH CHECK (("customer_id" = ( SELECT "auth"."uid"() AS "uid")));
+
+
+
+ALTER TABLE "public"."lot_items" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "lot_items_delete" ON "public"."lot_items" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "lot_items_delete_admin" ON "public"."lot_items" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "lot_items_insert" ON "public"."lot_items" FOR INSERT WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "lot_items_insert_admin" ON "public"."lot_items" FOR INSERT WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "lot_items_select" ON "public"."lot_items" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "lot_items_select_all" ON "public"."lot_items" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "lot_items_update" ON "public"."lot_items" FOR UPDATE USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "lot_items_update_admin" ON "public"."lot_items" FOR UPDATE USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+ALTER TABLE "public"."lots" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "lots_delete" ON "public"."lots" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "lots_delete_admin" ON "public"."lots" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "lots_insert" ON "public"."lots" FOR INSERT WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "lots_insert_admin" ON "public"."lots" FOR INSERT WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "lots_select" ON "public"."lots" FOR SELECT USING ((("active" = true) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "lots_select_all" ON "public"."lots" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "lots_update" ON "public"."lots" FOR UPDATE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "lots_update_admin" ON "public"."lots" FOR UPDATE USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+ALTER TABLE "public"."music_tracks" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "music_tracks_delete" ON "public"."music_tracks" FOR DELETE TO "authenticated" USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "music_tracks_insert" ON "public"."music_tracks" FOR INSERT TO "authenticated" WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "music_tracks_select" ON "public"."music_tracks" FOR SELECT TO "authenticated", "anon" USING (true);
+
+
+
+CREATE POLICY "music_tracks_update" ON "public"."music_tracks" FOR UPDATE TO "authenticated" USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+ALTER TABLE "public"."order_items" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "order_items_select" ON "public"."order_items" FOR SELECT USING (("public"."is_admin"() OR ("order_id" IN ( SELECT "orders"."id"
+   FROM "public"."orders"
+  WHERE (("orders"."user_id" = "auth"."uid"()) OR ("orders"."customer_email" = "public"."get_current_user_email"())))) OR ("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"())))));
+
+
+
+ALTER TABLE "public"."orders" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "orders_delete_admin" ON "public"."orders" FOR DELETE TO "authenticated" USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "orders_delete_own" ON "public"."orders" FOR DELETE TO "authenticated" USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "orders_insert_enhanced" ON "public"."orders" FOR INSERT TO "authenticated" WITH CHECK ((("customer_email" = "auth"."email"()) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+CREATE POLICY "orders_insert_own" ON "public"."orders" FOR INSERT TO "authenticated" WITH CHECK ((("user_id" = "auth"."uid"()) AND ("customer_email" = "auth"."email"())));
+
+
+
+CREATE POLICY "orders_select_admin" ON "public"."orders" FOR SELECT USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "orders_select_customer" ON "public"."orders" FOR SELECT USING (("customer_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "orders_select_producer" ON "public"."orders" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "jsonb_array_elements"(COALESCE("orders"."items", '[]'::"jsonb")) "item"("value")
+  WHERE (("item"."value" ->> 'producerId'::"text") IN ( SELECT "producers"."id"
+           FROM "public"."producers"
+          WHERE ("producers"."profile_id" = "auth"."uid"()))))));
+
+
+
+CREATE POLICY "orders_select_secure" ON "public"."orders" FOR SELECT TO "authenticated" USING ((("customer_email" = "auth"."email"()) OR (("user_id" IS NOT NULL) AND ("user_id" = "auth"."uid"())) OR "public"."is_admin"() OR (EXISTS ( SELECT 1
+   FROM "jsonb_array_elements"("orders"."items") "item"("value")
+  WHERE (("item"."value" ->> 'producer_id'::"text") IN ( SELECT "producers"."id"
+           FROM "public"."producers"
+          WHERE ("producers"."profile_id" = "auth"."uid"())))))));
+
+
+
+CREATE POLICY "orders_update_admin_producer" ON "public"."orders" FOR UPDATE TO "authenticated" USING (("public"."is_admin"() OR (EXISTS ( SELECT 1
+   FROM "jsonb_array_elements"("orders"."items") "item"("value")
+  WHERE (("item"."value" ->> 'producer_id'::"text") IN ( SELECT "producers"."id"
+           FROM "public"."producers"
+          WHERE ("producers"."profile_id" = "auth"."uid"()))))))) WITH CHECK (("public"."is_admin"() OR (EXISTS ( SELECT 1
+   FROM "jsonb_array_elements"("orders"."items") "item"("value")
+  WHERE (("item"."value" ->> 'producer_id'::"text") IN ( SELECT "producers"."id"
+           FROM "public"."producers"
+          WHERE ("producers"."profile_id" = "auth"."uid"())))))));
+
+
+
+CREATE POLICY "orders_update_enhanced" ON "public"."orders" FOR UPDATE TO "authenticated" USING ((("customer_email" = "auth"."email"()) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))) OR (EXISTS ( SELECT 1
+   FROM ("public"."profiles"
+     JOIN "public"."producers" ON (("producers"."email" = "profiles"."email")))
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'producer'::"public"."user_role") AND (EXISTS ( SELECT 1
+           FROM "jsonb_array_elements"("orders"."items") "item"("value")
+          WHERE (("item"."value" ->> 'producer_id'::"text") = "producers"."id"))))))));
+
+
+
+ALTER TABLE "public"."pack_items" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "pack_items_delete" ON "public"."pack_items" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "pack_items_insert" ON "public"."pack_items" FOR INSERT WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "pack_items_select" ON "public"."pack_items" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "pack_items_update" ON "public"."pack_items" FOR UPDATE USING ("public"."is_admin"());
+
+
+
+ALTER TABLE "public"."packs" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "packs_delete" ON "public"."packs" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "packs_insert" ON "public"."packs" FOR INSERT WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "packs_select" ON "public"."packs" FOR SELECT USING ((("active" = true) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "packs_update" ON "public"."packs" FOR UPDATE USING ("public"."is_admin"());
+
+
+
+ALTER TABLE "public"."perf_metrics" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pro" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."pro_orders" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "pro_orders_delete" ON "public"."pro_orders" FOR DELETE USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+CREATE POLICY "pro_orders_delete_admin" ON "public"."pro_orders" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "pro_orders_insert" ON "public"."pro_orders" FOR INSERT WITH CHECK ((("auth"."uid"() IS NOT NULL) AND (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = ANY (ARRAY['pro'::"public"."user_role", 'producer'::"public"."user_role", 'admin'::"public"."user_role"])))))));
+
+
+
+CREATE POLICY "pro_orders_insert_pro" ON "public"."pro_orders" FOR INSERT WITH CHECK ((("pro_user_id" = "auth"."uid"()) AND (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = ANY (ARRAY['pro'::"public"."user_role", 'admin'::"public"."user_role"])))))));
+
+
+
+CREATE POLICY "pro_orders_select" ON "public"."pro_orders" FOR SELECT USING ((("pro_user_id" = "auth"."uid"()) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))) OR (EXISTS ( SELECT 1
+   FROM ("public"."products" "p"
+     JOIN "public"."producers" "pr" ON (("p"."producer_id" = "pr"."id")))
+  WHERE (("p"."id" = "pro_orders"."product_id") AND ("pr"."profile_id" = "auth"."uid"()))))));
+
+
+
+CREATE POLICY "pro_orders_select_admin" ON "public"."pro_orders" FOR SELECT USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "pro_orders_select_all" ON "public"."pro_orders" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "pro_orders_select_own" ON "public"."pro_orders" FOR SELECT USING (("pro_user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "pro_orders_update" ON "public"."pro_orders" FOR UPDATE USING ((("pro_user_id" = "auth"."uid"()) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))) OR (EXISTS ( SELECT 1
+   FROM ("public"."products" "p"
+     JOIN "public"."producers" "pr" ON (("p"."producer_id" = "pr"."id")))
+  WHERE (("p"."id" = "pro_orders"."product_id") AND ("pr"."profile_id" = "auth"."uid"())))))) WITH CHECK ((("pro_user_id" = "auth"."uid"()) OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))) OR (EXISTS ( SELECT 1
+   FROM ("public"."products" "p"
+     JOIN "public"."producers" "pr" ON (("p"."producer_id" = "pr"."id")))
+  WHERE (("p"."id" = "pro_orders"."product_id") AND ("pr"."profile_id" = "auth"."uid"()))))));
+
+
+
+CREATE POLICY "pro_orders_update_own" ON "public"."pro_orders" FOR UPDATE USING (("pro_user_id" = "auth"."uid"())) WITH CHECK ((("pro_user_id" = "auth"."uid"()) AND (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = ANY (ARRAY['pro'::"public"."user_role", 'admin'::"public"."user_role"])))))));
+
+
+
+ALTER TABLE "public"."pro_resource_categories" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "pro_resource_categories_admin_delete" ON "public"."pro_resource_categories" FOR DELETE TO "authenticated" USING (("public"."is_admin"() OR ("auth"."role"() = 'service_role'::"text")));
+
+
+
+CREATE POLICY "pro_resource_categories_admin_insert" ON "public"."pro_resource_categories" FOR INSERT TO "authenticated" WITH CHECK (("public"."is_admin"() OR ("auth"."role"() = 'service_role'::"text")));
+
+
+
+CREATE POLICY "pro_resource_categories_admin_update" ON "public"."pro_resource_categories" FOR UPDATE TO "authenticated" USING (("public"."is_admin"() OR ("auth"."role"() = 'service_role'::"text"))) WITH CHECK (("public"."is_admin"() OR ("auth"."role"() = 'service_role'::"text")));
+
+
+
+CREATE POLICY "pro_resource_categories_select" ON "public"."pro_resource_categories" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = ANY (ARRAY['producer'::"public"."user_role", 'admin'::"public"."user_role"]))))));
+
+
+
+ALTER TABLE "public"."pro_resources" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "pro_resources_admin_delete" ON "public"."pro_resources" FOR DELETE TO "authenticated" USING (("public"."is_admin"() OR ("auth"."role"() = 'service_role'::"text")));
+
+
+
+CREATE POLICY "pro_resources_admin_insert" ON "public"."pro_resources" FOR INSERT TO "authenticated" WITH CHECK (("public"."is_admin"() OR ("auth"."role"() = 'service_role'::"text")));
+
+
+
+CREATE POLICY "pro_resources_admin_update" ON "public"."pro_resources" FOR UPDATE TO "authenticated" USING (("public"."is_admin"() OR ("auth"."role"() = 'service_role'::"text"))) WITH CHECK (("public"."is_admin"() OR ("auth"."role"() = 'service_role'::"text")));
+
+
+
+CREATE POLICY "pro_resources_select" ON "public"."pro_resources" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = ANY (ARRAY['producer'::"public"."user_role", 'admin'::"public"."user_role"]))))));
+
+
+
+ALTER TABLE "public"."producer_chat_messages__archived" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."producer_products" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."producers" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "producers_delete" ON "public"."producers" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "producers_insert" ON "public"."producers" FOR INSERT TO "authenticated" WITH CHECK (("public"."is_admin"() OR ("profile_id" = "auth"."uid"())));
+
+
+
+CREATE POLICY "producers_insert_admin" ON "public"."producers" FOR INSERT WITH CHECK (("public"."is_admin"() OR ("auth"."role"() = 'service_role'::"text")));
+
+
+
+CREATE POLICY "producers_select" ON "public"."producers" FOR SELECT USING (true);
+
+
+
+CREATE POLICY "producers_update" ON "public"."producers" FOR UPDATE USING (("profile_id" = "auth"."uid"())) WITH CHECK (("profile_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "producers_update_admin" ON "public"."producers" FOR UPDATE USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "producers_update_own" ON "public"."producers" FOR UPDATE USING (("auth"."uid"() = "profile_id")) WITH CHECK (("auth"."uid"() = "profile_id"));
+
+
+
+CREATE POLICY "producers_update_policy" ON "public"."producers" FOR UPDATE USING ((("auth"."uid"() = "profile_id") OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+ALTER TABLE "public"."products" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "products_delete" ON "public"."products" FOR DELETE TO "authenticated" USING ((("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "products_delete_policy" ON "public"."products" FOR DELETE USING ((("auth"."uid"() = ("producer_id")::"uuid") OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+CREATE POLICY "products_insert" ON "public"."products" FOR INSERT TO "authenticated" WITH CHECK ((("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "products_select" ON "public"."products" FOR SELECT TO "authenticated", "anon" USING (((("status" = 'published'::"public"."product_status") AND ("visible_for_clients" = true)) OR ("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "products_update" ON "public"."products" FOR UPDATE TO "authenticated" USING ((("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))) OR "public"."is_admin"())) WITH CHECK ((("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = "auth"."uid"()))) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "products_update_policy" ON "public"."products" FOR UPDATE USING ((("auth"."uid"() = ("producer_id")::"uuid") OR (EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role"))))));
+
+
+
+ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "profiles_insert" ON "public"."profiles" FOR INSERT TO "authenticated" WITH CHECK (("id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "profiles_insert_own" ON "public"."profiles" FOR INSERT TO "authenticated" WITH CHECK (("id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "profiles_update_own" ON "public"."profiles" FOR UPDATE TO "authenticated" USING (("id" = "auth"."uid"())) WITH CHECK (("id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."promo_products" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "promo_products_delete" ON "public"."promo_products" FOR DELETE USING (("public"."is_admin"() OR ("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid"))))));
+
+
+
+CREATE POLICY "promo_products_insert" ON "public"."promo_products" FOR INSERT WITH CHECK (("public"."is_admin"() OR ("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid"))))));
+
+
+
+CREATE POLICY "promo_products_select" ON "public"."promo_products" FOR SELECT USING ((("active" = true) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "promo_products_update" ON "public"."promo_products" FOR UPDATE USING (("public"."is_admin"() OR ("producer_id" IN ( SELECT "producers"."id"
+   FROM "public"."producers"
+  WHERE ("producers"."profile_id" = ( SELECT "auth"."uid"() AS "uid"))))));
+
+
+
+CREATE POLICY "rate_limit_admin_only" ON "public"."rate_limit_attempts" USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+ALTER TABLE "public"."rate_limit_attempts" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."rate_limits" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "rate_limits_no_access" ON "public"."rate_limits" USING (false) WITH CHECK (false);
+
+
+
+CREATE POLICY "ref_insert" ON "public"."user_referrals" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "ref_select" ON "public"."user_referrals" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "ref_update" ON "public"."user_referrals" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+ALTER TABLE "public"."rgpd_requests" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "rgpd_requests_insert_own" ON "public"."rgpd_requests" FOR INSERT WITH CHECK (("user_id" = ( SELECT "auth"."uid"() AS "uid")));
+
+
+
+CREATE POLICY "rgpd_requests_select_own" ON "public"."rgpd_requests" FOR SELECT USING (("user_id" = ( SELECT "auth"."uid"() AS "uid")));
+
+
+
+CREATE POLICY "rgpd_requests_update_admin" ON "public"."rgpd_requests" FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = ( SELECT "auth"."uid"() AS "uid")) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+ALTER TABLE "public"."security_audit_log" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "stats_insert" ON "public"."user_stats" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "stats_select" ON "public"."user_stats" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "stats_update" ON "public"."user_stats" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "sub_insert" ON "public"."user_subscriptions" FOR INSERT WITH CHECK ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "sub_select" ON "public"."user_subscriptions" FOR SELECT USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+CREATE POLICY "sub_update" ON "public"."user_subscriptions" FOR UPDATE USING ((( SELECT "auth"."uid"() AS "uid") = "user_id"));
+
+
+
+ALTER TABLE "public"."ticket_transactions" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."upload_logs" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "upload_logs_insert" ON "public"."upload_logs" FOR INSERT TO "authenticated" WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "upload_logs_select" ON "public"."upload_logs" FOR SELECT TO "authenticated" USING ((("user_id" = "auth"."uid"()) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "upload_logs_select_admin" ON "public"."upload_logs" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "public"."profiles"
+  WHERE (("profiles"."id" = "auth"."uid"()) AND ("profiles"."role" = 'admin'::"public"."user_role")))));
+
+
+
+ALTER TABLE "public"."user_code_mapping" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."user_collection" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."user_gifts" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."user_lots" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "user_lots_delete" ON "public"."user_lots" FOR DELETE TO "authenticated" USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "user_lots_insert" ON "public"."user_lots" FOR INSERT TO "authenticated" WITH CHECK ((("user_id" = "auth"."uid"()) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "user_lots_select" ON "public"."user_lots" FOR SELECT TO "authenticated" USING ((("user_id" = "auth"."uid"()) OR ("user_code" = ( SELECT "profiles"."user_code"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))) OR "public"."is_admin"()));
+
+
+
+CREATE POLICY "user_lots_update" ON "public"."user_lots" FOR UPDATE TO "authenticated" USING ((("user_id" = "auth"."uid"()) OR ("user_code" = ( SELECT "profiles"."user_code"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))) OR "public"."is_admin"())) WITH CHECK ((("user_id" = "auth"."uid"()) OR ("user_code" = ( SELECT "profiles"."user_code"
+   FROM "public"."profiles"
+  WHERE ("profiles"."id" = "auth"."uid"()))) OR "public"."is_admin"()));
+
+
+
+ALTER TABLE "public"."user_referrals" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."user_stats" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "user_stats_delete_admin" ON "public"."user_stats" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "user_stats_insert_admin" ON "public"."user_stats" FOR INSERT WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "user_stats_select_admin" ON "public"."user_stats" FOR SELECT USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "user_stats_select_own" ON "public"."user_stats" FOR SELECT USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "user_stats_update_admin" ON "public"."user_stats" FOR UPDATE USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+ALTER TABLE "public"."user_subscriptions" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "user_subscriptions_delete_admin" ON "public"."user_subscriptions" FOR DELETE USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "user_subscriptions_insert_admin" ON "public"."user_subscriptions" FOR INSERT WITH CHECK ("public"."is_admin"());
+
+
+
+CREATE POLICY "user_subscriptions_select_admin" ON "public"."user_subscriptions" FOR SELECT USING ("public"."is_admin"());
+
+
+
+CREATE POLICY "user_subscriptions_select_own" ON "public"."user_subscriptions" FOR SELECT USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "user_subscriptions_update_admin" ON "public"."user_subscriptions" FOR UPDATE USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
+
+
+
+ALTER TABLE "public"."user_tickets" ENABLE ROW LEVEL SECURITY;
+
+
+GRANT USAGE ON SCHEMA "public" TO "postgres";
+GRANT USAGE ON SCHEMA "public" TO "anon";
+GRANT USAGE ON SCHEMA "public" TO "authenticated";
+GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."add_user_lot"("p_user_id" "uuid", "p_lot_id" "text", "p_lot_name" "text", "p_lot_description" "text", "p_lot_rarity" "text", "p_lot_image" "text", "p_lot_value" numeric, "p_lot_type" "text", "p_discount_percent" integer, "p_discount_amount" numeric, "p_min_order_amount" numeric) FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."add_user_lot"("p_user_id" "uuid", "p_lot_id" "text", "p_lot_name" "text", "p_lot_description" "text", "p_lot_rarity" "text", "p_lot_image" "text", "p_lot_value" numeric, "p_lot_type" "text", "p_discount_percent" integer, "p_discount_amount" numeric, "p_min_order_amount" numeric) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."add_user_lot"("p_user_id" "uuid", "p_lot_id" "text", "p_lot_name" "text", "p_lot_description" "text", "p_lot_rarity" "text", "p_lot_image" "text", "p_lot_value" numeric, "p_lot_type" "text", "p_discount_percent" integer, "p_discount_amount" numeric, "p_min_order_amount" numeric) TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."admin_reset_rate_limit"("p_ip_address" "inet", "p_action_type" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."admin_reset_rate_limit"("p_ip_address" "inet", "p_action_type" "text") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."auth_is_admin"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."auth_is_admin"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."auth_is_admin"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."auth_is_pro"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."auth_is_pro"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."auth_is_pro"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."auth_is_producer"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."auth_is_producer"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."auth_is_producer"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."award_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text", "p_source_details" "jsonb") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."award_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text", "p_source_details" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."award_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text", "p_source_details" "jsonb") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."check_is_admin"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."check_is_admin"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."check_is_admin"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."check_rate_limit"("p_ip_address" "inet", "p_action_type" "text", "p_user_id" "uuid", "p_max_attempts" integer, "p_window_seconds" integer, "p_block_duration_seconds" integer) FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."check_rate_limit"("p_ip_address" "inet", "p_action_type" "text", "p_user_id" "uuid", "p_max_attempts" integer, "p_window_seconds" integer, "p_block_duration_seconds" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."check_rate_limit"("p_ip_address" "inet", "p_action_type" "text", "p_user_id" "uuid", "p_max_attempts" integer, "p_window_seconds" integer, "p_block_duration_seconds" integer) TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."create_direct_sale_order"("p_user_id" "uuid", "p_producer_id" "text", "p_items" "jsonb") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."create_direct_sale_order"("p_user_id" "uuid", "p_producer_id" "text", "p_items" "jsonb") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."create_user_code_mapping"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."create_user_code_mapping"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."create_user_code_mapping"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."create_user_data"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."create_user_data"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."create_user_data"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."delete_user_account"("p_confirmation_text" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."delete_user_account"("p_confirmation_text" "text") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."export_user_data"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."export_user_data"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_allowed_mime_types"("p_category" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."get_allowed_mime_types"("p_category" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_allowed_mime_types"("p_category" "text") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."get_current_profile"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."get_current_profile"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_current_profile"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."get_current_user_email"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."get_current_user_email"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_current_user_email"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."get_my_producer_id"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."get_my_producer_id"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_my_producer_id"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."get_ticket_balance"("p_user_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."get_ticket_balance"("p_user_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_ticket_balance"("p_user_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_upload_statistics"("p_days" integer) TO "anon";
+GRANT ALL ON FUNCTION "public"."get_upload_statistics"("p_days" integer) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_upload_statistics"("p_days" integer) TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."get_user_producer_id"() TO "anon";
+GRANT ALL ON FUNCTION "public"."get_user_producer_id"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."get_user_producer_id"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "anon";
+GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."handle_profile_as_producer"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."handle_profile_as_producer"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."handle_profile_as_producer"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."is_admin"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."is_admin"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."is_admin"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."is_pro"() TO "anon";
+GRANT ALL ON FUNCTION "public"."is_pro"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."is_pro"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."is_producer"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."is_producer"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."is_producer"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."is_valid_email"("email_input" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."is_valid_email"("email_input" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."is_valid_email"("email_input" "text") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."link_producer_to_profile"("p_producer_id" "text", "p_profile_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."link_producer_to_profile"("p_producer_id" "text", "p_profile_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."link_producer_to_profile"("p_producer_id" "text", "p_profile_id" "uuid") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."link_user_code"("p_user_code" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."link_user_code"("p_user_code" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."link_user_code"("p_user_code" "text") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."log_product_update"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."log_product_update"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."log_product_update"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."log_security_event"("p_action_type" "text", "p_resource_type" "text", "p_resource_id" "text", "p_success" boolean, "p_error_message" "text", "p_metadata" "jsonb") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."log_security_event"("p_action_type" "text", "p_resource_type" "text", "p_resource_id" "text", "p_success" boolean, "p_error_message" "text", "p_metadata" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."log_security_event"("p_action_type" "text", "p_resource_type" "text", "p_resource_id" "text", "p_success" boolean, "p_error_message" "text", "p_metadata" "jsonb") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."prevent_cdv_identity_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."prevent_cdv_identity_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."prevent_cdv_identity_change"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."prevent_cdv_line_identity_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."prevent_cdv_line_identity_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."prevent_cdv_line_identity_change"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."prevent_device_id_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."prevent_device_id_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."prevent_device_id_change"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."prevent_lmo_identity_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."prevent_lmo_identity_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."prevent_lmo_identity_change"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."prevent_mass_enumeration"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."prevent_mass_enumeration"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."prevent_mass_enumeration"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."prevent_orders_identity_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."prevent_orders_identity_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."prevent_orders_identity_change"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."prevent_producer_profile_change"() TO "anon";
+GRANT ALL ON FUNCTION "public"."prevent_producer_profile_change"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."prevent_producer_profile_change"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."preview_account_deletion"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."preview_account_deletion"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."protect_profile_sensitive_columns"() TO "anon";
+GRANT ALL ON FUNCTION "public"."protect_profile_sensitive_columns"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."protect_profile_sensitive_columns"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."refresh_producers_catalog"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."refresh_producers_catalog"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."refresh_producers_catalog"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."request_account_deletion"("p_user_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."request_account_deletion"("p_user_id" "uuid") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."sanitize_text"("input_text" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."sanitize_text"("input_text" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."sanitize_text"("input_text" "text") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."spend_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text", "p_source_details" "jsonb") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."spend_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text", "p_source_details" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."spend_tickets"("p_user_id" "uuid", "p_amount" integer, "p_source" "text", "p_source_details" "jsonb") TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."sync_direct_sales_availability"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."sync_direct_sales_availability"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."sync_direct_sales_availability"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."sync_order_items_from_orders"() TO "anon";
+GRANT ALL ON FUNCTION "public"."sync_order_items_from_orders"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."sync_order_items_from_orders"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."trigger_refresh_producers_catalog_on_producers"() TO "anon";
+GRANT ALL ON FUNCTION "public"."trigger_refresh_producers_catalog_on_producers"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."trigger_refresh_producers_catalog_on_producers"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."trigger_refresh_producers_catalog_on_products"() TO "anon";
+GRANT ALL ON FUNCTION "public"."trigger_refresh_producers_catalog_on_products"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."trigger_refresh_producers_catalog_on_products"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."update_orders_updated_at"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."update_orders_updated_at"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_pro_orders_updated_at"() TO "anon";
+GRANT ALL ON FUNCTION "public"."update_pro_orders_updated_at"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_pro_orders_updated_at"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_pro_resource_updated_at"() TO "anon";
+GRANT ALL ON FUNCTION "public"."update_pro_resource_updated_at"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_pro_resource_updated_at"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."update_profiles_updated_at"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."update_profiles_updated_at"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."update_user_tickets_timestamp"() TO "anon";
+GRANT ALL ON FUNCTION "public"."update_user_tickets_timestamp"() TO "authenticated";
+GRANT ALL ON FUNCTION "public"."update_user_tickets_timestamp"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."validate_file_upload"("p_bucket_name" "text", "p_file_path" "text", "p_file_size" bigint, "p_mime_type" "text", "p_file_header" "bytea") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."validate_file_upload"("p_bucket_name" "text", "p_file_path" "text", "p_file_size" bigint, "p_mime_type" "text", "p_file_header" "bytea") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."validate_file_upload"("p_bucket_name" "text", "p_file_path" "text", "p_file_size" bigint, "p_mime_type" "text", "p_file_header" "bytea") TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."allowed_mime_types" TO "anon";
+GRANT ALL ON TABLE "public"."allowed_mime_types" TO "authenticated";
+GRANT ALL ON TABLE "public"."allowed_mime_types" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."allowed_mime_types_id_seq" TO "anon";
+GRANT ALL ON SEQUENCE "public"."allowed_mime_types_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."allowed_mime_types_id_seq" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."app_data" TO "anon";
+GRANT ALL ON TABLE "public"."app_data" TO "authenticated";
+GRANT ALL ON TABLE "public"."app_data" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."audit_log_entries" TO "anon";
+GRANT ALL ON TABLE "public"."audit_log_entries" TO "authenticated";
+GRANT ALL ON TABLE "public"."audit_log_entries" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."audit_logs" TO "anon";
+GRANT ALL ON TABLE "public"."audit_logs" TO "authenticated";
+GRANT ALL ON TABLE "public"."audit_logs" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."chat_messages__archived" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."commandes_vente_directe" TO "anon";
+GRANT ALL ON TABLE "public"."commandes_vente_directe" TO "authenticated";
+GRANT ALL ON TABLE "public"."commandes_vente_directe" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."lignes_commande_vente_directe" TO "anon";
+GRANT ALL ON TABLE "public"."lignes_commande_vente_directe" TO "authenticated";
+GRANT ALL ON TABLE "public"."lignes_commande_vente_directe" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."local_market_orders" TO "anon";
+GRANT ALL ON TABLE "public"."local_market_orders" TO "authenticated";
+GRANT ALL ON TABLE "public"."local_market_orders" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."local_market_orders_id_seq" TO "anon";
+GRANT ALL ON SEQUENCE "public"."local_market_orders_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."local_market_orders_id_seq" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."lot_items" TO "anon";
+GRANT ALL ON TABLE "public"."lot_items" TO "authenticated";
+GRANT ALL ON TABLE "public"."lot_items" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."lots" TO "anon";
+GRANT ALL ON TABLE "public"."lots" TO "authenticated";
+GRANT ALL ON TABLE "public"."lots" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."music_tracks" TO "anon";
+GRANT ALL ON TABLE "public"."music_tracks" TO "authenticated";
+GRANT ALL ON TABLE "public"."music_tracks" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."order_items" TO "anon";
+GRANT ALL ON TABLE "public"."order_items" TO "authenticated";
+GRANT ALL ON TABLE "public"."order_items" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."orders" TO "anon";
+GRANT ALL ON TABLE "public"."orders" TO "authenticated";
+GRANT ALL ON TABLE "public"."orders" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pack_items" TO "anon";
+GRANT ALL ON TABLE "public"."pack_items" TO "authenticated";
+GRANT ALL ON TABLE "public"."pack_items" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."packs" TO "anon";
+GRANT ALL ON TABLE "public"."packs" TO "authenticated";
+GRANT ALL ON TABLE "public"."packs" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."perf_metrics" TO "anon";
+GRANT ALL ON TABLE "public"."perf_metrics" TO "authenticated";
+GRANT ALL ON TABLE "public"."perf_metrics" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pro" TO "anon";
+GRANT ALL ON TABLE "public"."pro" TO "authenticated";
+GRANT ALL ON TABLE "public"."pro" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."pro_id_seq" TO "anon";
+GRANT ALL ON SEQUENCE "public"."pro_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."pro_id_seq" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pro_orders" TO "anon";
+GRANT ALL ON TABLE "public"."pro_orders" TO "authenticated";
+GRANT ALL ON TABLE "public"."pro_orders" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pro_resource_categories" TO "anon";
+GRANT ALL ON TABLE "public"."pro_resource_categories" TO "authenticated";
+GRANT ALL ON TABLE "public"."pro_resource_categories" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."pro_resources" TO "anon";
+GRANT ALL ON TABLE "public"."pro_resources" TO "authenticated";
+GRANT ALL ON TABLE "public"."pro_resources" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."producer_chat_messages__archived" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."producer_products" TO "anon";
+GRANT ALL ON TABLE "public"."producer_products" TO "authenticated";
+GRANT ALL ON TABLE "public"."producer_products" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."producers" TO "anon";
+GRANT ALL ON TABLE "public"."producers" TO "authenticated";
+GRANT ALL ON TABLE "public"."producers" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."products" TO "anon";
+GRANT ALL ON TABLE "public"."products" TO "authenticated";
+GRANT ALL ON TABLE "public"."products" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."profiles" TO "anon";
+GRANT ALL ON TABLE "public"."profiles" TO "authenticated";
+GRANT ALL ON TABLE "public"."profiles" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."producers_catalog" TO "anon";
+GRANT ALL ON TABLE "public"."producers_catalog" TO "authenticated";
+GRANT ALL ON TABLE "public"."producers_catalog" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."products_for_clients" TO "anon";
+GRANT ALL ON TABLE "public"."products_for_clients" TO "authenticated";
+GRANT ALL ON TABLE "public"."products_for_clients" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."products_for_pros" TO "anon";
+GRANT ALL ON TABLE "public"."products_for_pros" TO "authenticated";
+GRANT ALL ON TABLE "public"."products_for_pros" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."promo_products" TO "anon";
+GRANT ALL ON TABLE "public"."promo_products" TO "authenticated";
+GRANT ALL ON TABLE "public"."promo_products" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."rate_limit_attempts" TO "anon";
+GRANT ALL ON TABLE "public"."rate_limit_attempts" TO "authenticated";
+GRANT ALL ON TABLE "public"."rate_limit_attempts" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."rate_limit_attempts_id_seq" TO "anon";
+GRANT ALL ON SEQUENCE "public"."rate_limit_attempts_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."rate_limit_attempts_id_seq" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."rate_limits" TO "anon";
+GRANT ALL ON TABLE "public"."rate_limits" TO "authenticated";
+GRANT ALL ON TABLE "public"."rate_limits" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."rgpd_requests" TO "anon";
+GRANT ALL ON TABLE "public"."rgpd_requests" TO "authenticated";
+GRANT ALL ON TABLE "public"."rgpd_requests" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."security_audit_log" TO "anon";
+GRANT ALL ON TABLE "public"."security_audit_log" TO "authenticated";
+GRANT ALL ON TABLE "public"."security_audit_log" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."security_audit_log_id_seq" TO "anon";
+GRANT ALL ON SEQUENCE "public"."security_audit_log_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."security_audit_log_id_seq" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."ticket_transactions" TO "anon";
+GRANT ALL ON TABLE "public"."ticket_transactions" TO "authenticated";
+GRANT ALL ON TABLE "public"."ticket_transactions" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."upload_logs" TO "anon";
+GRANT ALL ON TABLE "public"."upload_logs" TO "authenticated";
+GRANT ALL ON TABLE "public"."upload_logs" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."user_code_mapping" TO "anon";
+GRANT ALL ON TABLE "public"."user_code_mapping" TO "authenticated";
+GRANT ALL ON TABLE "public"."user_code_mapping" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."user_collection" TO "anon";
+GRANT ALL ON TABLE "public"."user_collection" TO "authenticated";
+GRANT ALL ON TABLE "public"."user_collection" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."user_gifts" TO "anon";
+GRANT ALL ON TABLE "public"."user_gifts" TO "authenticated";
+GRANT ALL ON TABLE "public"."user_gifts" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."user_lots" TO "anon";
+GRANT ALL ON TABLE "public"."user_lots" TO "authenticated";
+GRANT ALL ON TABLE "public"."user_lots" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."user_referrals" TO "anon";
+GRANT ALL ON TABLE "public"."user_referrals" TO "authenticated";
+GRANT ALL ON TABLE "public"."user_referrals" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."user_stats" TO "anon";
+GRANT ALL ON TABLE "public"."user_stats" TO "authenticated";
+GRANT ALL ON TABLE "public"."user_stats" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."user_subscriptions" TO "anon";
+GRANT ALL ON TABLE "public"."user_subscriptions" TO "authenticated";
+GRANT ALL ON TABLE "public"."user_subscriptions" TO "service_role";
+
+
+
+GRANT ALL ON TABLE "public"."user_tickets" TO "anon";
+GRANT ALL ON TABLE "public"."user_tickets" TO "authenticated";
+GRANT ALL ON TABLE "public"."user_tickets" TO "service_role";
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "service_role";
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "service_role";
+
+
+
+
+
+
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
+ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
+
+
+
+
+
+
+
