@@ -49,7 +49,7 @@ export default function LoginScreen() {
   const [isRetrying, setIsRetrying] = useState(false);
 
   // Validate form
-  const validateForm = (): boolean => {
+  const validateForm = useCallback((): boolean => {
     const newErrors: Record<string, string> = {};
 
     // Trim and normalize email for validation
@@ -67,10 +67,10 @@ export default function LoginScreen() {
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
+  }, [email, password]);
 
   // Handle password login
-  const handlePasswordLogin = async () => {
+  const handlePasswordLogin = useCallback(async () => {
     if (!validateForm()) return;
 
     // Normalize email before sending
@@ -105,10 +105,10 @@ export default function LoginScreen() {
 
       // Navigate to home on success
       router.replace('/(tabs)');
-    } catch (error) {
+    } catch {
       // Error is handled by the hook
     }
-  };
+  }, [email, password, router, signIn, updateProfile, validateForm]);
 
   // Gérer le retry pour les erreurs réseau
   const handleRetry = useCallback(async () => {
@@ -120,7 +120,7 @@ export default function LoginScreen() {
     } finally {
       setIsRetrying(false);
     }
-  }, [email, password]);
+  }, [handlePasswordLogin, resetSignInError]);
 
   // Renvoyer l'email de confirmation
   const handleResendConfirmation = useCallback(async () => {

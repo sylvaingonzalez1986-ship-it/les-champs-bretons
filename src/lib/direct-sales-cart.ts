@@ -1,17 +1,7 @@
 import { create } from 'zustand';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase-auth';
-import { isSupabaseConfigured, getSupabaseConfig } from './env-validation';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, getValidSession } from '@/lib/supabase-auth';
 import { startMetric, endMetric, incrementMetric } from './perf-metrics';
 import { ensureDeviceId } from './device-id';
-
-// Helper pour obtenir la config de manière sécurisée
-const getConfig = () => {
-  if (isSupabaseConfigured()) {
-    return getSupabaseConfig();
-  }
-  // Fallback sur les imports existants pour compatibilité
-  return { url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY };
-};
 
 const getMutationHeaders = async (accessToken: string) => {
   const deviceId = await ensureDeviceId();
@@ -22,11 +12,70 @@ const getMutationHeaders = async (accessToken: string) => {
   };
 };
 
+const bindDeviceForSession = async (accessToken: string): Promise<boolean> => {
+  try {
+    const deviceId = await ensureDeviceId();
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/bind-device`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'X-Device-Id': deviceId,
+      },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn('[DirectSalesCart] bind-device failed:', response.status, errorText);
+    }
+    return response.ok;
+  } catch {
+    return false;
+  }
+};
+
+const requestCartMutation = async (
+  accessToken: string,
+  payload: Record<string, unknown>,
+  retryAfterBind = true
+): Promise<Response> => {
+  const response = await fetch(
+    `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
+    {
+      method: 'POST',
+      headers: await getMutationHeaders(accessToken),
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (response.status === 409 && retryAfterBind) {
+    let errorCode: string | null = null;
+    try {
+      const data = await response.clone().json();
+      errorCode = typeof data?.error === 'string' ? data.error : null;
+    } catch {
+      errorCode = null;
+    }
+
+    if (errorCode === 'DEVICE_NOT_BOUND' || errorCode === 'DEVICE_MISMATCH') {
+      const bound = await bindDeviceForSession(accessToken);
+      if (bound) {
+        return requestCartMutation(accessToken, payload, false);
+      }
+    }
+  }
+
+  return response;
+};
+
 export interface DirectSalesCartItem {
   id: string;
   product_id: string;
   producer_id: string;
   producer_name: string;
+  producer_shipping_enabled?: boolean | null;
+  producer_shipping_fee?: number | null;
+  producer_shipping_note?: string | null;
   product_name: string;
   price: number;
   quantity: number;
@@ -41,7 +90,18 @@ interface DirectSalesCartApiItem {
   quantity: number;
   created_at: string;
   product: { id: string; name: string; price_public: number; image: string } | { id: string; name: string; price_public: number; image: string }[] | null;
-  producer: { id: string; name: string } | { id: string; name: string }[] | null;
+  producer:
+    | { id: string; name: string; shipping_enabled?: boolean | null; shipping_fee?: number | null; shipping_note?: string | null }
+    | { id: string; name: string; shipping_enabled?: boolean | null; shipping_fee?: number | null; shipping_note?: string | null }[]
+    | null;
+}
+
+export interface DirectSaleProducerOption {
+  producerId: string;
+  deliveryMethod: 'pickup' | 'shipping';
+  deliveryAddress?: string;
+  deliveryInstructions?: string;
+  paymentMethod?: 'payment_link' | 'on_site';
 }
 
 interface DirectSalesCartStore {
@@ -54,7 +114,11 @@ interface DirectSalesCartStore {
   removeItem: (userId: string, accessToken: string, id: string) => Promise<void>;
   updateQuantity: (userId: string, accessToken: string, id: string, quantity: number) => Promise<void>;
   clearCart: (userId: string, accessToken: string) => Promise<void>;
-  createOrders: (userId: string, accessToken: string) => Promise<{ success: boolean; orderIds?: string[]; error?: string }>;
+  createOrders: (
+    userId: string,
+    accessToken: string,
+    options?: { producerOptions?: DirectSaleProducerOption[] }
+  ) => Promise<{ success: boolean; orderIds?: string[]; error?: string }>;
 
   // Computed
   getTotalByProducer: (producerId: string) => number;
@@ -81,7 +145,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
       }
 
       const response = await fetch(
-        `${SUPABASE_URL}/rest/v1/panier_vente_directe?user_id=eq.${userId}&select=id,product_id,producer_id,quantity,created_at,product:products(id,name,price_public,image),producer:producers(id,name)&order=created_at.desc`,
+        `${SUPABASE_URL}/rest/v1/panier_vente_directe?user_id=eq.${userId}&select=id,product_id,producer_id,quantity,created_at,product:products(id,name,price_public,image),producer:producers(id,name,shipping_enabled,shipping_fee,shipping_note)&order=created_at.desc`,
         {
           headers: {
             'Content-Type': 'application/json',
@@ -120,6 +184,9 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
             product_id: item.product_id,
             producer_id: item.producer_id,
             producer_name: producer.name || 'Producteur inconnu',
+            producer_shipping_enabled: producer.shipping_enabled ?? null,
+            producer_shipping_fee: typeof producer.shipping_fee === 'number' ? producer.shipping_fee : null,
+            producer_shipping_note: typeof producer.shipping_note === 'string' ? producer.shipping_note : null,
             product_name: product.name || 'Produit inconnu',
             price: product.price_public,
             quantity: item.quantity,
@@ -147,25 +214,21 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
     try {
       if (!userId) return;
 
-      const response = await fetch(
-        `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
-        {
-          method: 'POST',
-          headers: await getMutationHeaders(accessToken),
-          body: JSON.stringify({
-            action: 'addItem',
-            item: {
-              productId: item.product_id,
-              producerId: item.producer_id,
-              quantity: item.quantity,
-            },
-          }),
-        }
-      );
+      const response = await requestCartMutation(accessToken, {
+        action: 'addItem',
+        item: {
+          productId: item.product_id,
+          producerId: item.producer_id,
+          quantity: item.quantity,
+        },
+      });
 
       if (response.ok) {
         // Recharger le panier
         await get().loadCart(userId, accessToken);
+      } else {
+        const errorText = await response.text();
+        console.warn('[DirectSalesCart] addItem rejected:', response.status, errorText);
       }
     } catch (error) {
       console.warn('[DirectSalesCart] Error adding item:', error);
@@ -177,17 +240,10 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
     try {
       if (!userId) return;
 
-      const response = await fetch(
-        `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
-        {
-          method: 'POST',
-          headers: await getMutationHeaders(accessToken),
-          body: JSON.stringify({
-            action: 'removeItem',
-            itemId: id,
-          }),
-        }
-      );
+      const response = await requestCartMutation(accessToken, {
+        action: 'removeItem',
+        itemId: id,
+      });
 
       // Only update local state if server confirms success
       if (response.ok) {
@@ -213,18 +269,11 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
 
       if (!userId) return;
 
-      const response = await fetch(
-        `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
-        {
-          method: 'POST',
-          headers: await getMutationHeaders(accessToken),
-          body: JSON.stringify({
-            action: 'updateQuantity',
-            itemId: id,
-            quantity,
-          }),
-        }
-      );
+      const response = await requestCartMutation(accessToken, {
+        action: 'updateQuantity',
+        itemId: id,
+        quantity,
+      });
 
       // Only update local state if server confirms success
       if (response.ok) {
@@ -249,16 +298,9 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
     try {
       if (!userId) return;
 
-      const response = await fetch(
-        `${SUPABASE_URL}/functions/v1/direct-sales-cart-mutations`,
-        {
-          method: 'POST',
-          headers: await getMutationHeaders(accessToken),
-          body: JSON.stringify({
-            action: 'clearCart',
-          }),
-        }
-      );
+      const response = await requestCartMutation(accessToken, {
+        action: 'clearCart',
+      });
 
       // Only update local state if server confirms success
       if (response.ok) {
@@ -275,7 +317,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
   },
 
   // Créer les commandes pour chaque producteur
-  createOrders: async (userId: string, accessToken: string) => {
+  createOrders: async (userId: string, accessToken: string, options) => {
     try {
       const metricStart = startMetric('orders.create');
       if (!userId) {
@@ -299,21 +341,48 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
         quantity: item.quantity,
       }));
 
-      const response = await fetch(
+      const producerOptions = Array.isArray(options?.producerOptions) ? options?.producerOptions : [];
+
+      const executeCreateOrders = async (token: string) => fetch(
         `${SUPABASE_URL}/functions/v1/create-direct-sale-orders`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ items }),
+          body: JSON.stringify({ items, producerOptions }),
         }
       );
 
+      let effectiveAccessToken = accessToken;
+      let response = await executeCreateOrders(effectiveAccessToken);
+
+      if (response.status === 401) {
+        const refreshedSession = await getValidSession();
+        if (refreshedSession?.access_token) {
+          effectiveAccessToken = refreshedSession.access_token;
+          response = await executeCreateOrders(effectiveAccessToken);
+        }
+      }
+
       if (!response.ok) {
         const errorText = await response.text();
-        return { success: false, error: errorText || 'Failed to create orders' };
+        let parsedError = '';
+        try {
+          const data = JSON.parse(errorText) as { errors?: { producerId?: string; reason?: string }[]; error?: string };
+          if (Array.isArray(data?.errors) && data.errors.length > 0) {
+            parsedError = data.errors
+              .map((e) => e.reason || 'Erreur commande')
+              .filter(Boolean)
+              .join(' | ');
+          } else if (typeof data?.error === 'string') {
+            parsedError = data.error;
+          }
+        } catch {
+          parsedError = '';
+        }
+        return { success: false, error: parsedError || errorText || 'Failed to create orders' };
       }
 
       const result = await response.json();
@@ -323,7 +392,7 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
 
       // Vider le panier après succès
       if (orderIds.length > 0) {
-        await get().clearCart(userId, accessToken);
+        await get().clearCart(userId, effectiveAccessToken);
       }
 
       return {
@@ -391,3 +460,4 @@ export const useDirectSalesCart = create<DirectSalesCartStore>((set, get) => ({
     });
   },
 }));
+

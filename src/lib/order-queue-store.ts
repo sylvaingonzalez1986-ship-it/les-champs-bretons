@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Order, CustomerInfo } from './store';
+import { Order } from './store';
 import { syncOrderToSupabase, isSupabaseSyncConfigured } from './supabase-sync';
 import NetInfo from '@react-native-community/netinfo';
 

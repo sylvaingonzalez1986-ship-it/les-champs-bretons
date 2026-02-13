@@ -15,6 +15,13 @@ function jsonResponse(payload: unknown, status = 200, corsHeaders: Record<string
   });
 }
 
+function logDatabaseError(stage: string, error: unknown, userId: string) {
+  console.error(`[bind-device] ${stage} failed`, {
+    userId,
+    error,
+  });
+}
+
 function normalizeDeviceId(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -86,9 +93,10 @@ serve(async (req) => {
     .from('profiles')
     .select('device_id')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
-  if (profileError) {
+  if (profileError && profileError.code !== 'PGRST116') {
+    logDatabaseError('profile_lookup', profileError, userId);
     return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
   }
 
@@ -97,7 +105,67 @@ serve(async (req) => {
   }
 
   const now = new Date().toISOString();
-  const updatePayload = profile?.device_id
+  if (!profile) {
+    const { error: insertError } = await serviceClient
+      .from('profiles')
+      .insert({
+        id: userId,
+        email: userData.user.email ?? null,
+        full_name: userData.user.user_metadata?.full_name ?? null,
+        role: 'client',
+        device_id: deviceId,
+        device_bound_at: now,
+        last_device_seen_at: now,
+      });
+
+    if (insertError) {
+      if (insertError.code === '23505') {
+        const { data: conflictProfile, error: conflictProfileError } = await serviceClient
+          .from('profiles')
+          .select('device_id')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (conflictProfileError) {
+          logDatabaseError('profile_lookup_after_conflict', conflictProfileError, userId);
+          return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
+        }
+
+        if (!conflictProfile?.device_id) {
+          const { error: conflictUpdateError } = await serviceClient
+            .from('profiles')
+            .update({ device_id: deviceId, device_bound_at: now, last_device_seen_at: now })
+            .eq('id', userId);
+
+          if (conflictUpdateError) {
+            logDatabaseError('profile_update_after_conflict', conflictUpdateError, userId);
+            return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
+          }
+        } else if (conflictProfile.device_id !== deviceId) {
+          return jsonResponse({ error: 'DEVICE_MISMATCH' }, 409, responseCorsHeaders);
+        } else {
+          const { error: touchError } = await serviceClient
+            .from('profiles')
+            .update({ last_device_seen_at: now })
+            .eq('id', userId);
+
+          if (touchError) {
+            logDatabaseError('profile_touch_after_conflict', touchError, userId);
+            return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
+          }
+        }
+
+        return jsonResponse({ success: true }, 200, responseCorsHeaders);
+      }
+
+      logDatabaseError('profile_insert', insertError, userId);
+      return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
+    }
+
+    return jsonResponse({ success: true }, 200, responseCorsHeaders);
+  }
+
+  const updatePayload = profile.device_id
     ? { last_device_seen_at: now }
     : { device_id: deviceId, device_bound_at: now, last_device_seen_at: now };
 
@@ -107,6 +175,7 @@ serve(async (req) => {
     .eq('id', userId);
 
   if (updateError) {
+    logDatabaseError('profile_update', updateError, userId);
     return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
   }
 

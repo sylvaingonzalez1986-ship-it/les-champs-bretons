@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Pressable, ScrollView, Image, Modal, Alert, ActivityIndicator } from 'react-native';
+import { View, Pressable, ScrollView, Image, Modal, ActivityIndicator } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { User, Package, Award, Settings, ChevronRight, Leaf, Camera, Lock, LogOut, X, Ticket, Check, Grid3X3, ChevronDown, ChevronUp, Mail, Phone, MapPin, Home, ShoppingBag, Clock, Truck, CreditCard, XCircle, Copy, ExternalLink, Gift, RefreshCw, Shield, Building2, FileText, UserCircle, Users } from 'lucide-react-native';
+import { User, Package, Settings, ChevronRight, Camera, Lock, LogOut, X, Ticket, Check, Grid3X3, ChevronDown, ChevronUp, Mail, Phone, MapPin, Home, ShoppingBag, Clock, Truck, CreditCard, XCircle, Copy, ExternalLink, Gift, RefreshCw, Shield, Building2, FileText, UserCircle, Users, BarChart3 } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import { getSafeMailtoUrl, getSafeTelUrl, safeOpenExternalUrl } from '@/lib/safe-linking';
 import * as ImagePicker from 'expo-image-picker';
@@ -26,17 +26,14 @@ import { ImageCropper } from '@/components/ImageCropper';
 import { useAuth, useUserIdentity, usePermissions } from '@/lib/useAuth';
 import { COLORS } from '@/lib/colors';
 import { USER_ROLE_LABELS, USER_ROLE_COLORS, USER_CATEGORY_LABELS, UserRole } from '@/lib/supabase-users';
-import { ClientProfileForm } from '@/components/ClientProfileForm';
 import { ProducerProfileForm } from '@/components/ProducerProfileForm';
-import { ProProfileForm } from '@/components/ProProfileForm';
-import { UserProfile } from '@/lib/supabase-auth';
 import { AdminDashboard } from '@/components/AdminDashboard';
 import { Toast, useToast } from '@/components/Toast';
 import { useAdminOrdersQuery, useMyProducerQuery, useProducerLocalOrdersQuery, useProducerProOrdersQuery } from '@/api/orders';
-import { useLocalMarketOrdersInfinite } from '@/api/local-market';
+import { useDirectSaleOrdersInfinite, useLocalMarketOrdersInfinite, useProducerDirectSaleOrdersInfinite, type DirectSaleOrder } from '@/api/local-market';
+import { getStatusColor, getStatusLabel, type LocalMarketOrder } from '@/lib/local-market-orders';
 
 const PROFILE_IMAGE_KEY = 'user-profile-image';
-const SIGNAL_GROUP_URL = 'https://signal.group/#CjQKIL5CUggt4OrebPgc7zjsc_h_AzrSw8I6k3QPM2l4MTkAEhDN8aN4Rmj_6F7NA8Dkved1';
 
 interface MenuItemProps {
   icon: React.ReactNode;
@@ -59,6 +56,29 @@ const MenuItem = ({ icon, label, value, onPress }: MenuItemProps) => (
   </Pressable>
 );
 
+function getDirectSaleStatusLabel(status: DirectSaleOrder['statut']): string {
+  switch (status) {
+    case 'en_attente':
+      return 'En attente';
+    case 'confirmee':
+      return 'Confirmee';
+    case 'prete':
+      return 'Prete';
+    case 'recuperee':
+      return 'Recuperee';
+    case 'annulee':
+      return 'Annulee';
+    default:
+      return status;
+  }
+}
+
+function getDirectSalePaymentLabel(method?: DirectSaleOrder['payment_method'] | null): string {
+  if (method === 'payment_link') return 'Lien de paiement';
+  if (method === 'on_site') return 'Paiement sur place';
+  return '-';
+}
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -69,6 +89,8 @@ export default function ProfileScreen() {
   const [copiedTrackingId, setCopiedTrackingId] = useState<string | null>(null);
   const [showProducerClients, setShowProducerClients] = useState(false);
   const [showProducerProClients, setShowProducerProClients] = useState(false);
+  const [selectedDirectSaleOrder, setSelectedDirectSaleOrder] = useState<DirectSaleOrder | null>(null);
+  const [selectedLocalMarketOrder, setSelectedLocalMarketOrder] = useState<LocalMarketOrder | null>(null);
 
   // Toast pour les feedbacks
   const { toast, showToast, hideToast } = useToast();
@@ -78,7 +100,6 @@ export default function ProfileScreen() {
   const [imageToCrop, setImageToCrop] = useState('');
 
   const collection = useCollectionStore((s) => s.collection);
-  const totalSpins = useCollectionStore((s) => s.totalSpins);
   const addToCollection = useCollectionStore((s) => s.addToCollection);
 
   // Referral
@@ -103,8 +124,8 @@ export default function ProfileScreen() {
   const isProfileComplete = useCustomerInfoStore((s) => s.isProfileComplete);
 
   // Supabase Auth
-  const { isAuthenticated, session, user, profile, signOut, isSigningOut, isLoading: isLoadingAuth, updateProfile, isUpdatingProfile } = useAuth();
-  const { authMode, userCode: supabaseUserCode, role, fullName: authFullName, email: authEmail } = useUserIdentity();
+  const { isAuthenticated, session, user, profile, signOut, isSigningOut, updateProfile, isUpdatingProfile } = useAuth();
+  const { role, fullName: authFullName, email: authEmail } = useUserIdentity();
   const { isPro, isProducer, isAdmin: isAuthAdmin } = usePermissions();
   const [showAuthSection, setShowAuthSection] = useState(false);
   const [showAdminDashboard, setShowAdminDashboard] = useState(false);
@@ -134,7 +155,7 @@ export default function ProfileScreen() {
     if (isProducerProfileIncomplete && !showProducerProfile) {
       setShowProducerProfile(true);
     }
-  }, [isProducerProfileIncomplete]);
+  }, [isProducerProfileIncomplete, showProducerProfile]);
 
   // Fallback: find producer in local store by email (for display in stats)
   const linkedProducerFromStore = isProducer && authEmail
@@ -165,14 +186,48 @@ export default function ProfileScreen() {
     isLoading: isProducerLocalOrdersLoading,
     refetch: refetchProducerLocalOrders,
   } = useProducerLocalOrdersQuery(producerIdForOrders, session?.access_token ?? '');
+  const {
+    data: producerDirectSalesPages,
+    isFetching: isProducerDirectSalesFetching,
+    refetch: refetchProducerDirectSales,
+  } = useProducerDirectSaleOrdersInfinite(
+    producerIdForOrders || undefined,
+    session?.access_token,
+    200,
+    !!producerIdForOrders && !!session?.access_token && isProducer
+  );
 
-  const { refetch: refetchLocalMarketOrders } = useLocalMarketOrdersInfinite(
+  const {
+    data: localMarketOrdersPages,
+    isFetching: isLocalMarketOrdersFetching,
+    refetch: refetchLocalMarketOrders,
+  } = useLocalMarketOrdersInfinite(
+    ordersEnabled ? session?.user?.id : undefined,
+    ordersEnabled ? session?.access_token : undefined,
+    10
+  );
+  const {
+    data: directSaleOrdersPages,
+    isFetching: isDirectSaleOrdersFetching,
+    refetch: refetchDirectSaleOrders,
+  } = useDirectSaleOrdersInfinite(
     ordersEnabled ? session?.user?.id : undefined,
     ordersEnabled ? session?.access_token : undefined,
     10
   );
 
-  const ordersLoading = isManualRefresh || isUserOrdersFetching || isProducerOrdersFetching || isProducerLocalOrdersLoading;
+  const ordersLoading =
+    isManualRefresh ||
+    isUserOrdersFetching ||
+    isProducerOrdersFetching ||
+    isProducerLocalOrdersLoading ||
+    isProducerDirectSalesFetching ||
+    isLocalMarketOrdersFetching ||
+    isDirectSaleOrdersFetching;
+  const producerDirectSaleOrders = useMemo(
+    () => (producerDirectSalesPages?.pages ?? []).flat(),
+    [producerDirectSalesPages]
+  );
 
   const ordersFromQuery = useMemo(() => {
     if (isProducer) {
@@ -206,6 +261,33 @@ export default function ProfileScreen() {
         order.items.some((item) => item.producerId === myProducer.id)
       )
     : allOrders; // RLS filtre déjà par user_id
+  const localMarketOrders = useMemo(
+    () => (localMarketOrdersPages?.pages ?? []).flat(),
+    [localMarketOrdersPages]
+  );
+  const sortedMyOrders = useMemo(
+    () => [...myOrders].sort((a, b) => b.createdAt - a.createdAt),
+    [myOrders]
+  );
+  const sortedLocalMarketOrders = useMemo(
+    () => [...localMarketOrders].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    ),
+    [localMarketOrders]
+  );
+  const directSaleOrders = useMemo(
+    () => (directSaleOrdersPages?.pages ?? []).flat(),
+    [directSaleOrdersPages]
+  );
+  const sortedDirectSaleOrders = useMemo(
+    () => [...directSaleOrders].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    ),
+    [directSaleOrders]
+  );
+  const totalClientOrders = isProducer
+    ? myOrders.length
+    : myOrders.length + sortedLocalMarketOrders.length + sortedDirectSaleOrders.length;
 
   const producerClientListMax = 8;
 
@@ -240,8 +322,20 @@ export default function ProfileScreen() {
       entries.set(key, { name, email: order.customer_email ?? undefined, phone });
     });
 
+    producerDirectSaleOrders.forEach((order) => {
+      const customer = Array.isArray(order.customer) ? order.customer[0] : order.customer;
+      const email = customer?.email?.toLowerCase();
+      const phone = customer?.phone?.trim() ?? undefined;
+      const fullName = `${customer?.first_name ?? ''} ${customer?.last_name ?? ''}`.trim();
+      const name = fullName || customer?.email || 'Client particulier';
+      const key = email || phone || name.toLowerCase();
+
+      if (!key || entries.has(key)) return;
+      entries.set(key, { name, email: customer?.email ?? undefined, phone });
+    });
+
     return Array.from(entries.values());
-  }, [producerLocalOrders]);
+  }, [producerLocalOrders, producerDirectSaleOrders]);
 
   const handleManualRefresh = useCallback(async () => {
     if (!isSupabaseSyncConfigured()) {
@@ -258,17 +352,22 @@ export default function ProfileScreen() {
       let refreshedOrdersCount = 0;
 
       if (isProducer) {
-        const [proResult, localResult] = await Promise.all([
+        const [proResult, localResult, directResult] = await Promise.all([
           refetchProducerOrders(),
           refetchProducerLocalOrders(),
+          refetchProducerDirectSales(),
         ]);
-        refreshedOrdersCount = (proResult.data?.length ?? 0) + (localResult.data?.length ?? 0);
+        const directSaleCount = (directResult.data?.pages ?? []).flat().length;
+        refreshedOrdersCount = (proResult.data?.length ?? 0) + (localResult.data?.length ?? 0) + directSaleCount;
       } else {
-        const [ordersResult] = await Promise.all([
+        const [ordersResult, localResult, directResult] = await Promise.all([
           refetchUserOrders(),
           refetchLocalMarketOrders(),
+          refetchDirectSaleOrders(),
         ]);
-        refreshedOrdersCount = ordersResult.data?.length ?? 0;
+        const localCount = (localResult.data?.pages ?? []).flat().length;
+        const directCount = (directResult.data?.pages ?? []).flat().length;
+        refreshedOrdersCount = (ordersResult.data?.length ?? 0) + localCount + directCount;
       }
 
       showToast(
@@ -286,8 +385,10 @@ export default function ProfileScreen() {
     producerIdForOrders,
     refetchProducerOrders,
     refetchProducerLocalOrders,
+    refetchProducerDirectSales,
     refetchUserOrders,
     refetchLocalMarketOrders,
+    refetchDirectSaleOrders,
     showToast,
   ]);
 
@@ -339,8 +440,6 @@ export default function ProfileScreen() {
 
   // Subscription
   const tickets = useSubscriptionStore((s) => s.tickets);
-  const subscription = useSubscriptionStore((s) => s.subscription);
-  const setSubscription = useSubscriptionStore((s) => s.setSubscription);
 
   // Load saved profile image on mount
   useEffect(() => {
@@ -396,13 +495,6 @@ export default function ProfileScreen() {
       console.warn('Error saving image:', error);
     }
   };
-
-  const handleOpenSignalGroup = useCallback(async () => {
-    const opened = await safeOpenExternalUrl(SIGNAL_GROUP_URL);
-    if (!opened) {
-      showToast('Impossible d\'ouvrir le lien Signal', 'error');
-    }
-  }, [showToast]);
 
   // Generate user code on mount if not exists
   useEffect(() => {
@@ -481,11 +573,6 @@ export default function ProfileScreen() {
 
   // Calculate stats
   const totalProducts = collection.length;
-  const legendaryCount = collection.filter((item) => item.product.rarity === 'legendary').length;
-  const platinumCount = collection.filter((item) => item.product.rarity === 'platinum').length;
-  const epicCount = collection.filter((item) => item.product.rarity === 'epic').length;
-  const totalValue = collection.reduce((sum, item) => sum + item.product.value, 0);
-
   // Filter orders by period for Pro financial summary
   const getFilteredOrdersForPro = () => {
     const now = new Date();
@@ -536,6 +623,92 @@ export default function ProfileScreen() {
   };
 
   const proFinancials = calculateProFinancials();
+
+  // Producer dashboard stats: order count + CA by category (local vs pro)
+  const producerDashboardStats = useMemo(() => {
+    if (!isProducer || !myProducer) return null;
+
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfQuarter = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1).getTime();
+    const startOfYear = new Date(now.getFullYear(), 0, 1).getTime();
+
+    const filterByPeriod = (timestamp: number) => {
+      if (proPeriodFilter === 'all') return true;
+      if (proPeriodFilter === 'day') return timestamp >= startOfDay;
+      if (proPeriodFilter === 'quarter') return timestamp >= startOfQuarter;
+      if (proPeriodFilter === 'year') return timestamp >= startOfYear;
+      return true;
+    };
+
+    // Build product_id -> tvaRate map from producer's products
+    const productTvaMap = new Map<string, number>();
+    if (linkedProducerFromStore?.products) {
+      linkedProducerFromStore.products.forEach((p) => {
+        productTvaMap.set(p.id, p.tvaRate ?? 20);
+      });
+    }
+
+    // Local orders - TVA from product's actual tvaRate
+    const filteredLocal = producerLocalOrders.filter((o) => filterByPeriod(new Date(o.created_at).getTime()));
+    const filteredDirectLocal = producerDirectSaleOrders.filter((o) => filterByPeriod(new Date(o.created_at).getTime()));
+    const localOrderCount = filteredLocal.length + filteredDirectLocal.length;
+    let localCATTC = 0;
+    let localTVA = 0;
+    filteredLocal.forEach((o) => {
+      const ttc = o.total_amount ?? 0;
+      localCATTC += ttc;
+      const tvaRate = productTvaMap.get(o.product_id) ?? 20;
+      localTVA += ttc - (ttc / (1 + tvaRate / 100));
+    });
+    filteredDirectLocal.forEach((o) => {
+      const lines = Array.isArray(o.lines) ? o.lines : [];
+      if (lines.length > 0) {
+        lines.forEach((line) => {
+          const lineTotal = Number(line.sous_total) || 0;
+          const tvaRate = productTvaMap.get(line.product_id) ?? 20;
+          localCATTC += lineTotal;
+          localTVA += lineTotal - (lineTotal / (1 + tvaRate / 100));
+        });
+      } else {
+        const total = Number(o.total) || 0;
+        localCATTC += total;
+        localTVA += total - (total / 1.2);
+      }
+    });
+    const localCAHT = localCATTC - localTVA;
+
+    // Pro orders
+    const filteredPro = (producerOrders ?? []).filter((o) => filterByPeriod(o.createdAt));
+    let proCATTC = 0;
+    let proTVA = 0;
+    filteredPro.forEach((order) => {
+      order.items.forEach((item) => {
+        if (item.producerId === myProducer.id) {
+          proCATTC += item.totalPrice;
+          const tvaRate = item.tvaRate ?? 20;
+          proTVA += item.totalPrice - (item.totalPrice / (1 + tvaRate / 100));
+        }
+      });
+    });
+    const proOrderCount = filteredPro.length;
+    const proCAHT = proCATTC - proTVA;
+
+    return {
+      localOrderCount,
+      proOrderCount,
+      totalOrderCount: localOrderCount + proOrderCount,
+      localCATTC,
+      localCAHT,
+      localTVA,
+      proCATTC,
+      proCAHT,
+      proTVA,
+      totalCATTC: localCATTC + proCATTC,
+      totalCAHT: localCAHT + proCAHT,
+      totalTVA: localTVA + proTVA,
+    };
+  }, [isProducer, myProducer, linkedProducerFromStore, producerLocalOrders, producerDirectSaleOrders, producerOrders, proPeriodFilter]);
 
   return (
     <View className="flex-1" style={{ paddingTop: insets.top, backgroundColor: COLORS.background.nightSky }}>
@@ -695,32 +868,13 @@ export default function ProfileScreen() {
                   {/* Edit Profile Button */}
                   <Pressable
                     onPress={() => router.push('/edit-profile')}
-                    className="bg-emerald-600/20 rounded-xl py-3 flex-row items-center justify-center mb-3 active:opacity-70"
+                    className="bg-emerald-600/20 rounded-xl py-3 flex-row items-center justify-center active:opacity-70"
                     style={{ borderWidth: 1, borderColor: '#10B98140' }}
                   >
                     <FileText size={18} color="#10B981" />
                     <Text className="text-emerald-400 font-medium ml-2">
                       Modifier mon profil
                     </Text>
-                  </Pressable>
-
-                  {/* Logout Button */}
-                  <Pressable
-                    onPress={() => signOut()}
-                    disabled={isSigningOut}
-                    className="bg-red-600/20 rounded-xl py-3 flex-row items-center justify-center active:opacity-70"
-                    style={{ borderWidth: 1, borderColor: '#EF444440' }}
-                  >
-                    {isSigningOut ? (
-                      <ActivityIndicator size="small" color="#EF4444" />
-                    ) : (
-                      <>
-                        <LogOut size={18} color="#EF4444" />
-                        <Text className="text-red-400 font-medium ml-2">
-                          Se déconnecter
-                        </Text>
-                      </>
-                    )}
                   </Pressable>
                 </>
               ) : (
@@ -979,9 +1133,9 @@ export default function ProfileScreen() {
               <View className="ml-3 flex-1">
                 <Text className="text-white font-semibold">Mes commandes</Text>
                 <Text className="text-sm text-blue-400">
-                  {myOrders.length === 0
+                  {totalClientOrders === 0
                     ? 'Aucune commande'
-                    : `${myOrders.length} commande${myOrders.length > 1 ? 's' : ''}`}
+                    : `${totalClientOrders} commande${totalClientOrders > 1 ? 's' : ''}`}
                 </Text>
               </View>
             </View>
@@ -989,9 +1143,9 @@ export default function ProfileScreen() {
               {ordersLoading && (
                 <ActivityIndicator size="small" color="#3B82F6" style={{ marginRight: 8 }} />
               )}
-              {myOrders.length > 0 && (
+              {totalClientOrders > 0 && (
                 <View className="mr-2 px-2 py-1 rounded-full bg-blue-500">
-                  <Text className="text-white text-xs font-bold">{myOrders.length}</Text>
+                  <Text className="text-white text-xs font-bold">{totalClientOrders}</Text>
                 </View>
               )}
               {showOrders ? (
@@ -1126,7 +1280,7 @@ export default function ProfileScreen() {
                 </View>
               )}
 
-              {myOrders.length === 0 ? (
+              {totalClientOrders === 0 ? (
                 <View className="bg-white/5 rounded-xl p-6 items-center border border-white/10">
                   <ShoppingBag size={40} color="#6B7280" />
                   <Text className="text-gray-400 text-center mt-3">
@@ -1136,9 +1290,8 @@ export default function ProfileScreen() {
                   </Text>
                 </View>
               ) : (
-                myOrders
-                  .sort((a, b) => b.createdAt - a.createdAt)
-                  .map((order) => {
+                <>
+                {sortedMyOrders.map((order) => {
                     const statusConfig = ORDER_STATUS_CONFIG[order.status];
                     const orderDate = new Date(order.createdAt).toLocaleDateString('fr-FR', {
                       day: 'numeric',
@@ -1342,39 +1495,113 @@ export default function ProfileScreen() {
                         </View>
                       </View>
                     );
-                  })
+                  })}
+                {sortedDirectSaleOrders.length > 0 && (
+                  <View className="mb-2">
+                    <Text className="text-orange-300 text-xs font-bold mb-2 uppercase tracking-widest">
+                      Marche local (panier)
+                    </Text>
+                  </View>
+                )}
+                {sortedDirectSaleOrders.map((order) => {
+                  const orderDate = new Date(order.created_at).toLocaleDateString('fr-FR', {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                  });
+                  const producerEntry = Array.isArray(order.producer) ? order.producer[0] : order.producer;
+                  const producerName = producerEntry?.name || 'Producteur';
+                  const lines = Array.isArray(order.lines) ? order.lines : [];
+                  const itemCount = lines.reduce((sum, line) => sum + (line.quantite ?? 0), 0);
+                  const status = getDirectSaleStatusLabel(order.statut);
+
+                  return (
+                    <Pressable
+                      key={`direct-sale-${order.id}`}
+                      onPress={() => setSelectedDirectSaleOrder(order)}
+                      className="bg-white/5 rounded-xl p-4 mb-3 border border-orange-700/30"
+                    >
+                      <View className="flex-row items-center justify-between mb-2">
+                        <Text className="font-medium text-sm text-orange-300">{status}</Text>
+                        <Text className="text-gray-500 text-xs">{orderDate}</Text>
+                      </View>
+                      <Text className="text-white font-semibold mb-1">{producerName}</Text>
+                      <Text className="text-gray-400 text-xs mb-2">
+                        {itemCount} article{itemCount > 1 ? 's' : ''} • Commande #{order.pickup_code || order.id.slice(0, 8).toUpperCase()}
+                      </Text>
+                      {(order.delivery_method ?? 'pickup') === 'pickup' && !!order.pickup_code && (
+                        <View className="mb-2 rounded-lg px-3 py-2 border border-orange-500/30 bg-orange-500/10">
+                          <Text className="text-[11px] text-orange-200">Code de retrait</Text>
+                          <Text className="text-orange-300 font-bold tracking-widest">
+                            {order.pickup_code}
+                          </Text>
+                        </View>
+                      )}
+                      <View className="flex-row items-center justify-between">
+                        <Text className="text-gray-400 text-xs">
+                          {order.delivery_method === 'shipping' ? 'Livraison a domicile' : 'Retrait sur place'}
+                        </Text>
+                        <Text className="text-orange-300 font-bold">
+                          {(Number(order.total) || 0).toFixed(2)}€
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+                {sortedLocalMarketOrders.length > 0 && (
+                  <View className="mb-2">
+                    <Text className="text-orange-300 text-xs font-bold mb-2 uppercase tracking-widest">
+                      Marché Local
+                    </Text>
+                  </View>
+                )}
+                {sortedLocalMarketOrders.map((order) => {
+                  const orderDate = new Date(order.created_at).toLocaleDateString('fr-FR', {
+                    day: 'numeric',
+                    month: 'short',
+                    year: 'numeric',
+                  });
+                  const statusColor = getStatusColor(order.status);
+                  const statusLabel = getStatusLabel(order.status);
+                  return (
+                    <Pressable
+                      key={`local-${order.id}`}
+                      onPress={() => setSelectedLocalMarketOrder(order)}
+                      className="bg-white/5 rounded-xl p-4 mb-3 border"
+                      style={{ borderColor: `${statusColor}40` }}
+                    >
+                      <View className="flex-row items-center justify-between mb-2">
+                        <View className="flex-row items-center">
+                          <MapPin size={16} color={statusColor} />
+                          <Text className="font-medium text-sm ml-2" style={{ color: statusColor }}>
+                            {statusLabel}
+                          </Text>
+                        </View>
+                        <Text className="text-gray-500 text-xs">{orderDate}</Text>
+                      </View>
+                      <Text className="text-white font-semibold mb-1">{order.product_name}</Text>
+                      <Text className="text-gray-400 text-xs mb-2">
+                        {order.producer_name} • Qté {order.quantity}
+                      </Text>
+                      <View className="flex-row items-center justify-between">
+                        <Text className="text-gray-400 text-xs">
+                          {order.delivery_method === 'shipping' ? 'Livraison à domicile' : 'Retrait sur place'}
+                        </Text>
+                        <Text className="text-orange-300 font-bold">
+                          {(order.total_amount ?? 0).toFixed(2)}€
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+                </>
               )}
             </View>
           )}
         </View>
         )}
 
-        {/* Local Market Orders Section - FOR CLIENTS */}
-        {!isProducer && isAuthenticated && (
-          <View className="mx-6 mb-6">
-            <Pressable
-              onPress={() => router.push('/mes-commandes-marche-local')}
-              className="flex-row items-center justify-between p-4 rounded-xl border bg-orange-900/30 border-orange-700/50 active:opacity-70"
-            >
-              <View className="flex-row items-center flex-1">
-                <View className="w-10 h-10 rounded-full items-center justify-center bg-orange-600/30">
-                  <MapPin size={20} color="#F97316" />
-                </View>
-                <View className="ml-3 flex-1">
-                  <Text className="text-white font-semibold">
-                    Marché Local
-                  </Text>
-                  <Text className="text-orange-400 text-sm">
-                    Commandes directes producteurs
-                  </Text>
-                </View>
-              </View>
-              <ChevronRight size={20} color="#F97316" />
-            </Pressable>
-          </View>
-        )}
-
-        {/* PRODUCER SECTION - Simplified Accès rapide */}
+                {/* PRODUCER SECTION - Simplified Accès rapide */}
         {isProducer && isAuthenticated && (
           <View className="mx-6 mb-6">
             <View className="bg-amber-900/15 rounded-2xl p-4 border border-amber-600/40">
@@ -1427,29 +1654,13 @@ export default function ProfileScreen() {
                         <Text className="text-amber-400 text-xs font-medium">Producteur</Text>
                       </View>
                     </View>
-                    <View className="flex-row">
-                      <Pressable
-                        onPress={() => router.push('/edit-profile')}
-                        className="flex-1 bg-amber-600/20 rounded-lg py-2 flex-row items-center justify-center mr-1 active:opacity-70"
-                      >
-                        <FileText size={12} color="#F59E0B" />
-                        <Text className="text-amber-300 text-xs font-medium ml-1">Modifier</Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => signOut()}
-                        disabled={isSigningOut}
-                        className="flex-1 bg-red-600/15 rounded-lg py-2 flex-row items-center justify-center ml-1 active:opacity-70"
-                      >
-                        {isSigningOut ? (
-                          <ActivityIndicator size="small" color="#EF4444" />
-                        ) : (
-                          <>
-                            <LogOut size={12} color="#EF4444" />
-                            <Text className="text-red-400 text-xs font-medium ml-1">Déconnexion</Text>
-                          </>
-                        )}
-                      </Pressable>
-                    </View>
+                    <Pressable
+                      onPress={() => router.push('/edit-profile')}
+                      className="bg-amber-600/20 rounded-lg py-2 flex-row items-center justify-center active:opacity-70"
+                    >
+                      <FileText size={12} color="#F59E0B" />
+                      <Text className="text-amber-300 text-xs font-medium ml-1">Modifier</Text>
+                    </Pressable>
                   </View>
 
                   <ProducerProfileForm
@@ -1479,6 +1690,151 @@ export default function ProfileScreen() {
                     isSaving={isUpdatingProfile}
                   />
                 </View>
+              )}
+
+              {/* Dashboard commandes & CA producteur */}
+              {producerDashboardStats && (
+              <View className="mt-2 bg-emerald-950/30 rounded-xl p-3 border border-emerald-700/40">
+                <View className="flex-row items-center mb-2">
+                  <View className="w-7 h-7 rounded-full items-center justify-center bg-emerald-500/30">
+                    <ShoppingBag size={14} color="#10B981" />
+                  </View>
+                  <Text className="text-emerald-100 text-sm font-semibold ml-2">Commandes & CA</Text>
+                </View>
+
+                {/* Period Filter */}
+                <View className="flex-row mb-3" style={{ gap: 4 }}>
+                  {[
+                    { key: 'day' as const, label: 'Jour' },
+                    { key: 'quarter' as const, label: 'Trim.' },
+                    { key: 'year' as const, label: 'Année' },
+                    { key: 'all' as const, label: 'Total' },
+                  ].map((period) => (
+                    <Pressable
+                      key={period.key}
+                      onPress={() => setProPeriodFilter(period.key)}
+                      className="flex-1 py-1.5 rounded-lg items-center"
+                      style={{
+                        backgroundColor: proPeriodFilter === period.key
+                          ? '#10B981'
+                          : 'rgba(16, 185, 129, 0.15)',
+                        borderWidth: 1,
+                        borderColor: proPeriodFilter === period.key
+                          ? '#10B981'
+                          : 'rgba(16, 185, 129, 0.3)',
+                      }}
+                    >
+                      <Text
+                        className="text-[10px] font-medium"
+                        style={{
+                          color: proPeriodFilter === period.key ? '#fff' : '#10B981',
+                        }}
+                      >
+                        {period.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+
+                {/* Order Counts */}
+                <View className="flex-row mb-2" style={{ gap: 6 }}>
+                  <View className="flex-1 bg-white/10 rounded-lg p-2 items-center border border-white/10">
+                    <Text className="text-white text-lg font-bold">{producerDashboardStats.totalOrderCount}</Text>
+                    <Text className="text-emerald-200 text-[10px]">Commandes</Text>
+                  </View>
+                  <View className="flex-1 bg-orange-500/10 rounded-lg p-2 items-center border border-orange-500/20">
+                    <Text className="text-orange-300 text-lg font-bold">{producerDashboardStats.localOrderCount}</Text>
+                    <Text className="text-orange-200 text-[10px]">Particuliers</Text>
+                  </View>
+                  <View className="flex-1 bg-indigo-500/10 rounded-lg p-2 items-center border border-indigo-500/20">
+                    <Text className="text-indigo-300 text-lg font-bold">{producerDashboardStats.proOrderCount}</Text>
+                    <Text className="text-indigo-200 text-[10px]">Pro</Text>
+                  </View>
+                </View>
+
+                {/* CA Breakdown by category */}
+                <View className="bg-white/5 rounded-lg p-2.5 mb-2">
+                  {/* Particuliers */}
+                  <View className="flex-row items-center mb-1">
+                    <View className="w-2 h-2 rounded-full bg-orange-400 mr-1.5" />
+                    <Text className="text-orange-300 text-xs font-semibold">Particuliers</Text>
+                  </View>
+                  <View className="flex-row justify-between items-center mb-0.5 ml-3.5">
+                    <Text className="text-gray-400 text-[11px]">CA HT</Text>
+                    <Text className="text-orange-200 text-xs font-medium">
+                      {producerDashboardStats.localCAHT.toFixed(2)}€
+                    </Text>
+                  </View>
+                  <View className="flex-row justify-between items-center mb-0.5 ml-3.5">
+                    <Text className="text-gray-400 text-[11px]">TVA collectée</Text>
+                    <Text className="text-amber-400 text-xs">
+                      {producerDashboardStats.localTVA.toFixed(2)}€
+                    </Text>
+                  </View>
+                  <View className="flex-row justify-between items-center mb-2 ml-3.5">
+                    <Text className="text-gray-400 text-[11px]">CA TTC</Text>
+                    <Text className="text-orange-300 font-bold text-xs">
+                      {producerDashboardStats.localCATTC.toFixed(2)}€
+                    </Text>
+                  </View>
+
+                  {/* Pro */}
+                  <View className="flex-row items-center mb-1">
+                    <View className="w-2 h-2 rounded-full bg-indigo-400 mr-1.5" />
+                    <Text className="text-indigo-300 text-xs font-semibold">Pro</Text>
+                  </View>
+                  <View className="flex-row justify-between items-center mb-0.5 ml-3.5">
+                    <Text className="text-gray-400 text-[11px]">CA HT</Text>
+                    <Text className="text-indigo-200 text-xs font-medium">
+                      {producerDashboardStats.proCAHT.toFixed(2)}€
+                    </Text>
+                  </View>
+                  <View className="flex-row justify-between items-center mb-0.5 ml-3.5">
+                    <Text className="text-gray-400 text-[11px]">TVA collectée</Text>
+                    <Text className="text-amber-400 text-xs">
+                      {producerDashboardStats.proTVA.toFixed(2)}€
+                    </Text>
+                  </View>
+                  <View className="flex-row justify-between items-center ml-3.5">
+                    <Text className="text-gray-400 text-[11px]">CA TTC</Text>
+                    <Text className="text-indigo-300 font-bold text-xs">
+                      {producerDashboardStats.proCATTC.toFixed(2)}€
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Totaux */}
+                <View className="bg-white/5 rounded-lg p-2.5">
+                  <View className="flex-row justify-between items-center mb-1">
+                    <Text className="text-gray-300 text-xs">CA HT Total</Text>
+                    <Text className="text-white font-medium text-sm">
+                      {producerDashboardStats.totalCAHT.toFixed(2)}€
+                    </Text>
+                  </View>
+                  <View
+                    className="flex-row justify-between items-center py-1.5 px-2 rounded-md mb-1"
+                    style={{ backgroundColor: 'rgba(199, 91, 91, 0.15)', borderWidth: 1, borderColor: 'rgba(199, 91, 91, 0.3)' }}
+                  >
+                    <Text style={{ color: '#C75B5B' }} className="text-xs font-semibold">TVA collectée</Text>
+                    <Text style={{ color: '#C75B5B' }} className="font-bold text-sm">
+                      {producerDashboardStats.totalTVA.toFixed(2)}€
+                    </Text>
+                  </View>
+                  <View className="border-t border-white/10 pt-1.5 flex-row justify-between items-center">
+                    <Text className="text-gray-300 text-xs font-medium">CA TTC Total</Text>
+                    <Text className="text-emerald-400 font-bold text-base">
+                      {producerDashboardStats.totalCATTC.toFixed(2)}€
+                    </Text>
+                  </View>
+                </View>
+
+                <Text className="text-gray-500 text-[10px] text-center mt-1.5">
+                  {proPeriodFilter === 'day' && "Aujourd'hui"}
+                  {proPeriodFilter === 'quarter' && 'Ce trimestre'}
+                  {proPeriodFilter === 'year' && 'Cette année'}
+                  {proPeriodFilter === 'all' && 'Depuis le début'}
+                </Text>
+              </View>
               )}
 
               {/* Dashboard clients producteur */}
@@ -1773,33 +2129,179 @@ export default function ProfileScreen() {
 
         {/* Menu Items */}
         <View className="mx-6 mb-8">
-          {isProUser && (
-            <View className="mb-4 rounded-2xl p-4 border" style={{ backgroundColor: 'rgba(16, 185, 129, 0.12)', borderColor: 'rgba(16, 185, 129, 0.35)' }}>
-              <View className="flex-row items-start">
-                <View className="w-10 h-10 rounded-full items-center justify-center mr-3" style={{ backgroundColor: 'rgba(16, 185, 129, 0.25)' }}>
-                  <Users size={20} color="#10B981" />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-white font-semibold">Des questions ? Des idées ? Besoin d'aide ?</Text>
-                  <Text className="text-emerald-200 text-sm mt-1">Rejoins la commu sur Signal</Text>
-                </View>
-              </View>
-              <Pressable
-                onPress={handleOpenSignalGroup}
-                className="mt-3 py-2.5 rounded-xl items-center justify-center active:opacity-80"
-                style={{ backgroundColor: '#10B981' }}
-              >
-                <Text className="text-white font-bold">Rejoindre le groupe Signal</Text>
-              </Pressable>
-            </View>
-          )}
           <MenuItem
             icon={<Settings size={20} color="#0D9488" />}
             label="Paramètres"
             onPress={() => router.push('/(tabs)/settings')}
           />
         </View>
+
+        {/* Logout Button - always at the bottom for authenticated users */}
+        {isAuthenticated && (
+          <View className="mx-6 mb-8">
+            <Pressable
+              onPress={() => signOut()}
+              disabled={isSigningOut}
+              className="bg-red-600/20 rounded-xl py-3.5 flex-row items-center justify-center active:opacity-70"
+              style={{ borderWidth: 1, borderColor: '#EF444440' }}
+            >
+              {isSigningOut ? (
+                <ActivityIndicator size="small" color="#EF4444" />
+              ) : (
+                <>
+                  <LogOut size={18} color="#EF4444" />
+                  <Text className="text-red-400 font-medium ml-2">
+                    Se déconnecter
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          </View>
+        )}
       </ScrollView>
+
+      <Modal
+        visible={selectedDirectSaleOrder !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedDirectSaleOrder(null)}
+      >
+        {selectedDirectSaleOrder && (
+          <View className="flex-1 bg-black/70 justify-end">
+            <View className="rounded-t-3xl px-5 pb-8 max-h-[85%]" style={{ backgroundColor: '#0F172A', paddingTop: insets.top + 14 }}>
+              <View className="flex-row items-center justify-between mb-4">
+                <Text className="text-white text-lg font-bold">
+                  Détail commande locale
+                </Text>
+                <Pressable onPress={() => setSelectedDirectSaleOrder(null)} className="p-2">
+                  <X size={20} color="#D1D5DB" />
+                </Pressable>
+              </View>
+              <ScrollView>
+                <View className="rounded-xl p-4 mb-3 border border-orange-700/30 bg-white/5">
+                  <Text className="text-orange-300 text-xs">Numéro de commande</Text>
+                  <Text className="text-white font-bold text-lg">
+                    #{selectedDirectSaleOrder.pickup_code || selectedDirectSaleOrder.id.slice(0, 8).toUpperCase()}
+                  </Text>
+                  <Text className="text-gray-400 text-xs mt-2">
+                    Statut: {getDirectSaleStatusLabel(selectedDirectSaleOrder.statut)}
+                  </Text>
+                  <Text className="text-gray-400 text-xs">
+                    Livraison: {selectedDirectSaleOrder.delivery_method === 'shipping' ? 'A domicile' : 'Retrait sur place'}
+                  </Text>
+                  <Text className="text-gray-400 text-xs">
+                    Paiement: {getDirectSalePaymentLabel(selectedDirectSaleOrder.payment_method)}
+                  </Text>
+                </View>
+
+                {(Array.isArray(selectedDirectSaleOrder.lines) ? selectedDirectSaleOrder.lines : []).map((line) => {
+                  const productEntry = Array.isArray(line.product) ? line.product[0] : line.product;
+                  const productName = productEntry?.name || 'Produit';
+                  return (
+                    <View key={line.id} className="rounded-xl p-4 mb-3 bg-white/5 border border-white/10">
+                      <Text className="text-white font-semibold">{productName}</Text>
+                      <Text className="text-gray-400 text-xs mt-1">
+                        Quantité: {line.quantite}
+                      </Text>
+                      <Text className="text-gray-400 text-xs">
+                        Prix unitaire: {(Number(line.prix_unitaire) || 0).toFixed(2)}€
+                      </Text>
+                      <Text className="text-orange-300 font-bold mt-1">
+                        Sous-total: {(Number(line.sous_total) || 0).toFixed(2)}€
+                      </Text>
+                    </View>
+                  );
+                })}
+
+                <View className="rounded-xl p-4 mb-3 bg-orange-500/10 border border-orange-500/20">
+                  <Text className="text-gray-300 text-sm">Total</Text>
+                  <Text className="text-orange-300 text-2xl font-bold">
+                    {(Number(selectedDirectSaleOrder.total) || 0).toFixed(2)}€
+                  </Text>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        )}
+      </Modal>
+
+      <Modal
+        visible={selectedLocalMarketOrder !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedLocalMarketOrder(null)}
+      >
+        {selectedLocalMarketOrder && (
+          <View className="flex-1 bg-black/70 justify-end">
+            <View className="rounded-t-3xl px-5 pb-8 max-h-[85%]" style={{ backgroundColor: '#0F172A', paddingTop: insets.top + 14 }}>
+              <View className="flex-row items-center justify-between mb-4">
+                <Text className="text-white text-lg font-bold">
+                  Détail commande marché local
+                </Text>
+                <Pressable onPress={() => setSelectedLocalMarketOrder(null)} className="p-2">
+                  <X size={20} color="#D1D5DB" />
+                </Pressable>
+              </View>
+              <ScrollView>
+                <View className="rounded-xl p-4 mb-3 border border-orange-700/30 bg-white/5">
+                  <Text className="text-orange-300 text-xs">Numéro de commande</Text>
+                  <Text className="text-white font-bold text-lg">
+                    #{selectedLocalMarketOrder.pickup_code || String(selectedLocalMarketOrder.id)}
+                  </Text>
+                  <Text className="text-gray-400 text-xs mt-2">
+                    Statut: {getStatusLabel(selectedLocalMarketOrder.status)}
+                  </Text>
+                  <Text className="text-gray-400 text-xs">
+                    Producteur: {selectedLocalMarketOrder.producer_name}
+                  </Text>
+                </View>
+
+                <View className="rounded-xl p-4 mb-3 bg-white/5 border border-white/10">
+                  <Text className="text-white font-semibold">{selectedLocalMarketOrder.product_name}</Text>
+                  {selectedLocalMarketOrder.product_description ? (
+                    <Text className="text-gray-400 text-xs mt-1">{selectedLocalMarketOrder.product_description}</Text>
+                  ) : null}
+                  <Text className="text-gray-400 text-xs mt-2">
+                    Quantité: {selectedLocalMarketOrder.quantity}
+                  </Text>
+                  <Text className="text-gray-400 text-xs">
+                    Prix unitaire: {(Number(selectedLocalMarketOrder.unit_price) || 0).toFixed(2)}€
+                  </Text>
+                </View>
+
+                <View className="rounded-xl p-4 mb-3 bg-white/5 border border-white/10">
+                  <Text className="text-white font-semibold mb-1">Livraison</Text>
+                  <Text className="text-gray-400 text-xs">
+                    Mode: {selectedLocalMarketOrder.delivery_method === 'shipping' ? 'Livraison à domicile' : 'Retrait sur place'}
+                  </Text>
+                  {selectedLocalMarketOrder.delivery_address ? (
+                    <Text className="text-gray-400 text-xs mt-1">
+                      Adresse: {selectedLocalMarketOrder.delivery_address}
+                    </Text>
+                  ) : null}
+                  {selectedLocalMarketOrder.pickup_location ? (
+                    <Text className="text-gray-400 text-xs mt-1">
+                      Point de retrait: {selectedLocalMarketOrder.pickup_location}
+                    </Text>
+                  ) : null}
+                  {selectedLocalMarketOrder.pickup_instructions ? (
+                    <Text className="text-gray-400 text-xs mt-1">
+                      Instructions: {selectedLocalMarketOrder.pickup_instructions}
+                    </Text>
+                  ) : null}
+                </View>
+
+                <View className="rounded-xl p-4 mb-3 bg-orange-500/10 border border-orange-500/20">
+                  <Text className="text-gray-300 text-sm">Total</Text>
+                  <Text className="text-orange-300 text-2xl font-bold">
+                    {(Number(selectedLocalMarketOrder.total_amount) || 0).toFixed(2)}€
+                  </Text>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        )}
+      </Modal>
 
       {/* Image Cropper Modal */}
       <ImageCropper
@@ -1824,3 +2326,4 @@ export default function ProfileScreen() {
     </View>
   );
 }
+

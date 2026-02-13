@@ -8,8 +8,8 @@ import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { COLORS } from '@/lib/colors';
 import { usePacksStore, useCartStore, Pack } from '@/lib/store';
 import { AddPackModal } from '@/components/AddPackModal';
-import { ASSET_IMAGES, getImageSource } from '@/lib/asset-images';
-import { usePricingContext, getProductPrice } from '@/lib/useProductPricing';
+import { ASSET_IMAGES } from '@/lib/asset-images';
+import { usePricingContext } from '@/lib/useProductPricing';
 import { deletePackFromSupabase, isSupabaseSyncConfigured } from '@/lib/supabase-sync';
 import { usePermissions } from '@/lib/useAuth';
 import { CompactCacheStatus } from '@/components/CacheStatusBanner';
@@ -41,10 +41,10 @@ export default function PacksScreen() {
   const removePack = usePacksStore((s) => s.removePack);
   const togglePackActive = usePacksStore((s) => s.togglePackActive);
   const addToCart = useCartStore((s) => s.addToCart);
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isClient } = usePermissions();
 
   // Pricing context pour afficher les bons prix selon le rôle
-  const { pricingMode, isPro, priceLabel } = usePricingContext();
+  const { isPro } = usePricingContext();
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingPack, setEditingPack] = useState<Pack | null>(null);
@@ -57,6 +57,7 @@ export default function PacksScreen() {
   const visiblePacks = isAdmin ? packs : packs.filter((p) => p.active);
   const activePacks = packs.filter((p) => p.active);
   const inactivePacks = packs.filter((p) => !p.active);
+  const showClientTutorial = isClient && !isAdmin;
 
   const togglePack = (packId: string) => {
     setExpandedPacks((prev) =>
@@ -556,6 +557,53 @@ export default function PacksScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
       >
+        {showClientTutorial && (
+          <Animated.View entering={FadeInUp.duration(450)} className="mb-4">
+            <View
+              className="rounded-2xl p-4"
+              style={{
+                backgroundColor: 'rgba(20, 29, 47, 0.75)',
+                borderWidth: 1,
+                borderColor: `${COLORS.primary.gold}35`,
+              }}
+            >
+              <Text style={{ color: COLORS.text.cream }} className="text-base font-bold">
+                Comment ca marche
+              </Text>
+              <Text style={{ color: COLORS.text.muted }} className="text-xs mt-0.5">
+                Marche local vs Packs
+              </Text>
+
+              <View className="mt-3 rounded-xl p-3" style={{ backgroundColor: 'rgba(90, 158, 90, 0.12)' }}>
+                <Text style={{ color: COLORS.accent.hemp }} className="font-semibold">
+                  Marche local: direct producteur
+                </Text>
+                <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+                  Vous commandez en direct avec le producteur, selon ses options de retrait sur place ou de livraison.
+                </Text>
+              </View>
+
+              <View className="mt-2 rounded-xl p-3" style={{ backgroundColor: 'rgba(212, 168, 83, 0.12)' }}>
+                <Text style={{ color: COLORS.primary.paleGold }} className="font-semibold">
+                  Packs: prix avantageux et decouverte
+                </Text>
+                <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+                  Les packs regroupent des fleurs et de la resine en vrac provenant des producteurs de la plateforme.
+                </Text>
+              </View>
+
+              <View className="mt-2 rounded-xl p-3" style={{ backgroundColor: 'rgba(232, 148, 90, 0.14)' }}>
+                <Text style={{ color: COLORS.primary.orange }} className="font-semibold">
+                  Bonus loterie
+                </Text>
+                <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+                  Tous les 20 EUR depenses sur les packs, vous gagnez 1 ticket de loterie.
+                </Text>
+              </View>
+            </View>
+          </Animated.View>
+        )}
+
         {visiblePacks.length === 0 ? (
           <Animated.View
             entering={FadeInUp.duration(500)}

@@ -62,34 +62,6 @@ function supabaseToLot(sl: SupabaseLot, items: LotItem[]): Lot {
   };
 }
 
-// Convert app Lot to Supabase format
-function lotToSupabase(lot: Lot): Omit<SupabaseLot, 'created_at' | 'updated_at'> {
-  return {
-    id: lot.id,
-    name: lot.name,
-    description: lot.description,
-    rarity: lot.rarity,
-    image: lot.image,
-    value: lot.value,
-    active: lot.active,
-    lot_type: lot.lotType ?? null,
-    discount_percent: lot.discountPercent ?? null,
-    discount_amount: lot.discountAmount ?? null,
-    min_order_amount: lot.minOrderAmount ?? null,
-  };
-}
-
-// Convert LotItem to Supabase format
-function lotItemToSupabase(item: LotItem, lotId: string): Omit<SupabaseLotItem, 'id' | 'created_at'> {
-  return {
-    lot_id: lotId,
-    product_id: item.productId,
-    producer_id: item.producerId,
-    product_name: item.productName,
-    producer_name: item.producerName,
-    quantity: item.quantity,
-  };
-}
 
 // Convert Supabase lot item to app format
 function supabaseToLotItem(sli: SupabaseLotItem): LotItem {
@@ -374,7 +346,6 @@ export async function recordUserWonLot(
     return null;
   }
 
-  const id = `user-lot-${generateSecureUUID()}`;
   const giftCode = `GIFT-${generateSecureGiftCode()}`;
 
   try {
@@ -387,27 +358,6 @@ export async function recordUserWonLot(
       await linkUserCode(userCode);
 
       const headers = await getAuthenticatedHeaders();
-      const data = {
-        id,
-        user_id: userId,
-        user_code: userCode,
-        lot_id: lot.id,
-        lot_name: lot.name,
-        lot_description: lot.description || null,
-        lot_rarity: lot.rarity,
-        lot_image: lot.image || null,
-        lot_type: lotType,
-        lot_value: lot.value,
-        discount_percent: lot.discountPercent ?? null,
-        discount_amount: lot.discountAmount ?? null,
-        min_order_amount: lot.minOrderAmount ?? null,
-        won_at: new Date().toISOString(),
-        used: false,
-        used_at: null,
-        gifted_to: null,
-        gifted_at: null,
-        gift_code: giftCode,
-      };
 
       const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-lots-mutations`, {
         method: 'POST',
@@ -440,27 +390,6 @@ export async function recordUserWonLot(
       return supabaseToUserLot(Array.isArray(result) ? result[0] : result);
     } else {
       // User non authentifié - garder l'ancienne approche avec user_code
-
-      const data = {
-        id,
-        user_code: userCode,
-        lot_id: lot.id,
-        lot_name: lot.name,
-        lot_description: lot.description || null,
-        lot_rarity: lot.rarity,
-        lot_image: lot.image || null,
-        lot_type: lotType,
-        lot_value: lot.value,
-        discount_percent: lot.discountPercent ?? null,
-        discount_amount: lot.discountAmount ?? null,
-        min_order_amount: lot.minOrderAmount ?? null,
-        won_at: new Date().toISOString(),
-        used: false,
-        used_at: null,
-        gifted_to: null,
-        gifted_at: null,
-        gift_code: giftCode,
-      };
 
       const response = await supabaseFetch(`${SUPABASE_URL}/functions/v1/user-lots-mutations`, {
         method: 'POST',
@@ -790,3 +719,4 @@ export async function markLotAsGifted(userCode: string, lotId: string): Promise<
     return false;
   }
 }
+

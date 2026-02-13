@@ -147,7 +147,7 @@ serve(async (req) => {
 
 		const { data: producer, error: producerError } = await serviceClient
 			.from('producers')
-			.select('id,name,city,region,adresse_retrait,horaires_retrait,instructions_retrait,shipping_enabled,shipping_fee,shipping_note')
+			.select('id,name,city,region,department,image,description,adresse_retrait,horaires_retrait,instructions_retrait,shipping_enabled,shipping_fee,shipping_note')
 			.eq('id', producerId)
 			.single();
 

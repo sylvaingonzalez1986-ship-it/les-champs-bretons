@@ -15,7 +15,7 @@ export type PricingMode = 'public' | 'pro' | 'all';
  * Hook pour déterminer le mode de tarification actuel
  */
 export function usePricingMode(): PricingMode {
-  const { authMode } = useUserIdentity();
+  useUserIdentity();
   const { isPro, isProducer, isAdmin } = usePermissions();
 
   return useMemo(() => {

@@ -73,8 +73,6 @@ async function confirmAgeDirectly(retryCount = 0): Promise<{ success: boolean; e
 
       clearTimeout(timeoutId);
 
-      const postText = await postResponse.text();
-
       if (!postResponse.ok) {
         // Si erreur 409 (conflit), le profil existe peut-être - réessayer PATCH
         if (postResponse.status === 409) {

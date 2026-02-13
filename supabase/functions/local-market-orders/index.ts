@@ -15,6 +15,7 @@ const idOrPickupSchema = z.string().min(1, 'Invalid order identifier');
 const emailSchema = z.string().email('Invalid email format').max(255);
 const quantitySchema = z.number().int().positive().max(10000);
 const deliveryMethodSchema = z.enum(['pickup', 'shipping']);
+const paymentMethodSchema = z.enum(['payment_link', 'on_site']);
 
 const localMarketOrderStatusSchema = z.enum([
   'pending',
@@ -36,6 +37,7 @@ const localMarketOrderActionSchema = z.discriminatedUnion('action', [
     deliveryFee: z.number().min(0).max(999999.99).optional(),
     deliveryAddress: z.string().max(500).optional(),
     deliveryInstructions: z.string().max(1000).optional(),
+    paymentMethod: paymentMethodSchema.optional(),
     customerNotes: z.string().max(1000).optional(),
     customerName: z.string().max(200).optional(),
     customerEmail: emailSchema.optional(),
@@ -255,6 +257,7 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
         deliveryMethod,
         deliveryAddress,
         deliveryInstructions,
+        paymentMethod,
         customerNotes,
         customerName,
         customerEmail,
@@ -298,6 +301,9 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
       }
 
       const resolvedDeliveryMethod = deliveryMethod ?? 'pickup';
+      const resolvedPaymentMethod = resolvedDeliveryMethod === 'shipping'
+        ? 'payment_link'
+        : (paymentMethod ?? 'on_site');
 
       if (resolvedDeliveryMethod === 'shipping' && !producer.shipping_enabled) {
         return new Response(JSON.stringify({
@@ -313,6 +319,16 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
         return new Response(JSON.stringify({
           error: 'DELIVERY_ADDRESS_REQUIRED',
           message: 'Adresse de livraison requise.',
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (resolvedDeliveryMethod === 'shipping' && resolvedPaymentMethod === 'on_site') {
+        return new Response(JSON.stringify({
+          error: 'INVALID_PAYMENT_METHOD',
+          message: 'Le paiement sur place n\'est pas disponible en livraison.',
         }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -364,7 +380,7 @@ const handler = createValidatedHandler<LocalMarketOrderActionInput>(
         customer_notes: customerNotes || null,
         producer_notes: null,
         is_paid: false,
-        payment_method: null,
+        payment_method: resolvedPaymentMethod,
         completed_at: null,
       };
 

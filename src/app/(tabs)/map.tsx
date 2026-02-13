@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { View, Pressable, Dimensions, Image, FlatList, ViewToken, NativeScrollEvent, NativeSyntheticEvent, ScrollView } from 'react-native';
+import { View, Pressable, Dimensions, Image, FlatList, ViewToken, ScrollView } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Sparkles, Volume2, VolumeX, SkipForward, ShoppingBag, MapPin, Leaf, Star, ChevronLeft, ChevronRight, Thermometer, CloudRain, Mountain, X, Map, Instagram, Facebook, Twitter, Linkedin, Youtube, Globe } from 'lucide-react-native';
+import { Sparkles, ShoppingBag, MapPin, Leaf, Star, ChevronLeft, ChevronRight, Thermometer, CloudRain, Mountain, X, Map, Instagram, Facebook, Twitter, Linkedin, Youtube, Globe } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -14,22 +14,20 @@ import Animated, {
   FadeInUp,
   interpolate,
   Extrapolation,
-  useAnimatedProps,
 } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { Producer, SAMPLE_PRODUCERS, PRODUCT_TYPE_COLORS } from '@/lib/producers';
 import { useProducerStore, useSupabaseSyncStore, useProductReviewsStore } from '@/lib/store';
 import { COLORS } from '@/lib/colors';
 import { fetchAllProducersWithProducts, isSupabaseSyncConfigured } from '@/lib/supabase-sync';
 import { getImageSource } from '@/lib/asset-images';
-import { useAudioStore } from '@/lib/store';
 import { CultureTypeIcons } from '@/components/CultureTypeIcons';
-import { usePermissions } from '@/lib/useAuth';
+import { usePermissions, useUserIdentity } from '@/lib/useAuth';
 import { CompactCacheStatus } from '@/components/CacheStatusBanner';
 import { safeOpenExternalUrl } from '@/lib/safe-linking';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.715;
 const CARD_HEIGHT = CARD_WIDTH * 1.35;
 const CARD_SPACING = 16;
@@ -594,19 +592,14 @@ export default function MapScreen() {
   const flatListRef = useRef<FlatList>(null);
   const scrollX = useSharedValue(0);
   const isScrolling = useSharedValue(0);
-  const scrollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentIndexRef = useRef(0);
   const isHoldingRef = useRef(false);
   const scrollDirectionRef = useRef<'prev' | 'next' | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const currentOffsetRef = useRef(0);
 
-  // Utiliser le contexte audio global
-  const isMuted = useAudioStore((s) => s.isMuted);
-  const toggleMute = useAudioStore((s) => s.toggleMute);
-  const skipToNextTrack = useAudioStore((s) => s.nextTrack);
-
   const customProducers = useProducerStore((s) => s.producers);
+  const { role } = useUserIdentity();
   const { isAdmin } = usePermissions();
   const syncedProducers = useSupabaseSyncStore((s) => s.syncedProducers);
   const setSyncedProducers = useSupabaseSyncStore((s) => s.setSyncedProducers);
@@ -625,7 +618,7 @@ export default function MapScreen() {
       }
     };
     loadFromSupabase();
-  }, [isAdmin]);
+  }, [isAdmin, setSyncedProducers]);
 
   const allProducers = useMemo(() => {
     let producers: Producer[] = [];
@@ -731,22 +724,6 @@ export default function MapScreen() {
 
   const displayedProducers = selectedRegion ? filteredProducers : allProducers;
 
-  const goToPrevious = () => {
-    const newIndex = currentIndexRef.current > 0
-      ? currentIndexRef.current - 1
-      : displayedProducers.length - 1;
-    currentIndexRef.current = newIndex;
-    flatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
-  };
-
-  const goToNext = () => {
-    const newIndex = currentIndexRef.current < displayedProducers.length - 1
-      ? currentIndexRef.current + 1
-      : 0;
-    currentIndexRef.current = newIndex;
-    flatListRef.current?.scrollToIndex({ index: newIndex, animated: true });
-  };
-
   const ITEM_WIDTH = CARD_WIDTH + CARD_SPACING;
   const TOTAL_WIDTH = ITEM_WIDTH * displayedProducers.length;
   const SCROLL_SPEED = 8; // pixels per frame
@@ -821,7 +798,9 @@ export default function MapScreen() {
     viewAreaCoveragePercentThreshold: 50,
   }).current;
 
-  const currentProducer = displayedProducers[currentIndex];
+  if (role === 'client') {
+    return <Redirect href="/(tabs)/marche-local" />;
+  }
 
   if (allProducers.length === 0) {
     return (

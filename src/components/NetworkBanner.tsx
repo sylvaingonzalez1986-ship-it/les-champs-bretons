@@ -9,8 +9,6 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   withSpring,
-  interpolate,
-  Extrapolation,
 } from 'react-native-reanimated';
 import { WifiOff, RefreshCw, CheckCircle, AlertTriangle } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';

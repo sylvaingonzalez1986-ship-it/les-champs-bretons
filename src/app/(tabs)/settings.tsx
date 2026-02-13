@@ -23,7 +23,6 @@ import {
   Sparkles,
   Settings,
   ChevronDown,
-  ChevronUp,
   Edit3,
   Leaf,
   Store,
@@ -174,13 +173,12 @@ export default function SettingsScreen() {
       }
     };
     loadCoordinates();
-  }, [isAuthenticated, profile, customerInfo]);
+  }, [isAuthenticated, profile, customerInfo, formHeight, rotation]);
 
   // Find producer associated with this user (by email or name)
   useEffect(() => {
     if (isProducer && profile) {
       // Try to find a producer that matches the user's profile
-      const userEmail = profile.email?.toLowerCase();
       const userName = profile.full_name?.toLowerCase();
       const companyName = profile.company_name?.toLowerCase();
 

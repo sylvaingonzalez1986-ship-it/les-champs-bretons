@@ -10,7 +10,7 @@ import { ProductDetailModal } from '@/components/ProductDetailModal';
 import { RARITY_CONFIG, Rarity, CollectionItem } from '@/lib/types';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
-import { isSupabaseSyncConfigured, getGiftCodeForCollectionItem, claimGiftedLotWithDetails, ClaimGiftResult } from '@/lib/supabase-sync';
+import { isSupabaseSyncConfigured, getGiftCodeForCollectionItem, claimGiftedLotWithDetails } from '@/lib/supabase-sync';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_WIDTH = (SCREEN_WIDTH - 48 - 12) / 2; // 2 columns with padding and gap
@@ -229,7 +229,6 @@ export default function CollectionScreen() {
 
   // Referral states
   const points = useReferralStore((s) => s.points);
-  const giftsSent = useReferralStore((s) => s.giftsSent);
   const sendLotAsGift = useReferralStore((s) => s.sendLotAsGift);
   const claimGift = useReferralStore((s) => s.claimGift);
   const addToCollection = useCollectionStore((s) => s.addToCollection);

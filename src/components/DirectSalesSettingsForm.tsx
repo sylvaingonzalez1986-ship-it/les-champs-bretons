@@ -1,18 +1,20 @@
 /**
- * DirectSalesSettingsForm - Paramètres de vente directe à la ferme
+ * DirectSalesSettingsForm - Parametres de vente directe a la ferme
  * Permet de configurer l'adresse, horaires et instructions de retrait
  */
 
-import React, { useState, useEffect } from 'react';
-import { View, Pressable, ActivityIndicator, Switch } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, Switch, View } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
 import {
-  MapPin,
-  Store,
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Info,
-  Check,
-  AlertCircle,
+  MapPin,
+  Store,
   Truck,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
@@ -25,7 +27,6 @@ interface DirectSalesSettingsFormProps {
 }
 
 export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSalesSettingsFormProps) {
-  // Direct farm sales state
   const [venteDirecteFerme, setVenteDirecteFerme] = useState(false);
   const [adresseRetrait, setAdresseRetrait] = useState('');
   const [horairesRetrait, setHorairesRetrait] = useState('');
@@ -35,46 +36,50 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
   const [shippingFee, setShippingFee] = useState('');
   const [shippingNote, setShippingNote] = useState('');
 
-  // Validation errors
+  const [farmExpanded, setFarmExpanded] = useState(false);
+  const [shippingExpanded, setShippingExpanded] = useState(false);
+
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successMessage, setSuccessMessage] = useState('');
 
-  // Load existing profile data
   useEffect(() => {
-    if (profile) {
-      setVenteDirecteFerme(profile.vente_directe_ferme || false);
-      setAdresseRetrait(profile.adresse_retrait || '');
-      setHorairesRetrait(profile.horaires_retrait || '');
-      setInstructionsRetrait(profile.instructions_retrait || '');
-      setShippingEnabled(profile.shipping_enabled || false);
-      setShippingFee(profile.shipping_fee != null ? String(profile.shipping_fee) : '');
-      setShippingNote(profile.shipping_note || '');
-    }
+    if (!profile) return;
+
+    const farmEnabled = Boolean(profile.vente_directe_ferme);
+    const canShip = Boolean(profile.shipping_enabled);
+
+    setVenteDirecteFerme(farmEnabled);
+    setAdresseRetrait(profile.adresse_retrait || '');
+    setHorairesRetrait(profile.horaires_retrait || '');
+    setInstructionsRetrait(profile.instructions_retrait || '');
+
+    setShippingEnabled(canShip);
+    setShippingFee(profile.shipping_fee != null ? String(profile.shipping_fee) : '');
+    setShippingNote(profile.shipping_note || '');
+
+    setFarmExpanded(farmEnabled);
+    setShippingExpanded(canShip);
   }, [profile]);
 
-  // Validate form
   const validate = (): boolean => {
-    const newErrors: Record<string, string> = {};
+    const nextErrors: Record<string, string> = {};
 
-    if (venteDirecteFerme) {
-      if (!adresseRetrait.trim()) {
-        newErrors.adresseRetrait = 'Adresse de retrait requise';
-      }
+    if (venteDirecteFerme && !adresseRetrait.trim()) {
+      nextErrors.adresseRetrait = 'Adresse de retrait requise';
     }
 
     if (shippingEnabled) {
       const normalizedFee = shippingFee.replace(',', '.').trim();
       const feeValue = normalizedFee ? Number(normalizedFee) : 0;
       if (Number.isNaN(feeValue) || feeValue < 0) {
-        newErrors.shippingFee = 'Frais de livraison invalides';
+        nextErrors.shippingFee = 'Frais de livraison invalides';
       }
     }
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   };
 
-  // Handle save
   const handleSave = async () => {
     if (!validate()) return;
 
@@ -92,7 +97,7 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
         shipping_note: shippingEnabled ? shippingNote || null : null,
       });
 
-      setSuccessMessage('Paramètres enregistrés !');
+      setSuccessMessage('Parametres enregistres !');
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
       console.error('Error saving direct sales settings:', error);
@@ -101,37 +106,37 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
 
   return (
     <View>
-      {/* Success message */}
-      {successMessage && (
-        <View
-          className="rounded-xl p-3 mb-4 flex-row items-center"
-          style={{ backgroundColor: `${COLORS.accent.hemp}15` }}
-        >
+      {successMessage ? (
+        <View className="rounded-xl p-3 mb-4 flex-row items-center" style={{ backgroundColor: `${COLORS.accent.hemp}15` }}>
           <Check size={18} color={COLORS.accent.hemp} />
           <Text style={{ color: COLORS.accent.hemp }} className="text-sm ml-2">
             {successMessage}
           </Text>
         </View>
-      )}
+      ) : null}
 
-      {/* DIRECT FARM SALES SECTION */}
       <View className="rounded-xl p-4" style={{ backgroundColor: `${COLORS.accent.hemp}10`, borderWidth: 1, borderColor: `${COLORS.accent.hemp}30` }}>
         <View className="flex-row items-center mb-4">
-          <Store size={20} color={COLORS.accent.hemp} style={{ marginRight: 8 }} />
-          <Text style={{ color: COLORS.text.white }} className="font-semibold text-base flex-1">
-            Vente directe à la ferme
-          </Text>
+          <Pressable onPress={() => setFarmExpanded((prev) => !prev)} className="flex-row items-center flex-1">
+            <Store size={20} color={COLORS.accent.hemp} style={{ marginRight: 8 }} />
+            <Text style={{ color: COLORS.text.white }} className="font-semibold text-base flex-1">
+              Vente directe a la ferme
+            </Text>
+            {farmExpanded ? <ChevronUp size={18} color={COLORS.accent.hemp} /> : <ChevronDown size={18} color={COLORS.accent.hemp} />}
+          </Pressable>
           <Switch
             value={venteDirecteFerme}
-            onValueChange={setVenteDirecteFerme}
+            onValueChange={(value) => {
+              setVenteDirecteFerme(value);
+              if (value) setFarmExpanded(true);
+            }}
             trackColor={{ false: COLORS.text.muted, true: COLORS.accent.hemp }}
             thumbColor={venteDirecteFerme ? COLORS.accent.hemp : COLORS.text.lightGray}
           />
         </View>
 
-        {venteDirecteFerme && (
+        {venteDirecteFerme && farmExpanded ? (
           <View>
-            {/* Pickup Address */}
             <View className="mb-4">
               <Text style={{ color: COLORS.text.lightGray }} className="text-xs mb-1">
                 Adresse de retrait des commandes *
@@ -153,7 +158,7 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
                   value={adresseRetrait}
                   onChangeText={(text) => {
                     setAdresseRetrait(text);
-                    if (errors.adresseRetrait) setErrors((e) => ({ ...e, adresseRetrait: '' }));
+                    if (errors.adresseRetrait) setErrors((prev) => ({ ...prev, adresseRetrait: '' }));
                   }}
                   placeholder="123 Rue de la Ferme, 75001 Paris"
                   placeholderTextColor={COLORS.text.muted}
@@ -163,17 +168,16 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
                   style={{ color: COLORS.text.white }}
                 />
               </View>
-              {errors.adresseRetrait && (
+              {errors.adresseRetrait ? (
                 <View className="flex-row items-center mt-1">
                   <AlertCircle size={14} color={COLORS.accent.red} />
                   <Text style={{ color: COLORS.accent.red }} className="text-xs ml-1">
                     {errors.adresseRetrait}
                   </Text>
                 </View>
-              )}
+              ) : null}
             </View>
 
-            {/* Opening Hours */}
             <View className="mb-4">
               <Text style={{ color: COLORS.text.lightGray }} className="text-xs mb-1">
                 Horaires de retrait (ex: Lun-Ven 14h-18h)
@@ -200,10 +204,9 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
               </View>
             </View>
 
-            {/* Instructions */}
             <View className="mb-4">
               <Text style={{ color: COLORS.text.lightGray }} className="text-xs mb-1">
-                Instructions complémentaires (accès, parking, etc.)
+                Instructions complementaires (acces, parking, etc.)
               </Text>
               <View
                 className="flex-row items-start rounded-xl overflow-hidden"
@@ -221,7 +224,7 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
                 <TextInput
                   value={instructionsRetrait}
                   onChangeText={setInstructionsRetrait}
-                  placeholder="Ex: Accès par la cour intérieure, parking gratuit"
+                  placeholder="Ex: Acces par la cour interieure, parking gratuit"
                   placeholderTextColor={COLORS.text.muted}
                   multiline
                   numberOfLines={3}
@@ -231,32 +234,34 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
               </View>
             </View>
           </View>
-        )}
+        ) : null}
       </View>
 
-      {/* SHIPPING SECTION */}
-      <View
-        className="rounded-xl p-4 mt-4"
-        style={{ backgroundColor: `${COLORS.primary.gold}10`, borderWidth: 1, borderColor: `${COLORS.primary.gold}30` }}
-      >
+      <View className="rounded-xl p-4 mt-4" style={{ backgroundColor: `${COLORS.primary.gold}10`, borderWidth: 1, borderColor: `${COLORS.primary.gold}30` }}>
         <View className="flex-row items-center mb-4">
-          <Truck size={20} color={COLORS.primary.gold} style={{ marginRight: 8 }} />
-          <Text style={{ color: COLORS.text.white }} className="font-semibold text-base flex-1">
-            Livraison postale
-          </Text>
+          <Pressable onPress={() => setShippingExpanded((prev) => !prev)} className="flex-row items-center flex-1">
+            <Truck size={20} color={COLORS.primary.gold} style={{ marginRight: 8 }} />
+            <Text style={{ color: COLORS.text.white }} className="font-semibold text-base flex-1">
+              Livraison postale
+            </Text>
+            {shippingExpanded ? <ChevronUp size={18} color={COLORS.primary.gold} /> : <ChevronDown size={18} color={COLORS.primary.gold} />}
+          </Pressable>
           <Switch
             value={shippingEnabled}
-            onValueChange={setShippingEnabled}
+            onValueChange={(value) => {
+              setShippingEnabled(value);
+              if (value) setShippingExpanded(true);
+            }}
             trackColor={{ false: COLORS.text.muted, true: COLORS.primary.gold }}
             thumbColor={shippingEnabled ? COLORS.primary.gold : COLORS.text.lightGray}
           />
         </View>
 
-        {shippingEnabled && (
+        {shippingEnabled && shippingExpanded ? (
           <View>
             <View className="mb-4">
               <Text style={{ color: COLORS.text.lightGray }} className="text-xs mb-1">
-                Frais de livraison (€)
+                Frais de livraison (EUR)
               </Text>
               <View
                 className="flex-row items-center rounded-xl overflow-hidden"
@@ -273,7 +278,7 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
                   value={shippingFee}
                   onChangeText={(text) => {
                     setShippingFee(text);
-                    if (errors.shippingFee) setErrors((e) => ({ ...e, shippingFee: '' }));
+                    if (errors.shippingFee) setErrors((prev) => ({ ...prev, shippingFee: '' }));
                   }}
                   placeholder="0.00"
                   placeholderTextColor={COLORS.text.muted}
@@ -282,14 +287,14 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
                   style={{ color: COLORS.text.white }}
                 />
               </View>
-              {errors.shippingFee && (
+              {errors.shippingFee ? (
                 <View className="flex-row items-center mt-1">
                   <AlertCircle size={14} color={COLORS.accent.red} />
                   <Text style={{ color: COLORS.accent.red }} className="text-xs ml-1">
                     {errors.shippingFee}
                   </Text>
                 </View>
-              )}
+              ) : null}
             </View>
 
             <View>
@@ -312,7 +317,7 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
                 <TextInput
                   value={shippingNote}
                   onChangeText={setShippingNote}
-                  placeholder="Ex: Livraison sous 3-5 jours ouvrés"
+                  placeholder="Ex: Livraison sous 3-5 jours ouvres"
                   placeholderTextColor={COLORS.text.muted}
                   multiline
                   numberOfLines={3}
@@ -322,18 +327,14 @@ export function DirectSalesSettingsForm({ profile, onSave, isSaving }: DirectSal
               </View>
             </View>
           </View>
-        )}
+        ) : null}
       </View>
 
-      {/* Save Button */}
       <Pressable
         onPress={handleSave}
         disabled={isSaving}
         className="rounded-xl py-4 items-center active:opacity-80 mt-4"
-        style={{
-          backgroundColor: COLORS.primary.gold,
-          opacity: isSaving ? 0.6 : 1,
-        }}
+        style={{ backgroundColor: COLORS.primary.gold, opacity: isSaving ? 0.6 : 1 }}
       >
         {isSaving ? (
           <ActivityIndicator color="#fff" />

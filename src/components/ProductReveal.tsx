@@ -12,7 +12,6 @@ import Animated, {
   Easing,
   FadeIn,
   FadeOut,
-  runOnJS,
 } from 'react-native-reanimated';
 import { X, MapPin, Leaf, Award } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -61,7 +60,7 @@ export function ProductReveal({ product, onClose, visible }: ProductRevealProps)
       contentOpacity.value = 0;
       glowScale.value = 0;
     }
-  }, [visible, product.rarity]);
+  }, [visible, product.rarity, cardScale, cardOpacity, contentOpacity, glowScale]);
 
   const cardAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: cardScale.value }],

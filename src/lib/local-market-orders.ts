@@ -57,7 +57,7 @@ export interface LocalMarketOrder {
 
   // Paiement
   is_paid: boolean;
-  payment_method: string | null;
+  payment_method: 'payment_link' | 'on_site' | null;
   completed_at: string | null;
 }
 
@@ -90,6 +90,7 @@ export interface CreateLocalOrderParams {
   delivery_fee?: number;
   delivery_address?: string;
   delivery_instructions?: string;
+  payment_method?: 'payment_link' | 'on_site';
 
   // Notes
   customer_notes?: string;
@@ -190,7 +191,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
       let data: LocalMarketOrder[] = [];
       try {
         data = responseText ? JSON.parse(responseText) : [];
-      } catch (parseError) {
+      } catch {
         set({ orders: [], loading: false, error: 'Erreur de format des données' });
         return [];
       }
@@ -205,7 +206,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
         };
       });
       return data;
-    } catch (error) {
+    } catch {
       set({ orders: [], loading: false, error: 'Erreur de connexion au serveur' });
       return [];
     }
@@ -237,6 +238,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
             deliveryFee: params.delivery_fee,
             deliveryAddress: params.delivery_address,
             deliveryInstructions: params.delivery_instructions,
+            paymentMethod: params.payment_method,
             customerNotes: params.customer_notes,
             customerName: params.customer_name,
             customerEmail: params.customer_email,
@@ -257,7 +259,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
           if (errorData.producerId) parts.push(`producerId: ${errorData.producerId}`);
           if (errorData.message) parts.push(errorData.message);
           if (parts.length > 0) errorMessage = parts.join(' — ');
-        } catch (e) {
+        } catch {
           // Réponse non-JSON
         }
 
@@ -271,7 +273,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
         const data = JSON.parse(responseText);
         createdOrder = data.order as LocalMarketOrder;
         pickupCode = data.pickupCode || createdOrder?.pickup_code || '';
-      } catch (parseError) {
+      } catch {
         return { success: false, error: 'Erreur de format de réponse' };
       }
 
@@ -283,7 +285,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
       // Envoyer l'email au producteur
       try {
         await sendLocalMarketOrderEmail(accessToken, createdOrder);
-      } catch (emailError) {
+      } catch {
         // Ne pas faire échouer la commande si l'email échoue
       }
 
@@ -292,7 +294,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
         order: createdOrder,
         pickupCode: createdOrder.pickup_code || pickupCode,
       };
-    } catch (error) {
+    } catch {
       return { success: false, error: 'Erreur de connexion' };
     }
   },
@@ -321,7 +323,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
 
       const data = await response.json();
       return data.order || null;
-    } catch (error) {
+    } catch {
       return null;
     }
   },
@@ -360,7 +362,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
       }));
 
       return { success: true };
-    } catch (error) {
+    } catch {
       return { success: false, error: 'Erreur de connexion' };
     }
   },
@@ -406,7 +408,7 @@ export const useLocalMarketOrders = create<LocalMarketOrdersStore>((set, get) =>
 
       const data = responseText ? JSON.parse(responseText) : [];
       return data as LocalMarketOrder[];
-    } catch (error) {
+    } catch {
       return [];
     }
   },
@@ -487,6 +489,7 @@ async function sendLocalMarketOrderEmail(
           deliveryFee: order.delivery_fee ?? 0,
           deliveryAddress: order.delivery_address || undefined,
           deliveryInstructions: order.delivery_instructions || undefined,
+          paymentMethod: order.payment_method || undefined,
           customerNotes: order.customer_notes || undefined,
         }),
       }
@@ -494,7 +497,7 @@ async function sendLocalMarketOrderEmail(
 
     if (!response.ok) {
     }
-  } catch (error) {
+  } catch {
   }
 }
 

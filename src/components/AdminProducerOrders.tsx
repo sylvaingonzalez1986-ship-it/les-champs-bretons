@@ -6,7 +6,6 @@ import {
   Modal,
   ActivityIndicator,
   RefreshControl,
-  Platform,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Text } from '@/components/ui';
@@ -41,6 +40,7 @@ interface DirectSaleOrder {
   id: string;
   user_id: string;
   producer_id: string;
+  pickup_code?: string | null;
   total: number;
   statut: OrderStatus;
   adresse_retrait: string;
@@ -66,6 +66,24 @@ interface CustomerInfo {
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
+}
+
+interface DirectSaleOrdersProducerIdResponse {
+  producerId: string | null;
+}
+
+interface DirectSaleOrdersListResponse {
+  orders: DirectSaleOrder[];
+}
+
+interface DirectSaleOrderDetailsResponse {
+  order?: DirectSaleOrder;
+  lines?: OrderLine[];
+  customer?: CustomerInfo | null;
+}
+
+interface DirectSaleOrderUpdateResponse {
+  order?: DirectSaleOrder;
 }
 
 // Unified order type for display
@@ -135,8 +153,6 @@ export function AdminProducerOrders() {
   const { session, refresh } = useAuth();
   const { loadOrdersForProducer, updateOrderStatus: updateLocalOrderStatus } = useLocalMarketOrders();
   const [producerId, setProducerId] = useState<string | null>(null);
-  const [orders, setOrders] = useState<DirectSaleOrder[]>([]);
-  const [localMarketOrders, setLocalMarketOrders] = useState<LocalMarketOrder[]>([]);
   const [unifiedOrders, setUnifiedOrders] = useState<UnifiedOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -168,7 +184,10 @@ export function AdminProducerOrders() {
     }
   }, [session?.refresh_token, refresh]);
 
-  const callDirectSaleOrders = useCallback(async (payload: Record<string, unknown>) => {
+  const callDirectSaleOrders = useCallback(<T extends unknown>(
+    payload: Record<string, unknown>,
+    retryAfterBind = true
+  ): Promise<T | null> => (async () => {
     const accessToken = await getAccessToken();
     if (!accessToken) {
       return null;
@@ -186,19 +205,39 @@ export function AdminProducerOrders() {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
+      // Handle DEVICE_NOT_BOUND by attempting to bind and retry once
+      if (response.status === 409 && retryAfterBind) {
+        let errorData: { error?: string } | null = null;
+        try { errorData = await response.json(); } catch { /* ignore */ }
+        if (errorData?.error === 'DEVICE_NOT_BOUND') {
+          const bindResponse = await fetch(`${SUPABASE_URL}/functions/v1/bind-device`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+              'X-Device-Id': deviceId,
+            },
+            body: JSON.stringify({}),
+          });
+          if (bindResponse.ok) {
+            return callDirectSaleOrders<T>(payload, false);
+          }
+        }
+      }
+      const errorText = await response.text().catch(() => '');
       throw new Error(errorText || 'Erreur chargement commandes');
     }
 
-    return response.json();
-  }, [getAccessToken]);
+    const data = (await response.json()) as T;
+    return data;
+  })(), [getAccessToken]);
 
   // Fetch the producer_id linked to this user's profile
   const fetchProducerId = useCallback(async () => {
     if (!session?.user?.id) return;
 
     try {
-      const result = await callDirectSaleOrders({ action: 'producerId' });
+      const result = await callDirectSaleOrders<DirectSaleOrdersProducerIdResponse>({ action: 'producerId' });
       setProducerId(result?.producerId || null);
     } catch (error) {
       console.error('Error fetching producer id:', error);
@@ -227,7 +266,7 @@ export function AdminProducerOrders() {
       const [directSalesData, localMarketData] = await Promise.all([
         // 1. Fetch commandes_vente_directe via Edge Function
         (async () => {
-          const result = await callDirectSaleOrders({
+          const result = await callDirectSaleOrders<DirectSaleOrdersListResponse>({
             action: 'list',
             producerId,
             status: statusFilter === 'all' ? undefined : statusFilter,
@@ -239,9 +278,6 @@ export function AdminProducerOrders() {
         // 2. Fetch local_market_orders (commande directe)
         loadOrdersForProducer(producerId, accessToken),
       ]);
-
-      setOrders(directSalesData);
-      setLocalMarketOrders(localMarketData);
 
       // Create unified orders list for display
       const unified: UnifiedOrder[] = [];
@@ -261,6 +297,7 @@ export function AdminProducerOrders() {
           status: order.statut || 'en_attente',
           statusLabel: statusConfig?.label || order.statut || 'En attente',
           statusColor: statusConfig?.color || '#6B7280',
+          pickupCode: order.pickup_code ?? undefined,
           originalOrder: order,
         });
       }
@@ -313,7 +350,7 @@ export function AdminProducerOrders() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [producerId, statusFilter, loadOrdersForProducer, getAccessToken]);
+  }, [producerId, statusFilter, loadOrdersForProducer, getAccessToken, callDirectSaleOrders]);
 
   useEffect(() => {
     if (producerId) {
@@ -336,7 +373,7 @@ export function AdminProducerOrders() {
     setSelectedOrder(order);
 
     try {
-      const result = await callDirectSaleOrders({ action: 'details', orderId: order.id });
+      const result = await callDirectSaleOrders<DirectSaleOrderDetailsResponse>({ action: 'details', orderId: order.id });
       if (result?.order) {
         setSelectedOrder(result.order);
       }
@@ -356,7 +393,7 @@ export function AdminProducerOrders() {
     setUpdatingStatus(true);
 
     try {
-      const result = await callDirectSaleOrders({
+      const result = await callDirectSaleOrders<DirectSaleOrderUpdateResponse>({
         action: 'updateStatus',
         orderId: selectedOrder.id,
         status: newStatus,
@@ -385,8 +422,18 @@ export function AdminProducerOrders() {
 
       const updatedOrder = result?.order ? result.order : { ...selectedOrder, statut: newStatus };
       setSelectedOrder(updatedOrder);
-      setOrders((prev) =>
-        prev.map((o) => (o.id === selectedOrder.id ? { ...o, statut: newStatus } : o))
+      setUnifiedOrders((prev) =>
+        prev.map((order) =>
+          order.type === 'direct_sale' && order.id === selectedOrder.id
+            ? {
+                ...order,
+                status: newStatus,
+                statusLabel: STATUS_CONFIG[newStatus].label,
+                statusColor: STATUS_CONFIG[newStatus].color,
+                originalOrder: { ...(order.originalOrder as DirectSaleOrder), statut: newStatus },
+              }
+            : order
+        )
       );
     } catch (error) {
       console.error('Error updating order status:', error);
@@ -578,6 +625,15 @@ export function AdminProducerOrders() {
                   </View>
                 )}
 
+                {!isLocalMarket && order.pickupCode && (
+                  <View className="mb-2 flex-row items-center">
+                    <Hash size={12} color={COLORS.primary.gold} />
+                    <Text className="ml-1 text-xs font-mono font-bold" style={{ color: COLORS.primary.gold }}>
+                      Code: {order.pickupCode}
+                    </Text>
+                  </View>
+                )}
+
                 {/* Customer info for local market */}
                 {isLocalMarket && order.customerName && (
                   <View className="flex-row items-center mb-2">
@@ -655,6 +711,17 @@ export function AdminProducerOrders() {
                   {formatDate(selectedOrder.created_at)}
                 </Text>
               </View>
+
+              {selectedOrder.pickup_code && (
+                <View className="mb-4 p-4 rounded-xl items-center" style={{ backgroundColor: 'rgba(212, 168, 83, 0.1)', borderWidth: 2, borderColor: COLORS.primary.gold }}>
+                  <Text className="text-sm mb-1" style={{ color: COLORS.text.muted }}>
+                    Code de retrait
+                  </Text>
+                  <Text className="text-3xl font-bold font-mono tracking-widest" style={{ color: COLORS.primary.gold }}>
+                    {selectedOrder.pickup_code}
+                  </Text>
+                </View>
+              )}
 
               {/* Customer Info */}
               <View className="mb-4 p-4 rounded-xl" style={{ backgroundColor: 'rgba(255, 255, 255, 0.05)' }}>

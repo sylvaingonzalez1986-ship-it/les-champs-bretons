@@ -10,7 +10,6 @@ import Animated, {
   withRepeat,
   withSpring,
   Easing,
-  runOnJS,
 } from 'react-native-reanimated';
 import { Gift, Sparkles } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -38,7 +37,7 @@ export function MysteryBox({ onOpen, isSpinning, price }: MysteryBoxProps) {
       -1,
       true
     );
-  }, []);
+  }, [glow]);
 
   React.useEffect(() => {
     if (isSpinning) {
@@ -59,7 +58,7 @@ export function MysteryBox({ onOpen, isSpinning, price }: MysteryBoxProps) {
         withTiming(1, { duration: 100 })
       );
     }
-  }, [isSpinning]);
+  }, [isSpinning, rotation, scale]);
 
   const handlePress = () => {
     if (isSpinning) return;

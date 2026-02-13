@@ -339,7 +339,7 @@ export default function AdminMusicScreen() {
 
           await loadTracks();
           addedToSupabase = true;
-        } catch (supabaseErr: any) {
+        } catch {
           // Continue to add locally if Supabase fails
         }
       }

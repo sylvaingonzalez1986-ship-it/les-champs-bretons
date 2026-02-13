@@ -58,7 +58,7 @@ const IconBadge = ({
         false
       );
     }
-  }, [animated]);
+  }, [animated, scale]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],

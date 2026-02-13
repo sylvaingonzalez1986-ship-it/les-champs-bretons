@@ -47,6 +47,7 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
   const [isChecking, setIsChecking] = useState(false);
   const [lastOnlineAt, setLastOnlineAt] = useState<number | null>(null);
   const syncInProgress = useRef(false);
+  const syncPendingOrdersRef = useRef<() => Promise<void>>(async () => {});
 
   // Écouter les changements de connexion
   useEffect(() => {
@@ -57,7 +58,7 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
         // On vient de retrouver la connexion
         setLastOnlineAt(Date.now());
         // Tenter de sync les commandes en attente
-        syncPendingOrders();
+        void syncPendingOrdersRef.current();
       }
 
       setIsOnline(online);
@@ -90,7 +91,7 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Récupérer des données en cache
-  const getCachedData = useCallback(async <T,>(key: string): Promise<T | null> => {
+  const getCachedData = useCallback(async <T extends unknown>(key: string): Promise<T | null> => {
     try {
       const cached = await AsyncStorage.getItem(key);
       if (cached) {
@@ -105,7 +106,7 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Sauvegarder des données en cache
-  const setCachedData = useCallback(async <T,>(key: string, data: T): Promise<void> => {
+  const setCachedData = useCallback(async <T extends unknown>(key: string, data: T): Promise<void> => {
     try {
       await AsyncStorage.setItem(key, JSON.stringify(data));
     } catch (error) {
@@ -177,6 +178,10 @@ export function NetworkProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getPendingOrders]);
 
+  useEffect(() => {
+    syncPendingOrdersRef.current = syncPendingOrders;
+  }, [syncPendingOrders]);
+
   return (
     <NetworkContext.Provider
       value={{
@@ -237,7 +242,7 @@ export function useWriteAction<T extends (...args: Parameters<T>) => ReturnType<
       }
       return action(...args);
     }) as T,
-    [action, isOffline, options?.offlineMessage]
+    [action, isOffline]
   );
 
   // Composant wrapper pour ajouter un overlay grisé

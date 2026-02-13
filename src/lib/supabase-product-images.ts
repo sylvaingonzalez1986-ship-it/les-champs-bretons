@@ -4,8 +4,9 @@
  */
 
 import { getSupabaseConfig, SUPABASE_URL, SUPABASE_ANON_KEY } from './env-validation';
-import { getSession, getValidSession } from './supabase-auth';
+import { getValidSession } from './supabase-auth';
 import { ensureDeviceId } from './device-id';
+import { isLikelyLocalPath } from './storage-utils';
 import * as Crypto from 'expo-crypto';
 
 export const PRODUCT_IMAGES_BUCKET = 'product-images';
@@ -192,8 +193,7 @@ function isProductImagesUrl(url: string): boolean {
 export async function getSignedProductImageUrl(path: string, expiresIn = 3600): Promise<string> {
   if (!path) return '';
 
-  const isRemote = path.startsWith('http://') || path.startsWith('https://');
-  const isLocal = path.startsWith('file://') || path.startsWith('/data/') || path.includes('/cache/');
+  const isLocal = isLikelyLocalPath(path);
   if (isLocal) return path;
 
   if (!isProductImagesUrl(path)) {
@@ -204,7 +204,7 @@ export async function getSignedProductImageUrl(path: string, expiresIn = 3600): 
     return path;
   }
 
-  const session = getSession();
+  const session = await getValidSession();
   if (!session?.access_token) {
     return path;
   }

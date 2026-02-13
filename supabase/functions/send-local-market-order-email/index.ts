@@ -85,6 +85,7 @@ const emailSchema = z.string().email('Invalid email format').max(255);
 const quantitySchema = z.number().int().positive().max(10000);
 const priceSchema = z.number().positive().max(999999.99);
 const deliveryMethodSchema = z.enum(['pickup', 'shipping']);
+const paymentMethodSchema = z.enum(['payment_link', 'on_site']);
 
 const localMarketOrderEmailSchema = z.object({
   orderId: uuidSchema,
@@ -101,6 +102,7 @@ const localMarketOrderEmailSchema = z.object({
   pickupLocation: z.string().max(200).optional(),
   pickupInstructions: z.string().max(500).optional(),
   deliveryMethod: deliveryMethodSchema.optional(),
+  paymentMethod: paymentMethodSchema.optional(),
   deliveryFee: z.number().min(0).max(999999.99).optional(),
   deliveryAddress: z.string().max(500).optional(),
   deliveryInstructions: z.string().max(1000).optional(),
@@ -241,7 +243,7 @@ function createValidatedHandler<T>(
 }
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
-const COMPANY_EMAIL = 'leschanvriersbretons@gmail.com';
+const COMPANY_EMAIL = 'leschanvriersunis@gmail.com';
 
 type LocalMarketOrderEmailRequest = LocalMarketOrderEmailInput;
 
@@ -289,14 +291,16 @@ async function sendEmail(
 // Générer le HTML de l'email pour le producteur
 function generateProducerEmailHTML(data: LocalMarketOrderEmailRequest): string {
   const resolvedDeliveryMethod = data.deliveryMethod ?? 'pickup';
+  const resolvedPaymentMethod = data.paymentMethod ?? (resolvedDeliveryMethod === 'shipping' ? 'payment_link' : 'on_site');
   const isShipping = resolvedDeliveryMethod === 'shipping';
   const resolvedDeliveryFee = Number(data.deliveryFee ?? 0);
+  const paymentMethodLabel = resolvedPaymentMethod === 'payment_link' ? 'Lien de paiement à distance' : 'Paiement sur place';
   const actionNotice = isShipping
     ? 'Contactez le client pour lui communiquer vos instructions de paiement à distance. La commande sera expédiée une fois le paiement reçu.'
     : 'Préparez la commande et attendez le client avec le code ci-dessus.';
-  const paymentNotice = isShipping
-    ? 'Le paiement s\'effectue à distance avant l\'expédition.'
-    : 'Le paiement s\'effectue sur place lors du retrait.';
+  const paymentNotice = resolvedPaymentMethod === 'payment_link'
+    ? 'Le client a choisi un paiement à distance via lien de paiement.'
+    : 'Le client a choisi un paiement sur place au retrait.';
 
   return `
     <!DOCTYPE html>
@@ -360,6 +364,10 @@ function generateProducerEmailHTML(data: LocalMarketOrderEmailRequest): string {
                 <div class="info-row">
                   <span class="info-label">Mode</span>
                   <span class="info-value">${isShipping ? 'Livraison' : 'Retrait'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Paiement choisi</span>
+                  <span class="info-value">${paymentMethodLabel}</span>
                 </div>
                 ${isShipping ? `
                 <div class="info-row">
@@ -440,15 +448,17 @@ function generateProducerEmailHTML(data: LocalMarketOrderEmailRequest): string {
 // Générer le HTML de l'email de confirmation pour le client
 function generateCustomerEmailHTML(data: LocalMarketOrderEmailRequest): string {
   const resolvedDeliveryMethod = data.deliveryMethod ?? 'pickup';
+  const resolvedPaymentMethod = data.paymentMethod ?? (resolvedDeliveryMethod === 'shipping' ? 'payment_link' : 'on_site');
   const isShipping = resolvedDeliveryMethod === 'shipping';
   const resolvedDeliveryFee = Number(data.deliveryFee ?? 0);
+  const paymentMethodLabel = resolvedPaymentMethod === 'payment_link' ? 'Lien de paiement à distance' : 'Paiement sur place';
   const codeLabel = isShipping ? 'VOTRE CODE DE COMMANDE' : 'VOTRE CODE DE RETRAIT';
   const codeNote = isShipping
     ? 'Gardez ce code pour le suivi de votre commande'
     : 'Présentez ce code au producteur lors du retrait';
-  const paymentNotice = isShipping
-    ? 'Le paiement s\'effectue à distance en suivant les instructions du producteur reçues par email. Votre commande sera expédiée une fois le paiement reçu.'
-    : 'Le paiement s\'effectue directement auprès du producteur lors du retrait de votre commande.';
+  const paymentNotice = resolvedPaymentMethod === 'payment_link'
+    ? 'Le producteur vous enverra un lien de paiement à distance. Votre commande sera validée après paiement.'
+    : 'Le paiement s\'effectue directement auprès du producteur lors du retrait.';
 
   return `
     <!DOCTYPE html>
@@ -514,6 +524,10 @@ function generateCustomerEmailHTML(data: LocalMarketOrderEmailRequest): string {
                 <div class="info-row">
                   <span class="info-label">Mode</span>
                   <span class="info-value">${isShipping ? 'Livraison' : 'Retrait'}</span>
+                </div>
+                <div class="info-row">
+                  <span class="info-label">Paiement choisi</span>
+                  <span class="info-value">${paymentMethodLabel}</span>
                 </div>
                 ${isShipping ? `
                 <div class="info-row">
@@ -585,6 +599,12 @@ const handler = createValidatedHandler<LocalMarketOrderEmailInput>(
     functionName: 'send-local-market-order-email',
   },
   async ({ user, data, supabase, responseCorsHeaders }) => {
+    const { data: orderData } = await supabase
+      .from('local_market_orders')
+      .select('id, customer_id')
+      .eq('id', data.orderId)
+      .single();
+
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
@@ -592,8 +612,9 @@ const handler = createValidatedHandler<LocalMarketOrderEmailInput>(
       .single();
 
     const role = profile?.role ?? 'user';
-    if (role !== 'producer' && role !== 'admin') {
-      return new Response(JSON.stringify({ error: 'FORBIDDEN', message: 'Producer or admin role required' }), {
+    const isOrderOwner = orderData?.customer_id === user.id;
+    if (role !== 'producer' && role !== 'admin' && !isOrderOwner) {
+      return new Response(JSON.stringify({ error: 'FORBIDDEN', message: 'Not allowed to trigger this email' }), {
         status: 403,
         headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
       });

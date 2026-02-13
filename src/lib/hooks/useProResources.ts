@@ -56,7 +56,12 @@ export function useProResources(categoryId?: string) {
     : query.data;
 
   return {
-    ...query,
     data: filtered,
+    isLoading: query.isLoading,
+    isFetching: query.isFetching,
+    isError: query.isError,
+    error: query.error,
+    refetch: query.refetch,
+    status: query.status,
   };
 }

@@ -71,7 +71,7 @@ export const useCustomerInfoStore = create<CustomerInfoStore>()(
           postalCode: 'Code postal',
         };
 
-        (Object.keys(fieldLabels) as Array<keyof CustomerInfo>).forEach((key) => {
+        (Object.keys(fieldLabels) as (keyof CustomerInfo)[]).forEach((key) => {
           if (!info[key]?.trim()) {
             missingFields.push(fieldLabels[key]);
           }

@@ -1,4 +1,4 @@
-import SecureStorage, { initializeSecureStorage } from './secure-storage';
+import { initializeSecureStorage, getItem, setItem } from './secure-storage';
 
 const DEVICE_ID_KEY = 'device-id';
 
@@ -19,14 +19,14 @@ export async function ensureDeviceId(): Promise<string> {
   if (cachedDeviceId) return cachedDeviceId;
 
   await initializeSecureStorage();
-  const stored = await SecureStorage.getItem(DEVICE_ID_KEY);
+  const stored = await getItem(DEVICE_ID_KEY);
   if (stored) {
     cachedDeviceId = stored;
     return stored;
   }
 
   const deviceId = generateDeviceId();
-  await SecureStorage.setItem(DEVICE_ID_KEY, deviceId);
+  await setItem(DEVICE_ID_KEY, deviceId);
   cachedDeviceId = deviceId;
   return deviceId;
 }

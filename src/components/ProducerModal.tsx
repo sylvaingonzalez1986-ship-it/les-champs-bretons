@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, ScrollView, Pressable, Image, Modal, Dimensions } from 'react-native';
+import { View, ScrollView, Pressable, Image, Modal } from 'react-native';
 import { Text, TextInput } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, MapPin, Thermometer, CloudRain, Leaf, ShoppingCart, Plus, Check, Package, Star, MessageCircle, Send, Edit3, Play, ChevronLeft, ChevronRight, Truck } from 'lucide-react-native';
@@ -67,7 +67,7 @@ const ProductCard = ({ product, producer, onEdit }: { product: ProducerProduct; 
     }
     // Fallback to the passed product
     return product;
-  }, [customProducers, producer.id, product.id]);
+  }, [customProducers, producer.id, product]);
 
   // Check if product is on promo - use currentProduct which has the latest data
   const productHasPromo = !!(currentProduct.isOnPromo && currentProduct.promoPercent && currentProduct.promoPercent > 0);

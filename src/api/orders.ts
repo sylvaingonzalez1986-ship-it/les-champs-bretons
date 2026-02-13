@@ -32,7 +32,7 @@ export function useProducerOrdersInfinite(
   enabled: boolean
 ) {
   return useInfiniteQuery<Order[]>({
-    queryKey: ['orders', 'producer', 'paged', producerId],
+    queryKey: ['orders', 'producer', 'paged', producerId, pageSize],
     enabled: enabled && !!producerId,
     initialPageParam: 0,
     queryFn: ({ pageParam }) => {
@@ -54,7 +54,7 @@ export function useProducerLocalOrdersQuery(producerId: string, accessToken: str
   const loadOrdersForProducer = useLocalMarketOrders((s) => s.loadOrdersForProducer);
 
   return useQuery<LocalMarketOrder[]>({
-    queryKey: ['orders', 'local-market', producerId],
+    queryKey: ['orders', 'local-market', producerId, accessToken],
     queryFn: () => loadOrdersForProducer(producerId, accessToken),
     enabled: !!producerId && !!accessToken,
     staleTime: 60 * 1000,
@@ -64,7 +64,7 @@ export function useProducerLocalOrdersQuery(producerId: string, accessToken: str
 export function useAdminOrdersQuery(enabled: boolean): UseQueryResult<Order[]> {
   return useQuery<Order[]>({
     queryKey: ['orders', 'admin'],
-    queryFn: fetchOrders,
+    queryFn: () => fetchOrders(),
     enabled,
     staleTime: 30 * 1000,
     refetchInterval: enabled ? 30 * 1000 : false,
@@ -76,7 +76,7 @@ export function useUserOrdersQuery(enabled: boolean): UseQueryResult<Order[]> {
 
   return useQuery<Order[]>({
     queryKey: ['orders', 'user', session?.user?.id],
-    queryFn: fetchOrders,
+    queryFn: () => fetchOrders(),
     enabled: enabled && !!session?.access_token,
     staleTime: 30 * 1000,
   });

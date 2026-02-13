@@ -25,7 +25,7 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 interface OrderRecapData {
   orderId: string;
   customerInfo: CustomerInfo;
-  items: Array<{
+  items: {
     productId: string;
     productName: string;
     productType: string;
@@ -34,7 +34,7 @@ interface OrderRecapData {
     quantity: number;
     unitPrice: number;
     totalPrice: number;
-  }>;
+  }[];
   subtotal: number;
   shippingFee: number;
   total: number;

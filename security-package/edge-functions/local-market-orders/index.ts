@@ -176,7 +176,7 @@ function createValidatedHandler<T>(
       return new Response(JSON.stringify({
         error: 'VALIDATION_ERROR',
         message: 'Request validation failed',
-        details: validation.error.errors.map(err => ({
+        details: validation.error.errors.map((err: { path: (string | number)[]; message: string }) => ({
           path: err.path.join('.'),
           message: err.message,
         })),

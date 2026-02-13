@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Tab Visibility Store - for controlling which tabs are visible per role
-export type TabId = 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'marche-local' | 'reseau-pro' | 'gestion';
+export type TabId = 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'ma-boutique' | 'marche-local' | 'reseau-pro' | 'gestion';
 
 // Role-based visibility
 export type TabRole = 'client' | 'pro' | 'producer';
@@ -31,14 +31,13 @@ interface TabVisibilityStore {
 }
 
 const DEFAULT_TABS: TabConfig[] = [
-  { id: 'map', name: 'Carte', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
+  { id: 'map', name: 'Carte', visible: true, roleVisibility: { client: false, pro: true, producer: true } },
   { id: 'music', name: 'Musique', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
   { id: 'packs', name: 'Packs', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
   { id: 'promo', name: 'Promo', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
-  { id: 'regions', name: 'Régions', visible: true, roleVisibility: { client: false, pro: true, producer: false } },
   { id: 'produits', name: 'Produits', visible: true, roleVisibility: { client: true, pro: true, producer: true } },
   { id: 'ma-boutique', name: 'Ma Boutique', visible: true, roleVisibility: { client: false, pro: false, producer: true } },
-  { id: 'reseau-pro', name: 'Réseau Pro', visible: true, roleVisibility: { client: false, pro: false, producer: true } },
+  { id: 'reseau-pro', name: 'Réseau Pro', visible: true, roleVisibility: { client: false, pro: true, producer: true } },
   { id: 'gestion', name: 'Gestion', visible: true, roleVisibility: { client: false, pro: true, producer: true } },
   { id: 'cart', name: 'Panier', visible: true, roleVisibility: { client: true, pro: true, producer: false } },
   { id: 'tirage', name: 'Tirage', visible: true, roleVisibility: { client: true, pro: false, producer: false } },
@@ -84,9 +83,9 @@ export const useTabVisibilityStore = create<TabVisibilityStore>()(
         // If no role (not logged in), treat as client
         const effectiveRole = role ?? 'client';
 
-        // Enforce pro tabs: Carte / Chat / Profil only
+        // Enforce pro tabs: Carte / Chat / Réseau Pro / Profil only
         if (effectiveRole === 'pro') {
-          const proAllowed: TabId[] = ['map', 'cart', 'profile', 'gestion'];
+          const proAllowed: TabId[] = ['map', 'cart', 'profile', 'gestion', 'reseau-pro'];
           return proAllowed.includes(tabId);
         }
 
@@ -100,24 +99,25 @@ export const useTabVisibilityStore = create<TabVisibilityStore>()(
     }),
     {
       name: 'cbd-tab-visibility-storage',
+      version: 2, // Increment to force reset when defaults change
       storage: createJSONStorage(() => AsyncStorage),
+      // On version change, discard persisted state and use new defaults
+      migrate: () => ({
+        tabs: DEFAULT_TABS,
+      }),
       // Merge persisted tabs with default tabs to ensure new tabs are added
       merge: (persistedState, currentState) => {
         const persisted = persistedState as Partial<TabVisibilityStore>;
         const persistedTabs = persisted?.tabs ?? [];
 
-        // Ensure all default tabs exist, preserving visibility from persisted state
+        // Ensure all default tabs exist, using defaults for roleVisibility
         const mergedTabs = DEFAULT_TABS.map((defaultTab) => {
           const existingTab = persistedTabs.find((t) => t.id === defaultTab.id);
           if (existingTab) {
-            // Merge roleVisibility with defaults to handle new roles
             return {
               ...defaultTab,
-              ...existingTab,
-              roleVisibility: {
-                ...defaultTab.roleVisibility,
-                ...existingTab.roleVisibility,
-              },
+              // Always use default roleVisibility — admin manages tabs server-side
+              roleVisibility: defaultTab.roleVisibility,
             };
           }
           return defaultTab;
@@ -125,7 +125,6 @@ export const useTabVisibilityStore = create<TabVisibilityStore>()(
 
         return {
           ...currentState,
-          ...persisted,
           tabs: mergedTabs,
         };
       },

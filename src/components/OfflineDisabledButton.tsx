@@ -39,8 +39,6 @@ export function OfflineDisabledButton({
   const [showTooltip, setShowTooltip] = useState(false);
   const shakeX = useSharedValue(0);
 
-  const isDisabled = disabled || isOffline;
-
   const handlePress = () => {
     if (isOffline) {
       // Feedback visuel et haptique pour action bloquée

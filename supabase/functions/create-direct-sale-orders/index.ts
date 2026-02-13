@@ -10,8 +10,17 @@ const itemSchema = z.object({
   quantity: z.number().int().positive().max(10000),
 });
 
+const producerOptionSchema = z.object({
+  producerId: z.string().min(1),
+  deliveryMethod: z.enum(['pickup', 'shipping']).default('pickup'),
+  deliveryAddress: z.string().max(500).optional(),
+  deliveryInstructions: z.string().max(1000).optional(),
+  paymentMethod: z.enum(['payment_link', 'on_site']).optional(),
+});
+
 const directSaleOrderSchema = z.object({
   items: z.array(itemSchema).min(1),
+  producerOptions: z.array(producerOptionSchema).optional(),
 });
 
 type DirectSaleOrderInput = z.infer<typeof directSaleOrderSchema>;
@@ -20,6 +29,13 @@ function jsonResponse(payload: unknown, status = 200, corsHeaders: Record<string
   return new Response(JSON.stringify(payload), {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+function logOrderError(stage: string, producerId: string, error: unknown) {
+  console.error(`[create-direct-sale-orders] ${stage}`, {
+    producerId,
+    error,
   });
 }
 
@@ -45,11 +61,12 @@ async function getUserFromRequest(req: Request) {
   return { user: data.user };
 }
 
-// UUID validation regex to prevent PostgREST injection
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function isValidUUID(id: string): boolean {
-  return UUID_REGEX.test(id);
+function isSafeIdentifier(id: string): boolean {
+  const trimmed = id.trim();
+  if (!trimmed) return false;
+  if (trimmed.length > 128) return false;
+  // Disallow whitespace/control chars to keep identifiers predictable.
+  return !/[\s\x00-\x1F\x7F]/.test(trimmed);
 }
 
 // Create service client per-request to avoid race conditions
@@ -105,15 +122,23 @@ serve(async (req) => {
     return createRateLimitResponse(rateLimitResult, RATE_LIMIT_PRESETS.ORDERS, responseCorsHeaders);
   }
 
-  const { items } = parsed.data;
+  const { items, producerOptions } = parsed.data;
 
-  // Validate all UUIDs to prevent PostgREST injection
+  // Validate producer/product identifiers (text ids in this schema).
   for (const item of items) {
-    if (!isValidUUID(item.producerId)) {
+    if (!isSafeIdentifier(item.producerId)) {
       return jsonResponse({ error: 'INVALID_PRODUCER_ID' }, 400, responseCorsHeaders);
     }
-    if (!isValidUUID(item.productId)) {
+    if (!isSafeIdentifier(item.productId)) {
       return jsonResponse({ error: 'INVALID_PRODUCT_ID' }, 400, responseCorsHeaders);
+    }
+  }
+
+  if (producerOptions) {
+    for (const option of producerOptions) {
+      if (!isSafeIdentifier(option.producerId)) {
+        return jsonResponse({ error: 'INVALID_PRODUCER_ID' }, 400, responseCorsHeaders);
+      }
     }
   }
 
@@ -131,10 +156,43 @@ serve(async (req) => {
 
   const orderIds: string[] = [];
   const errors: Array<{ producerId: string; reason: string }> = [];
+  const optionsByProducer = new Map(
+    (producerOptions ?? []).map((option) => [option.producerId, option])
+  );
 
   const authHeader = req.headers.get('Authorization') || '';
 
   for (const [producerId, producerItems] of itemsByProducer.entries()) {
+    const producerOption = optionsByProducer.get(producerId);
+    const deliveryMethod = producerOption?.deliveryMethod ?? 'pickup';
+    const deliveryAddress = producerOption?.deliveryAddress?.trim() || null;
+    const deliveryInstructions = producerOption?.deliveryInstructions?.trim() || null;
+    const paymentMethod = deliveryMethod === 'shipping'
+      ? 'payment_link'
+      : (producerOption?.paymentMethod ?? 'on_site');
+
+    const { data: producer, error: producerError } = await serviceClient
+      .from('producers')
+      .select('id, shipping_enabled, shipping_fee')
+      .eq('id', producerId)
+      .single();
+
+    if (producerError || !producer) {
+      logOrderError('producer_lookup_failed', producerId, producerError);
+      errors.push({ producerId, reason: 'Producer not found' });
+      continue;
+    }
+
+    if (deliveryMethod === 'shipping' && !producer.shipping_enabled) {
+      errors.push({ producerId, reason: 'Shipping not available for this producer' });
+      continue;
+    }
+
+    if (deliveryMethod === 'shipping' && !deliveryAddress) {
+      errors.push({ producerId, reason: 'Delivery address required for shipping' });
+      continue;
+    }
+
     const payloadItems = producerItems.map((item: { productId: string; producerId: string; quantity: number }) => ({
       productId: item.productId,
       quantity: item.quantity,
@@ -150,13 +208,46 @@ serve(async (req) => {
       );
 
       if (orderError || !orderId) {
+        logOrderError('rpc_create_direct_sale_order_failed', producerId, orderError);
         const message = orderError?.message ?? '';
         let reason = 'Failed to create order';
         if (message.includes('PRODUCER_NOT_FOUND')) reason = 'Producer not found';
         if (message.includes('INVALID_PRODUCT')) reason = 'Invalid product for producer';
         if (message.includes('INVALID_QUANTITY')) reason = 'Invalid quantity';
         if (message.includes('MINIMUM_AMOUNT_NOT_MET')) reason = 'Minimum amount not met';
+        if (message.toLowerCase().includes('row-level security')) reason = 'RLS policy blocked order creation';
+        if (message.toLowerCase().includes('permission denied')) reason = 'Permission denied while creating order';
+        if (message.toLowerCase().includes('does not exist')) reason = 'Database function or table missing';
+        if (message.toLowerCase().includes('check constraint')) reason = 'Order failed database validation';
+        if (reason === 'Failed to create order' && message.trim().length > 0) {
+          reason = `Failed to create order: ${message.trim()}`;
+        }
         errors.push({ producerId, reason });
+        continue;
+      }
+
+      const resolvedDeliveryFee = deliveryMethod === 'shipping'
+        ? Number(producer.shipping_fee ?? 0)
+        : 0;
+
+      const { error: orderUpdateError } = await serviceClient
+        .from('commandes_vente_directe')
+        .update({
+          delivery_method: deliveryMethod,
+          delivery_fee: resolvedDeliveryFee,
+          delivery_address: deliveryMethod === 'shipping' ? deliveryAddress : null,
+          delivery_instructions: deliveryMethod === 'shipping' ? deliveryInstructions : null,
+          payment_method: paymentMethod,
+        })
+        .eq('id', orderId as string);
+
+      if (orderUpdateError) {
+        logOrderError('order_delivery_update_failed', producerId, orderUpdateError);
+        await serviceClient
+          .from('commandes_vente_directe')
+          .delete()
+          .eq('id', orderId as string);
+        errors.push({ producerId, reason: 'Failed to save delivery options' });
         continue;
       }
 

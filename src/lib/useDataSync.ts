@@ -2,10 +2,10 @@
 // This loads producers, products, packs, and promo products for all users
 // With offline-first support: loads from cache first, then syncs from server
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
-import { useProducerStore, usePacksStore, usePromoProductsStore, useLotsStore } from './store';
+import { useProducerStore, usePacksStore, usePromoProductsStore, useLotsStore, Pack, PromoProduct, Lot } from './store';
 import {
   isSupabaseSyncConfigured,
   fetchAllProducersWithProducts,
@@ -14,7 +14,6 @@ import {
   fetchAllLotsWithItems,
 } from './supabase-sync';
 import { Producer } from './producers';
-import { Pack, PromoProduct, Lot } from './store';
 
 // Minimum time between syncs (5 minutes)
 const MIN_SYNC_INTERVAL = 5 * 60 * 1000;
@@ -295,8 +294,6 @@ export function useDataSync() {
           setSyncState({ status: 'idle' });
         }, 2000);
       } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Erreur de synchronisation';
         console.warn('[DataSync] Error syncing data:', error);
 
         // Keep using cached data
@@ -404,8 +401,6 @@ export async function forceDataSync(): Promise<{
 
     return { success: !hasPartialFailure || hasAnyData, isUsingCache: hasPartialFailure };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : 'Erreur de synchronisation';
     console.warn('[DataSync] Force sync error:', error);
 
     setSyncState({

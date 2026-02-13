@@ -19,7 +19,6 @@ import {
   validateSafe,
   validateArraySafe,
   toUserError,
-  USER_ERROR_MESSAGES,
   sanitizeString,
 } from './validation';
 import { PriceTier } from './producers';

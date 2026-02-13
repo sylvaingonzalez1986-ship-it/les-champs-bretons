@@ -101,8 +101,6 @@ export function ShopProductDetailModal({
   const displayImages = resolvedImages.length > 0 ? resolvedImages : images;
   const hasMultipleImages = displayImages.length > 1;
 
-  const imagesKey = useMemo(() => images.join('|'), [images]);
-
   const safeVideoUrl = useMemo(() => {
     if (!product?.videoUrl) return null;
     return isAllowedVideoUrl(product.videoUrl) ? product.videoUrl : null;
@@ -129,7 +127,7 @@ export function ShopProductDetailModal({
     return () => {
       isMounted = false;
     };
-  }, [imagesKey]);
+  }, [images]);
 
   useEffect(() => {
     if (!safeVideoUrl) {

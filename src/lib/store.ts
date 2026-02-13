@@ -1,4 +1,4 @@
-﻿export { useSoundStore } from './stores/sound-store';
+export { useSoundStore } from './stores/sound-store';
 export { useAudioStore } from './stores/audio-store';
 export type { Track } from './stores/audio-store';
 export { SUBSCRIPTION_CONFIG, useSubscriptionStore } from './stores/subscription-store';

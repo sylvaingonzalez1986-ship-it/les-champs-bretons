@@ -50,7 +50,7 @@ export default function EmailConfirmedScreen() {
           });
 
           if (response.ok) {
-            const userData = await response.json();
+            await response.json();
             setStatus('success');
           } else {
             console.warn('[EmailConfirmed] Token validation failed:', response.status);

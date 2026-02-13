@@ -4,14 +4,13 @@
  * Inclut un visualiseur pour les documents uploadés
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Pressable,
   Modal,
   ActivityIndicator,
   Alert,
-  Image,
   ScrollView,
   Dimensions,
   Platform,
@@ -38,6 +37,7 @@ import {
 import { COLORS } from '@/lib/colors';
 import { getSupabaseConfig } from '@/lib/env-validation';
 import { getSession } from '@/lib/supabase-auth';
+import { isLikelyLocalPath } from '@/lib/storage-utils';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
@@ -54,11 +54,7 @@ function PdfViewer({ uri }: { uri: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadPdf();
-  }, [uri]);
-
-  const loadPdf = async () => {
+  const loadPdf = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -96,7 +92,7 @@ function PdfViewer({ uri }: { uri: string }) {
           base64Data = await FileSystem.readAsStringAsync(destUri, {
             encoding: FileSystem.EncodingType.Base64,
           });
-        } catch (copyError) {
+        } catch {
           // Essayer avec l'URI originale
           try {
             await FileSystem.copyAsync({
@@ -106,13 +102,13 @@ function PdfViewer({ uri }: { uri: string }) {
             base64Data = await FileSystem.readAsStringAsync(destUri, {
               encoding: FileSystem.EncodingType.Base64,
             });
-          } catch (secondError) {
+          } catch {
             // Dernier recours: essayer de lire directement
             try {
               base64Data = await FileSystem.readAsStringAsync(uri, {
                 encoding: FileSystem.EncodingType.Base64,
               });
-            } catch (readError) {
+            } catch {
               throw new Error('Fichier non accessible. Veuillez réessayer de sélectionner le document.');
             }
           }
@@ -126,7 +122,11 @@ function PdfViewer({ uri }: { uri: string }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [uri]);
+
+  useEffect(() => {
+    loadPdf();
+  }, [loadPdf]);
 
   if (loading) {
     return (
@@ -345,7 +345,7 @@ export function LabAnalysisUploader({
       }
 
       const isRemote = value.startsWith('http://') || value.startsWith('https://');
-      const isLocal = value.startsWith('file://') || value.startsWith('/data/') || value.includes('/cache/');
+      const isLocal = isLikelyLocalPath(value);
       if (isRemote || isLocal) {
         setResolvedValue(value);
         return;
@@ -425,7 +425,7 @@ export function LabAnalysisUploader({
             encoding: FileSystem.EncodingType.Base64,
           });
           onUpload(destUri, file.name, file.mimeType || 'application/pdf');
-        } catch (readWriteError) {
+        } catch {
           // Fallback: essayer la copie directe
           try {
             await FileSystem.copyAsync({
@@ -433,7 +433,7 @@ export function LabAnalysisUploader({
               to: destUri,
             });
             onUpload(destUri, file.name, file.mimeType || 'application/pdf');
-          } catch (copyError) {
+          } catch {
             // Dernier recours: utiliser l'URI originale (peut ne pas fonctionner plus tard)
             onUpload(file.uri, file.name, file.mimeType || 'application/pdf');
             Alert.alert(
@@ -530,7 +530,7 @@ export function LabAnalysisUploader({
       }
 
       // Pour les fichiers locaux (file://), on doit les copier dans un répertoire accessible
-      if (displayValue.startsWith('file://') || displayValue.startsWith('/data/')) {
+      if (isLikelyLocalPath(displayValue)) {
         const FileSystem = await import('expo-file-system');
 
         // Déterminer l'extension du fichier
@@ -996,3 +996,4 @@ export function LabAnalysisUploader({
     </View>
   );
 }
+

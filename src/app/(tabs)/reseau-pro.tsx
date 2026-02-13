@@ -11,6 +11,7 @@ import {
   Pressable,
   ActivityIndicator,
   RefreshControl,
+  Linking,
 } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,6 +27,7 @@ import {
   Search,
   X,
   Folder,
+  Users,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
@@ -38,6 +40,8 @@ import type { ProResourceCategory, ProResource } from '@/types/pro-resources';
  * Slug → Icon mapping. If admin adds a new category via DB,
  * it gets the fallback Folder icon. No runtime crash.
  */
+const SIGNAL_GROUP_URL = 'https://signal.group/#CjQKIL5CUggt4OrebPgc7zjsc_h_AzrSw8I6k3QPM2l4MTkAEhDN8aN4Rmj_6F7NA8Dkved1';
+
 const CATEGORY_ICONS: Record<string, LucideIcon> = {
   formation: GraduationCap,
   semences: Sprout,
@@ -51,7 +55,7 @@ function getCategoryIcon(slug: string): LucideIcon {
 
 export default function ReseauProScreen() {
   const insets = useSafeAreaInsets();
-  const { isProducer, isAdmin } = usePermissions();
+  const { isPro, isProducer, isAdmin } = usePermissions();
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedResource, setSelectedResource] = useState<ProResource | null>(null);
@@ -118,11 +122,11 @@ export default function ReseauProScreen() {
 
   const modalCategory = selectedResource ? getCategoryForResource(selectedResource) : null;
 
-  // Guard: producers and admins only
-  if (!isProducer && !isAdmin) {
+  // Guard: pros, producers and admins only
+  if (!isPro && !isProducer && !isAdmin) {
     return (
       <View className="flex-1 items-center justify-center" style={{ backgroundColor: COLORS.background.nightSky }}>
-        <Text style={{ color: COLORS.text.muted }}>Accès réservé aux producteurs</Text>
+        <Text style={{ color: COLORS.text.muted }}>Accès réservé aux professionnels</Text>
       </View>
     );
   }
@@ -315,6 +319,44 @@ export default function ReseauProScreen() {
             </View>
           )}
         </View>
+
+        {/* Signal Group CTA */}
+        <Animated.View entering={FadeInUp.duration(400).delay(500)} className="px-5 mt-6">
+          <View
+            className="rounded-2xl p-4"
+            style={{
+              backgroundColor: 'rgba(16, 185, 129, 0.12)',
+              borderWidth: 1.5,
+              borderColor: 'rgba(16, 185, 129, 0.35)',
+            }}
+          >
+            <View className="flex-row items-start">
+              <View
+                className="w-10 h-10 rounded-full items-center justify-center mr-3"
+                style={{ backgroundColor: 'rgba(16, 185, 129, 0.25)' }}
+              >
+                <Users size={20} color="#10B981" />
+              </View>
+              <View className="flex-1">
+                <Text style={{ color: COLORS.text.cream }} className="font-semibold">
+                  Des questions ? Des idées ? Besoin d'aide ?
+                </Text>
+                <Text className="text-emerald-200 text-sm mt-1">
+                  Rejoins la commu sur Signal
+                </Text>
+              </View>
+            </View>
+            <Pressable
+              onPress={() => Linking.openURL(SIGNAL_GROUP_URL)}
+              className="mt-3 py-2.5 rounded-xl items-center justify-center active:opacity-80"
+              style={{ backgroundColor: '#10B981' }}
+            >
+              <Text style={{ color: '#fff' }} className="font-bold">
+                Rejoindre le groupe Signal
+              </Text>
+            </Pressable>
+          </View>
+        </Animated.View>
       </ScrollView>
 
       {/* Full-screen Pokémon card modal */}

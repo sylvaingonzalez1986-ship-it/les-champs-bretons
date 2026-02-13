@@ -137,7 +137,7 @@ export interface OpenAIChatOptions {
 export async function openaiChat(options: OpenAIChatOptions) {
   const { model = 'gpt-4o-mini', messages, temperature = 0.7, max_tokens = 1000, accessToken } = options;
 
-  return callAIProxy<{ choices: Array<{ message: { content: string } }> }>('openai', {
+  return callAIProxy<{ choices: { message: { content: string } }[] }>('openai', {
     endpoint: '/v1/chat/completions',
     body: { model, messages, temperature, max_tokens },
     accessToken,
@@ -155,7 +155,7 @@ export interface OpenAIImageOptions {
 export async function openaiGenerateImage(options: OpenAIImageOptions) {
   const { prompt, model = 'dall-e-3', size = '1024x1024', quality = 'standard', accessToken } = options;
 
-  return callAIProxy<{ data: Array<{ url: string }> }>('openai', {
+  return callAIProxy<{ data: { url: string }[] }>('openai', {
     endpoint: '/v1/images/generations',
     body: { prompt, model, size, quality, n: 1 },
     accessToken,
@@ -182,7 +182,7 @@ export interface AnthropicChatOptions {
 export async function anthropicChat(options: AnthropicChatOptions) {
   const { model = 'claude-3-haiku-20240307', messages, system, max_tokens = 1000, accessToken } = options;
 
-  return callAIProxy<{ content: Array<{ text: string }> }>('anthropic', {
+  return callAIProxy<{ content: { text: string }[] }>('anthropic', {
     endpoint: '/v1/messages',
     body: { model, messages, system, max_tokens },
     accessToken,
@@ -202,7 +202,7 @@ export interface GoogleChatOptions {
 export async function googleChat(options: GoogleChatOptions) {
   const { model = 'gemini-1.5-flash', prompt, accessToken } = options;
 
-  return callAIProxy<{ candidates: Array<{ content: { parts: Array<{ text: string }> } }> }>('google', {
+  return callAIProxy<{ candidates: { content: { parts: { text: string }[] } }[] }>('google', {
     endpoint: `/v1/models/${model}:generateContent`,
     body: {
       contents: [{ parts: [{ text: prompt }] }],
@@ -224,7 +224,7 @@ export interface GrokChatOptions {
 export async function grokChat(options: GrokChatOptions) {
   const { model = 'grok-beta', messages, accessToken } = options;
 
-  return callAIProxy<{ choices: Array<{ message: { content: string } }> }>('grok', {
+  return callAIProxy<{ choices: { message: { content: string } }[] }>('grok', {
     endpoint: '/v1/chat/completions',
     body: { model, messages },
     accessToken,
@@ -259,7 +259,7 @@ export interface ElevenLabsVoicesOptions {
 export async function elevenlabsGetVoices(options: ElevenLabsVoicesOptions) {
   const { accessToken } = options;
 
-  return callAIProxy<{ voices: Array<{ voice_id: string; name: string }> }>('elevenlabs', {
+  return callAIProxy<{ voices: { voice_id: string; name: string }[] }>('elevenlabs', {
     endpoint: '/v1/voices',
     method: 'GET',
     accessToken,

@@ -13,6 +13,7 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase-auth';
 interface OrderData {
   id: string;
   producer_id: string;
+  pickup_code?: string | null;
   total: number;
   statut: string;
   adresse_retrait: string;
@@ -33,7 +34,7 @@ function useDirectSaleOrdersByIds(orderIds: string[]) {
   }, [orderIds]);
 
   return useQuery<(OrderData & { producer_name: string })[]>({
-    queryKey: ['direct-sale-orders', sortedOrderIds],
+    queryKey: ['direct-sale-orders', sortedOrderIds, session?.access_token],
     enabled: sortedOrderIds.length > 0 && !!session?.access_token,
     queryFn: async () => {
       if (!session?.access_token || sortedOrderIds.length === 0) {
@@ -42,7 +43,7 @@ function useDirectSaleOrdersByIds(orderIds: string[]) {
 
       const idsFilter = sortedOrderIds.map((id) => encodeURIComponent(id)).join(',');
       const ordersResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/commandes_vente_directe?id=in.(${idsFilter})`,
+        `${SUPABASE_URL}/rest/v1/commandes_vente_directe?id=in.(${idsFilter})&select=id,producer_id,pickup_code,total,statut,adresse_retrait,horaires_retrait,instructions_retrait`,
         {
           headers: {
             'Content-Type': 'application/json',
@@ -158,9 +159,20 @@ export default function CommandeConfirmation() {
                   {order.producer_name}
                 </Text>
                 <Text className="text-sm mt-1" style={{ color: COLORS.text.lightGray }}>
-                  Commande #{order.id.slice(0, 8).toUpperCase()}
+                  Commande #{(order.pickup_code || order.id.slice(0, 8).toUpperCase())}
                 </Text>
               </View>
+
+              {order.pickup_code && (
+                <View className="mb-4 p-3 rounded-xl" style={{ backgroundColor: `${COLORS.primary.gold}15` }}>
+                  <Text className="text-xs" style={{ color: COLORS.text.muted }}>
+                    Code de retrait
+                  </Text>
+                  <Text className="text-lg font-bold" style={{ color: COLORS.primary.gold, letterSpacing: 1 }}>
+                    {order.pickup_code}
+                  </Text>
+                </View>
+              )}
 
               {/* Total */}
               <View className="mb-4 pb-4 border-b" style={{ borderBottomColor: `${COLORS.accent.hemp}30` }}>

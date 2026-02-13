@@ -5,8 +5,8 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fetchWithRetry, NetworkError } from './fetch-with-retry';
-import SecureStorage, { initializeSecureStorage } from './secure-storage';
+import { fetchWithRetry } from './fetch-with-retry';
+import { initializeSecureStorage, getItem, setItem, deleteItem } from './secure-storage';
 import { ensureDeviceId } from './device-id';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './env-validation';
 import { normalizeEmail } from './input-validation';
@@ -56,17 +56,17 @@ export async function initializeAuthStorage(): Promise<void> {
 // Wrapper pour le stockage sécurisé
 const secureGet = async (key: string): Promise<string | null> => {
   await initializeAuthStorage();
-  return SecureStorage.getItem(key);
+  return getItem(key);
 };
 
 const secureSet = async (key: string, value: string): Promise<void> => {
   await initializeAuthStorage();
-  return SecureStorage.setItem(key, value);
+  return setItem(key, value);
 };
 
 const secureDelete = async (key: string): Promise<void> => {
   await initializeAuthStorage();
-  return SecureStorage.deleteItem(key);
+  return deleteItem(key);
 };
 
 // Client-side rate limiting removed: server-side rate limiting is enforced in Edge Functions.

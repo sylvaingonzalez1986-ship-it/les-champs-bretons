@@ -10,7 +10,6 @@ import {
   Pressable,
   Image,
   ScrollView,
-  Dimensions,
 } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,10 +23,8 @@ import {
   Building2,
   MapPin,
   Truck,
-  FileText,
   ChevronLeft,
   ChevronRight,
-  Check,
   Package,
   FlaskConical,
   Droplets,
@@ -36,7 +33,7 @@ import {
   Video,
   Layers,
 } from 'lucide-react-native';
-import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { COLORS } from '@/lib/colors';
 import {
   Producer,
@@ -48,8 +45,6 @@ import {
 } from '@/lib/producers';
 import { LabAnalysisViewer } from '@/components/LabAnalysisViewer';
 import { WebView } from 'react-native-webview';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const ALLOWED_VIDEO_HOSTS = new Set([
   'www.youtube.com',
@@ -103,8 +98,6 @@ export function ProProductDetailModal({
 
   // Prix pro avec paliers - utilise uniquement les paliers pro
   const baseProPrice = product.pricePro ?? product.price ?? 0;
-  const originalPrice = product.price ?? 0;
-
   // Obtenir le prix selon la quantité (avec paliers pro)
   const currentUnitPrice = getPriceForQuantity(product, quantity, true);
   const nextTier = getNextPriceTier(product, quantity, true);

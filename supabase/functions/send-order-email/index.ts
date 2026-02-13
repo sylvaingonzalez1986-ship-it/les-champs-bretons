@@ -238,7 +238,7 @@ function createValidatedHandler<T>(
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') || '';
-const COMPANY_EMAIL = 'leschanvriersbretons@gmail.com';
+const COMPANY_EMAIL = 'leschanvriersunis@gmail.com';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -246,6 +246,7 @@ interface OrderData {
   id: string;
   user_id: string;
   producer_id: string;
+  pickup_code?: string | null;
   total: number;
   statut: string;
   adresse_retrait: string;
@@ -342,6 +343,7 @@ function generateProducerEmailHTML(
   customerName: string,
   customerEmail: string
 ): string {
+  const orderIdentifier = orderData.pickup_code || orderData.id.slice(0, 8).toUpperCase();
   const itemsHTML = orderLines
     .map(
       (line) => `
@@ -377,7 +379,7 @@ function generateProducerEmailHTML(
         <div class="container">
           <div class="header">
             <h1>Nouvelle commande - Vente directe</h1>
-            <p>Commande #${orderData.id}</p>
+            <p>Commande #${orderIdentifier}</p>
           </div>
 
           <div class="section">
@@ -442,6 +444,7 @@ function generateCustomerEmailHTML(
   orderLines: (OrderLineData & { product_name: string })[],
   customerName: string
 ): string {
+  const orderIdentifier = orderData.pickup_code || orderData.id.slice(0, 8).toUpperCase();
   const itemsHTML = orderLines
     .map(
       (line) => `
@@ -477,7 +480,7 @@ function generateCustomerEmailHTML(
         <div class="container">
           <div class="header">
             <h1>Confirmation de votre commande</h1>
-            <p>Commande #${orderData.id}</p>
+            <p>Commande #${orderIdentifier}</p>
           </div>
 
           <div class="section">
@@ -648,6 +651,7 @@ const handler = createValidatedHandler<OrderEmailRequestInput>(
     const customerName = `${userProfile.first_name || ''} ${userProfile.last_name || ''}`.trim() || 'Client';
     const customerEmail = userProfile.email || '';
     const producerEmail = producerData.email || '';
+    const orderIdentifier = orderData.pickup_code || commandeId.slice(0, 8).toUpperCase();
 
     // Générer les emails
     const producerEmailHTML = generateProducerEmailHTML(
@@ -667,7 +671,7 @@ const handler = createValidatedHandler<OrderEmailRequestInput>(
     // Envoyer l'email au producteur avec CC au company email
     const producerEmailSent = await sendEmail(
       producerEmail,
-      `Nouvelle commande vente directe #${commandeId.slice(0, 8)}`,
+      `Nouvelle commande vente directe #${orderIdentifier}`,
       producerEmailHTML,
       [COMPANY_EMAIL]
     );
@@ -675,7 +679,7 @@ const handler = createValidatedHandler<OrderEmailRequestInput>(
     // Envoyer l'email de confirmation au client
     const customerEmailSent = await sendEmail(
       customerEmail,
-      `Confirmation de votre commande #${commandeId.slice(0, 8)}`,
+      `Confirmation de votre commande #${orderIdentifier}`,
       customerEmailHTML
     );
 

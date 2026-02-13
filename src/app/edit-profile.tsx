@@ -29,14 +29,13 @@ import {
   Save,
   Sparkles,
   Lock,
-} from 'lucide-react-native';
+ WifiOff } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { useCustomerInfoStore, CustomerInfo } from '@/lib/store';
 import { Toast, useToast } from '@/components/Toast';
 import { useAuth } from '@/lib/useAuth';
 import { OfflineDisabledButton } from '@/components/OfflineDisabledButton';
 import { useOfflineStatus } from '@/lib/network-context';
-import { WifiOff } from 'lucide-react-native';
 
 interface FormField {
   key: keyof CustomerInfo;

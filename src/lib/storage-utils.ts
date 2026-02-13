@@ -1,15 +1,29 @@
 import { getSupabaseConfig } from './env-validation';
-import { getSession } from './supabase-auth';
+import { getValidSession } from './supabase-auth';
 
 const SIGNED_URL_MARKERS = ['/storage/v1/object/sign/', 'token='];
-const LOCAL_PREFIXES = ['file://', '/data/', 'content://', 'asset:'];
+const LOCAL_PREFIXES = [
+  'file://',
+  '/data/',
+  '/cache/',
+  '/var/',
+  '/private/',
+  '/tmp/',
+  '/documents/',
+  '/caches/',
+  'content://',
+  'asset:',
+  'ph://',
+  'assets-library://',
+];
 
 function isRemoteUrl(path: string): boolean {
   return path.startsWith('http://') || path.startsWith('https://');
 }
 
-function isLocalPath(path: string): boolean {
-  return LOCAL_PREFIXES.some((prefix) => path.startsWith(prefix));
+export function isLikelyLocalPath(path: string): boolean {
+  const normalized = path.trim().toLowerCase();
+  return LOCAL_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 function isSignedUrl(path: string): boolean {
@@ -38,7 +52,7 @@ async function fetchSignedUrl(
   functionName: string,
   body: Record<string, unknown>
 ): Promise<string | null> {
-  const session = getSession();
+  const session = await getValidSession();
   if (!session?.access_token) {
     return null;
   }
@@ -64,7 +78,7 @@ async function fetchSignedUrl(
 
 export async function getSignedImageUrl(path: string, expiresIn = 3600): Promise<string> {
   if (!path) return '';
-  if (isLocalPath(path)) return path;
+  if (isLikelyLocalPath(path)) return path;
   if (isSignedUrl(path)) return path;
 
   const normalized = normalizeStoragePath(path);
@@ -81,16 +95,22 @@ export async function getSignedImageUrl(path: string, expiresIn = 3600): Promise
   return path;
 }
 
-export async function getSignedLabAnalysisUrl(path: string, expiresIn = 3600): Promise<string> {
+/**
+ * Le bucket lab-analyses est public (transparence).
+ * Construit directement l'URL publique sans passer par l'edge function authentifiée.
+ */
+export function getLabAnalysisPublicUrl(path: string): string {
   if (!path) return '';
-  if (isLocalPath(path)) return path;
-  if (isSignedUrl(path)) return path;
+  if (isLikelyLocalPath(path)) return path;
+  if (isRemoteUrl(path)) return path;
 
+  const { url } = getSupabaseConfig();
   const normalized = normalizeStoragePath(path);
-  if (!normalized.startsWith('lab-analyses/')) {
-    return path;
-  }
+  const storagePath = normalized.startsWith('lab-analyses/') ? normalized : `lab-analyses/${normalized}`;
+  return `${url}/storage/v1/object/public/${storagePath}`;
+}
 
-  const signed = await fetchSignedUrl('lab-analyses-url', { path: normalized, expiresIn });
-  return signed ?? path;
+/** Alias async pour compatibilité avec les appels existants */
+export async function getSignedLabAnalysisUrl(path: string, _expiresIn = 3600): Promise<string> {
+  return getLabAnalysisPublicUrl(path);
 }

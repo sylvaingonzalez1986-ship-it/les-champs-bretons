@@ -19,9 +19,7 @@ import {
   Filter,
   X,
   Check,
-  ChevronDown,
   Package,
-  Star,
   Leaf,
   Building2,
   Clock,
@@ -33,7 +31,6 @@ import { COLORS } from '@/lib/colors';
 import {
   useProducerStore,
   useCartStore,
-  PromoProduct,
   useSupabaseSyncStore,
 } from '@/lib/store';
 import {
@@ -64,7 +61,7 @@ export default function ProScreen() {
 
   // Permissions et pricing
   const { isPro, isAdmin, isProApproved, isProPending, isProRejected } = usePermissions();
-  const { pricingMode } = usePricingContext();
+  usePricingContext();
 
   // Etats - tous les hooks doivent etre appeles avant tout return conditionnel
   const [showAddedToast, setShowAddedToast] = useState(false);
@@ -103,10 +100,10 @@ export default function ProScreen() {
 
   // Extraire tous les produits visibles pour les pros
   const allProProducts = useMemo(() => {
-    const products: Array<{
+    const products: {
       product: ProducerProduct;
       producer: Producer;
-    }> = [];
+    }[] = [];
 
     allProducers.forEach((producer) => {
       producer.products.forEach((product) => {

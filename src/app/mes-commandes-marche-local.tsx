@@ -3,7 +3,7 @@
  * Affiche l'historique des commandes directes auprès des producteurs locaux
  */
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   ScrollView,
@@ -14,7 +14,7 @@ import {
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ArrowLeft, Package, MapPin, Clock, Phone, Mail, AlertCircle, Check, X, RefreshCw } from 'lucide-react-native';
+import { ArrowLeft, Package, MapPin, Clock, Phone, Mail, AlertCircle, Check, X } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { COLORS } from '@/lib/colors';

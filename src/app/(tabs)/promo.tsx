@@ -4,9 +4,9 @@ import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Percent, Clock, ShoppingCart, Flame, X, Star, Leaf, Check, Plus, Minus } from 'lucide-react-native';
-import Animated, { FadeInDown, FadeIn, SlideInDown } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { COLORS } from '@/lib/colors';
-import { usePromoProductsStore, useCartStore, useProducerStore, PromoProduct, useProductReviewsStore, useCustomerInfoStore } from '@/lib/store';
+import { usePromoProductsStore, useCartStore, useProducerStore, PromoProduct, useProductReviewsStore } from '@/lib/store';
 import { Producer, SAMPLE_PRODUCERS, ProducerProduct, PRODUCT_TYPE_LABELS, PRODUCT_TYPE_COLORS } from '@/lib/producers';
 import { usePricingContext } from '@/lib/useProductPricing';
 import { CompactCacheStatus } from '@/components/CacheStatusBanner';
@@ -388,7 +388,7 @@ export default function PromoScreen() {
   const customProducers = useProducerStore((s) => s.producers);
 
   // Pricing context pour afficher les bons prix selon le rôle
-  const { pricingMode, isPro } = usePricingContext();
+  const { isPro } = usePricingContext();
 
   const [selectedPromo, setSelectedPromo] = useState<PromoProduct | null>(null);
   const [detailModalVisible, setDetailModalVisible] = useState(false);

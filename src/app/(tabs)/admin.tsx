@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { router } from 'expo-router';
 import {
   View,
@@ -19,7 +19,6 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  withTiming,
   runOnJS,
 } from 'react-native-reanimated';
 import {
@@ -83,8 +82,7 @@ import {
   usePromoProductsStore,
   usePacksStore,
   useStockInventoryStore,
-  useSubscriptionStore,
-  ProductTypeOption,
+  useSupabaseSyncStore,
   Lot,
   LotItem,
   Rarity,
@@ -93,15 +91,12 @@ import {
   OrderItem,
   OrderStatus,
   ORDER_STATUS_CONFIG,
-  TabId,
   Promo,
-  PromoProduct,
   StockItem,
 } from '@/lib/store';
-import { SAMPLE_PRODUCERS, ProducerProduct, PRODUCT_TYPE_LABELS, PRODUCT_TYPE_COLORS } from '@/lib/producers';
+import { SAMPLE_PRODUCERS, ProducerProduct, PRODUCT_TYPE_LABELS, PRODUCT_TYPE_COLORS, Producer } from '@/lib/producers';
 import { AddProducerModal } from '@/components/AddProducerModal';
 import { AddProductModal } from '@/components/AddProductModal';
-import { Producer } from '@/lib/producers';
 import { getImageSource } from '@/lib/asset-images';
 import {
   fetchAppData,
@@ -116,7 +111,6 @@ import {
   fetchAllProducersWithProducts,
   syncProducerToSupabase,
   deleteProducerFromSupabase,
-  deleteProductFromSupabase,
   syncLotToSupabase,
   fetchAllLotsWithItems,
   syncAllPacksToSupabase,
@@ -128,7 +122,6 @@ import {
   deleteOrderFromSupabase,
   SessionExpiredError,
 } from '@/lib/supabase-sync';
-import { useSupabaseSyncStore } from '@/lib/store';
 import { processImageForSync } from '@/lib/image-upload';
 import {
   fetchUsers,
@@ -143,7 +136,6 @@ import {
   UserProfile,
   UserRole,
   UserCategory,
-  ProStatus,
   USER_ROLE_LABELS,
   USER_ROLE_COLORS,
   USER_CATEGORY_LABELS,
@@ -165,7 +157,7 @@ import {
 } from '@/lib/supabase-pro-resources';
 import { useAdminOrdersQuery } from '@/api/orders';
 
-type TabType = 'orders' | 'users' | 'producers' | 'lots' | 'inventory' | 'promo-products' | 'codes' | 'regions' | 'soils' | 'climates' | 'products' | 'tabs' | 'produits-view' | 'supabase-data' | 'sync' | 'producer-orders' | 'pro-resources';
+type TabType = 'orders' | 'users' | 'producers' | 'lots' | 'promo-products' | 'codes' | 'regions' | 'soils' | 'climates' | 'products' | 'tabs' | 'produits-view' | 'supabase-data' | 'sync' | 'producer-orders' | 'pro-resources' | 'inventory';
 
 // Edit Modal Component
 interface EditModalProps {
@@ -182,7 +174,6 @@ const EditModal = ({ visible, title, value, onSave, onClose, color, onColorChang
   const [inputValue, setInputValue] = useState(value);
   const [inputColor, setInputColor] = useState(color || '');
   const insets = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
 
   React.useEffect(() => {
     if (visible) {
@@ -322,55 +313,6 @@ const ListItem = ({ label, color, onEdit, onDelete }: {
   </View>
 );
 
-// Producer Item Component
-const ProducerItem = ({ name, region, image, productCount, onEdit, onDelete, onAddProduct }: {
-  name: string;
-  region: string;
-  image?: string;
-  productCount: number;
-  onEdit: () => void;
-  onDelete: () => void;
-  onAddProduct: () => void;
-}) => (
-  <View
-    className="flex-row items-center px-4 py-3 mb-2 rounded-xl"
-    style={{
-      backgroundColor: `${COLORS.text.white}05`,
-      borderWidth: 1,
-      borderColor: `${COLORS.primary.paleGold}10`,
-    }}
-  >
-    {image ? (
-      <Image
-        source={getImageSource(image)}
-        className="w-14 h-14 rounded-xl"
-        resizeMode="cover"
-      />
-    ) : (
-      <View className="w-14 h-14 rounded-xl items-center justify-center" style={{ backgroundColor: `${COLORS.text.white}10` }}>
-        <Leaf size={24} color={COLORS.text.muted} />
-      </View>
-    )}
-    <View className="flex-1 ml-3">
-      <Text style={{ color: COLORS.text.white }} className="font-semibold" numberOfLines={1}>{name}</Text>
-      <Text style={{ color: COLORS.text.muted }} className="text-xs" numberOfLines={1}>{region}</Text>
-      <Pressable onPress={onAddProduct}>
-        <Text style={{ color: COLORS.primary.paleGold }} className="text-xs">
-          {productCount} produit(s) • Ajouter +
-        </Text>
-      </Pressable>
-    </View>
-    <View className="flex-row">
-      <Pressable onPress={onEdit} className="p-2">
-        <Edit3 size={18} color={COLORS.primary.paleGold} />
-      </Pressable>
-      <Pressable onPress={onDelete} className="p-2">
-        <Trash2 size={18} color="#EF4444" />
-      </Pressable>
-    </View>
-  </View>
-);
-
 // Lot Item Component
 const LotItemCard = ({ lot, onEdit, onDelete, onToggle }: {
   lot: Lot;
@@ -471,7 +413,7 @@ const AddStockModal = ({ visible, onClose, editingItem }: AddStockModalProps) =>
   const [unit, setUnit] = useState('g');
   const [minStock, setMinStock] = useState('5');
   const [image, setImage] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
+  const [, setIsUploading] = useState(false);
 
   const [showProducerPicker, setShowProducerPicker] = useState(false);
   const [showTypePicker, setShowTypePicker] = useState(false);
@@ -1418,7 +1360,7 @@ const AddLotModal = ({ visible, onClose, editingLot }: AddLotModalProps) => {
   const [showProductPicker, setShowProductPicker] = useState(false);
   const [lotType, setLotType] = useState<'product' | 'discount'>('product');
   const [discountPercent, setDiscountPercent] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
+  const [, setIsUploading] = useState(false);
 
   React.useEffect(() => {
     if (visible && editingLot) {
@@ -1945,7 +1887,7 @@ const AddPromoModal = ({ visible, onClose, editingPromo }: AddPromoModalProps) =
   const [image, setImage] = useState('');
   const [validUntil, setValidUntil] = useState('');
   const [minOrder, setMinOrder] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
+  const [, setIsUploading] = useState(false);
 
   React.useEffect(() => {
     if (visible && editingPromo) {
@@ -2737,7 +2679,7 @@ export default function AdminScreen() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [usersRoleFilter, setUsersRoleFilter] = useState<UserRole | ''>('');
-  const [usersCategoryFilter, setUsersCategoryFilter] = useState<UserCategory | ''>('');
+
   const [usersSearchQuery, setUsersSearchQuery] = useState('');
   const [usersLastUpdate, setUsersLastUpdate] = useState<Date | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
@@ -3120,7 +3062,7 @@ export default function AdminScreen() {
     try {
       const { users, error } = await fetchUsers({
         role: usersRoleFilter || undefined,
-        category: usersCategoryFilter || undefined,
+
         search: usersSearchQuery || undefined,
       });
       if (error) throw error;
@@ -3132,7 +3074,7 @@ export default function AdminScreen() {
     } finally {
       setUsersLoading(false);
     }
-  }, [usersRoleFilter, usersCategoryFilter, usersSearchQuery]);
+  }, [usersRoleFilter, usersSearchQuery]);
 
   // Load producer users for linking
   const loadProducerUsers = useCallback(async () => {
@@ -3165,7 +3107,7 @@ export default function AdminScreen() {
     if (activeTab === 'users') {
       loadUsersData();
     }
-  }, [activeTab, usersRoleFilter, usersCategoryFilter, loadUsersData]);
+  }, [activeTab, usersRoleFilter, loadUsersData]);
 
   // Auto-refresh users every 60 seconds when on users tab
   useEffect(() => {
@@ -3274,7 +3216,7 @@ export default function AdminScreen() {
 
     setAddUserLoading(true);
     try {
-      const { user, error } = await inviteUser({
+      const { error } = await inviteUser({
         email: newUserEmail.trim(),
         full_name: newUserFullName.trim() || undefined,
         role: newUserRole,
@@ -3301,7 +3243,6 @@ export default function AdminScreen() {
 
   // Supabase sync store
   const syncedProducers = useSupabaseSyncStore((s) => s.syncedProducers);
-  const syncedLots = useSupabaseSyncStore((s) => s.syncedLots);
   const setSyncedProducers = useSupabaseSyncStore((s) => s.setSyncedProducers);
   const setSyncedLots = useSupabaseSyncStore((s) => s.setSyncedLots);
   const lastSyncAt = useSupabaseSyncStore((s) => s.lastSyncAt);
@@ -3319,11 +3260,6 @@ export default function AdminScreen() {
   const updateSoilType = useOptionsStore((s) => s.updateSoilType);
 
   // New soil type options with composition
-  const soilTypeOptions = useOptionsStore((s) => s.soilTypeOptions);
-  const addSoilTypeOption = useOptionsStore((s) => s.addSoilTypeOption);
-  const removeSoilTypeOption = useOptionsStore((s) => s.removeSoilTypeOption);
-  const updateSoilTypeOption = useOptionsStore((s) => s.updateSoilTypeOption);
-  const resetSoilTypeOptions = useOptionsStore((s) => s.resetSoilTypeOptions);
 
   const addClimateType = useOptionsStore((s) => s.addClimateType);
   const removeClimateType = useOptionsStore((s) => s.removeClimateType);
@@ -3348,30 +3284,24 @@ export default function AdminScreen() {
   const orders = useOrdersStore((s) => s.orders);
   const setOrders = useOrdersStore((s) => s.setOrders);
   const updateOrderStatus = useOrdersStore((s) => s.updateOrderStatus);
-  const updateOrderId = useOrdersStore((s) => s.updateOrderId);
   const updateOrderTrackingNumber = useOrdersStore((s) => s.updateOrderTrackingNumber);
   const deleteOrder = useOrdersStore((s) => s.deleteOrder);
   const validatePayment = useOrdersStore((s) => s.validatePayment);
   const markTicketsDistributed = useOrdersStore((s) => s.markTicketsDistributed);
 
   // Tickets
-  const addTickets = useSubscriptionStore((s) => s.addTickets);
 
   // Tab visibility
   const tabsConfig = useTabVisibilityStore((s) => s.tabs);
-  const setTabVisibility = useTabVisibilityStore((s) => s.setTabVisibility);
   const setTabRoleVisibility = useTabVisibilityStore((s) => s.setTabRoleVisibility);
 
   // Promos
   const promos = usePromosStore((s) => s.promos);
-  const addPromo = usePromosStore((s) => s.addPromo);
-  const updatePromo = usePromosStore((s) => s.updatePromo);
   const removePromo = usePromosStore((s) => s.removePromo);
   const togglePromoActive = usePromosStore((s) => s.togglePromoActive);
 
   // Promo Products
   const promoProducts = usePromoProductsStore((s) => s.promoProducts);
-  const addPromoProduct = usePromoProductsStore((s) => s.addPromoProduct);
   const removePromoProduct = usePromoProductsStore((s) => s.removePromoProduct);
   const togglePromoProductActive = usePromoProductsStore((s) => s.togglePromoProductActive);
 
@@ -3380,7 +3310,6 @@ export default function AdminScreen() {
 
   // Stock Inventory
   const stockItems = useStockInventoryStore((s) => s.stock);
-  const addStockItem = useStockInventoryStore((s) => s.addStockItem);
   const updateStockItem = useStockInventoryStore((s) => s.updateStockItem);
   const removeStockItem = useStockInventoryStore((s) => s.removeStockItem);
   const clearAllStock = useStockInventoryStore((s) => s.clearAllStock);
@@ -3515,7 +3444,6 @@ export default function AdminScreen() {
     ...(isAdmin ? [
       { id: 'orders' as TabType, label: 'Commandes', icon: <ShoppingBag size={20} color={activeTab === 'orders' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: pendingOrdersCount },
       { id: 'users' as TabType, label: 'Utilisateurs', icon: <UserCog size={20} color={activeTab === 'users' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: usersData.length },
-      { id: 'inventory' as TabType, label: 'Stock', icon: <Boxes size={20} color={activeTab === 'inventory' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: lowStockCount > 0 ? lowStockCount : stockItems.length },
       { id: 'produits-view' as TabType, label: 'Produits', icon: <Layers size={20} color={activeTab === 'produits-view' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: totalProducts },
       { id: 'producers' as TabType, label: 'Producteurs', icon: <Users size={20} color={activeTab === 'producers' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: allProducers.length },
       { id: 'pro-resources' as TabType, label: 'Reseau Pro', icon: <Briefcase size={20} color={activeTab === 'pro-resources' ? COLORS.primary.brightYellow : COLORS.text.muted} />, count: proResources.length },
@@ -3536,10 +3464,6 @@ export default function AdminScreen() {
     switch (activeTab) {
       case 'orders':
         setAddOrderVisible(true);
-        break;
-      case 'inventory':
-        setEditingStock(null);
-        setAddStockVisible(true);
         break;
       case 'lots':
         setEditingLot(null);
@@ -3712,14 +3636,6 @@ export default function AdminScreen() {
           { value: 'pro', label: `Pros (${prosCount})` },
           { value: 'producer', label: `Producteurs (${producersCount})` },
           { value: 'admin', label: `Admins (${adminsCount})` },
-        ];
-        const categoryOptions: { value: UserCategory | ''; label: string }[] = [
-          { value: '', label: 'Toutes catégories' },
-          { value: 'restaurateur', label: 'Restaurateur' },
-          { value: 'epicerie', label: 'Épicerie' },
-          { value: 'grossiste', label: 'Grossiste' },
-          { value: 'producteur_maraicher', label: 'Producteur Maraîcher' },
-          { value: 'autre', label: 'Autre' },
         ];
 
         return (
@@ -3956,42 +3872,6 @@ export default function AdminScreen() {
               </View>
             </View>
 
-            {/* Category filter (only show when role is pro) */}
-            {usersRoleFilter === 'pro' && (
-              <View className="mb-4">
-                <Text style={{ color: COLORS.text.muted }} className="text-xs mb-1">Catégorie</Text>
-                <View
-                  className="rounded-lg overflow-hidden"
-                  style={{
-                    backgroundColor: `${COLORS.text.white}05`,
-                    borderWidth: 1,
-                    borderColor: `${COLORS.primary.paleGold}20`,
-                  }}
-                >
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                    {categoryOptions.map((opt) => (
-                      <Pressable
-                        key={opt.value ?? 'null'}
-                        onPress={() => setUsersCategoryFilter(opt.value)}
-                        className="px-3 py-2"
-                        style={{
-                          backgroundColor: usersCategoryFilter === opt.value ? COLORS.accent.teal : 'transparent',
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: usersCategoryFilter === opt.value ? COLORS.text.white : COLORS.text.muted,
-                            fontSize: 12,
-                          }}
-                        >
-                          {opt.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                </View>
-              </View>
-            )}
 
             {/* Error message */}
             {usersError && (
@@ -5395,8 +5275,6 @@ export default function AdminScreen() {
         );
 
       case 'produits-view':
-        const producersWithProducts = allProducers.filter((p) => p.products.length > 0);
-
         const toggleProducerExpand = (producerId: string) => {
           setExpandedProducers((prev) =>
             prev.includes(producerId)
@@ -7524,3 +7402,4 @@ export default function AdminScreen() {
     </View>
   );
 }
+

@@ -3,8 +3,8 @@
  * Inscription avec Supabase Auth + complétion de profil
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, ScrollView, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, ScrollView, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Text, TextInput } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,9 +30,6 @@ import { UserProfile } from '@/lib/supabase-auth';
 import {
   UserCategory,
   USER_CATEGORY_LABELS,
-  UserRole,
-  USER_ROLE_LABELS,
-  USER_ROLE_COLORS,
 } from '@/lib/supabase-users';
 import { AuthErrorBanner, canRetryAuthError, getAuthErrorType } from '@/components/AuthErrorBanner';
 
@@ -61,7 +58,7 @@ const CATEGORY_OPTIONS: { value: UserCategory; label: string }[] = [
 export default function SignupScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { signUp, isSigningUp, signUpError, signUpErrorType, resetSignUpError, updateProfile, isUpdatingProfile } = useAuth();
+  const { signUp, isSigningUp, signUpError, resetSignUpError, updateProfile, isUpdatingProfile } = useAuth();
 
   // Step state
   const [step, setStep] = useState<SignupStep>('credentials');
@@ -97,7 +94,7 @@ export default function SignupScreen() {
   const [isRetrying, setIsRetrying] = useState(false);
 
   // Validate credentials step
-  const validateCredentials = (): boolean => {
+  const validateCredentials = useCallback((): boolean => {
     const newErrors: Record<string, string> = {};
 
     // Trim and normalize email for validation
@@ -121,10 +118,10 @@ export default function SignupScreen() {
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
+  }, [email, password, confirmPassword]);
 
   // Validate profile step
-  const validateProfile = (): boolean => {
+  const validateProfile = useCallback((): boolean => {
     const newErrors: Record<string, string> = {};
 
     if (!fullName.trim()) {
@@ -137,10 +134,10 @@ export default function SignupScreen() {
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
+  }, [category, fullName]);
 
   // Validate business step (for pro/producer)
-  const validateBusiness = (): boolean => {
+  const validateBusiness = useCallback((): boolean => {
     const newErrors: Record<string, string> = {};
 
     if (requiresBusinessInfo) {
@@ -158,10 +155,10 @@ export default function SignupScreen() {
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
+  }, [requiresBusinessInfo, siret, tvaNumber]);
 
   // Handle signup
-  const handleSignup = async () => {
+  const handleSignup = useCallback(async () => {
     if (!validateCredentials()) return;
 
     setGeneralError('');
@@ -187,7 +184,7 @@ export default function SignupScreen() {
       const message = error instanceof Error ? error.message : 'Erreur lors de l\'inscription';
       setGeneralError(message);
     }
-  };
+  }, [email, fullName, password, selectedRole, signUp, validateCredentials]);
 
   // Handle profile completion
   const handleCompleteProfile = async () => {
@@ -217,7 +214,7 @@ export default function SignupScreen() {
     } finally {
       setIsRetrying(false);
     }
-  }, [email, password, fullName, selectedRole]);
+  }, [handleSignup, resetSignUpError]);
 
   // Save profile to Supabase
   const saveProfile = async () => {

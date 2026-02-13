@@ -2,8 +2,10 @@
  * ErrorBoundary - Capture les erreurs JS et affiche un écran de fallback
  */
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { View, Text, Pressable, ScrollView } from 'react-native';
+import { View, Text, Pressable, ScrollView, Platform } from 'react-native';
 import { COLORS } from '@/lib/colors';
+
+const MONOSPACE_FONT = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 
 interface Props {
   children: ReactNode;
@@ -83,11 +85,11 @@ export class ErrorBoundary extends Component<Props, State> {
                 width: '100%',
               }}
             >
-              <Text style={{ color: '#FF6B6B', fontSize: 12, fontFamily: 'monospace' }}>
+              <Text style={{ color: '#FF6B6B', fontSize: 12, fontFamily: MONOSPACE_FONT }}>
                 {this.state.error.toString()}
               </Text>
               {this.state.errorInfo?.componentStack && (
-                <Text style={{ color: '#888', fontSize: 10, marginTop: 8, fontFamily: 'monospace' }}>
+                <Text style={{ color: '#888', fontSize: 10, marginTop: 8, fontFamily: MONOSPACE_FONT }}>
                   {this.state.errorInfo.componentStack.slice(0, 500)}
                 </Text>
               )}

@@ -2,7 +2,7 @@
  * Tabs Layout - Les Chanvriers Unis
  * Version robuste avec hooks securises et gestion des erreurs
  */
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Tabs } from 'expo-router';
 import { Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,7 +17,6 @@ import {
   Briefcase,
   Store,
   Music,
-  Globe,
   Warehouse,
   FlaskConical,
   Handshake,
@@ -25,8 +24,8 @@ import {
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { useCartStore, useTabVisibilityStore, TabRole } from '@/lib/store';
-import { Text } from '@/components/ui';
-import { usePermissions } from '@/lib/useAuth';
+import { useDirectSalesCart } from '@/lib/direct-sales-cart';
+import { useAuth, usePermissions } from '@/lib/useAuth';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 /**
@@ -72,47 +71,61 @@ function useTabVisibility() {
 
   // Helper to check tab visibility
   const shouldShowTab = useMemo(() => {
-    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'regions' | 'ma-boutique' | 'marche-local' | 'reseau-pro' | 'gestion') => {
+    return (tabId: 'map' | 'packs' | 'promo' | 'produits' | 'cart' | 'tirage' | 'profile' | 'music' | 'ma-boutique' | 'marche-local' | 'reseau-pro' | 'gestion') => {
       // Admin sees everything
       if (isAdmin) return true;
+      // Clients never see the map tab in navigation
+      if (userRole === 'client' && tabId === 'map') return false;
+      // Clients never see the promo tab in navigation
+      if (userRole === 'client' && tabId === 'promo') return false;
       // Use role-based configuration
       return isTabVisibleForRole(tabId, userRole);
     };
   }, [isAdmin, isTabVisibleForRole, userRole]);
 
-  return { shouldShowTab, isAdmin, isProUser };
+  return { shouldShowTab, isAdmin, isProUser, isProApproved };
 }
 
 /**
  * Badge component for cart icons
  */
-function TabBadge({ count }: { count: number }) {
-  if (count <= 0) return null;
-
+function CartBadges({ packCount, localCount }: { packCount: number; localCount: number }) {
+  if (packCount <= 0 && localCount <= 0) return null;
   return (
     <View
       style={{
         position: 'absolute',
-        top: 0,
-        right: -4,
-        backgroundColor: COLORS.accent.red,
-        borderRadius: 10,
-        minWidth: 20,
-        height: 20,
+        top: -2,
+        right: -8,
+        flexDirection: 'row',
+        gap: 4,
         alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: 4,
-        borderWidth: 2,
-        borderColor: COLORS.background.nightSky,
-        shadowColor: COLORS.accent.red,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.5,
-        shadowRadius: 4,
       }}
     >
-      <Text style={{ color: COLORS.text.white, fontSize: 10, fontWeight: 'bold' }}>
-        {count > 99 ? '99+' : count}
-      </Text>
+      {packCount > 0 && (
+        <View
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: 5,
+            backgroundColor: COLORS.accent.red,
+            borderWidth: 1.5,
+            borderColor: COLORS.background.nightSky,
+          }}
+        />
+      )}
+      {localCount > 0 && (
+        <View
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: 5,
+            backgroundColor: COLORS.primary.orange,
+            borderWidth: 1.5,
+            borderColor: COLORS.background.nightSky,
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -145,13 +158,25 @@ function TabIcon({
 export default function TabLayout() {
   // Store selectors - use primitive values to prevent unnecessary re-renders
   const cartItems = useCartStore((s) => s.items);
-  const itemCount = useMemo(
+  const localCartItems = useDirectSalesCart((s) => s.items);
+  const loadLocalCart = useDirectSalesCart((s) => s.loadCart);
+  const { session } = useAuth();
+  const packsItemCount = useMemo(
     () => cartItems.reduce((sum, item) => sum + item.quantity, 0),
     [cartItems]
   );
+  const localItemCount = useMemo(
+    () => localCartItems.reduce((sum, item) => sum + item.quantity, 0),
+    [localCartItems]
+  );
   // Permissions and tab visibility
-  const { shouldShowTab, isAdmin, isProUser } = useTabVisibility();
+  const { shouldShowTab, isAdmin, isProUser, isProApproved } = useTabVisibility();
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (!session?.user?.id || !session?.access_token) return;
+    loadLocalCart(session.user.id, session.access_token);
+  }, [session?.user?.id, session?.access_token, loadLocalCart]);
 
   // Memoize screen options to prevent recreation on each render
   const screenOptions = useMemo(
@@ -199,7 +224,20 @@ export default function TabLayout() {
       <Tabs.Screen name="marche-catalogue" options={{ href: null }} />
       <Tabs.Screen name="compta" options={{ href: null }} />
 
-      {/* Visible tabs */}
+      {/* Visible tabs — Marché Local en premier (page d'accueil clients) */}
+      <Tabs.Screen
+        name="marche-local"
+        options={{
+          title: 'Marché',
+          href: shouldShowTab('marche-local') && !(isProUser || isProApproved) ? '/(tabs)/marche-local' : null,
+          tabBarIcon: ({ color, size, focused }) => (
+            <TabIcon focused={focused} focusColor={COLORS.accent.hemp}>
+              <Warehouse size={size} color={focused ? COLORS.accent.hemp : color} strokeWidth={focused ? 2.5 : 2} />
+            </TabIcon>
+          ),
+        }}
+      />
+
       <Tabs.Screen
         name="map"
         options={{
@@ -268,13 +306,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="regions"
         options={{
-          title: 'Régions',
-          href: shouldShowTab('regions') ? '/(tabs)/regions' : null,
-          tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon focused={focused} focusColor={COLORS.primary.gold}>
-              <Globe size={size} color={focused ? COLORS.primary.gold : color} strokeWidth={focused ? 2.5 : 2} />
-            </TabIcon>
-          ),
+          href: null,
         }}
       />
 
@@ -305,19 +337,6 @@ export default function TabLayout() {
       />
 
       <Tabs.Screen
-        name="marche-local"
-        options={{
-          title: 'Marché',
-          href: shouldShowTab('marche-local') ? '/(tabs)/marche-local' : null,
-          tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon focused={focused} focusColor={COLORS.accent.hemp}>
-              <Warehouse size={size} color={focused ? COLORS.accent.hemp : color} strokeWidth={focused ? 2.5 : 2} />
-            </TabIcon>
-          ),
-        }}
-      />
-
-      <Tabs.Screen
         name="reseau-pro"
         options={{
           title: 'Réseau Pro',
@@ -338,7 +357,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size, focused }) => (
             <TabIcon focused={focused} focusColor={COLORS.primary.coral}>
               <ShoppingCart size={size} color={focused ? COLORS.primary.coral : color} strokeWidth={focused ? 2.5 : 2} />
-              <TabBadge count={itemCount} />
+              <CartBadges packCount={packsItemCount} localCount={localItemCount} />
             </TabIcon>
           ),
         }}

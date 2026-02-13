@@ -3,7 +3,7 @@
  * Affiche un bouton pour voir l'analyse et un modal pour visualiser le document
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Pressable,
@@ -28,6 +28,7 @@ import {
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { getSupabaseConfig } from '@/lib/env-validation';
+import { isLikelyLocalPath } from '@/lib/storage-utils';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -43,11 +44,7 @@ function PdfViewer({ uri }: { uri: string }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadPdf();
-  }, [uri]);
-
-  const loadPdf = async () => {
+  const loadPdf = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -87,24 +84,23 @@ function PdfViewer({ uri }: { uri: string }) {
           base64Data = await FileSystem.readAsStringAsync(destUri, {
             encoding: FileSystem.EncodingType.Base64,
           });
-        } catch (copyError) {
+        } catch {
           // Essayer avec l'URI originale sans le préfixe file://
           try {
-            const cleanUri = uri.replace('file://', '');
-            await FileSystem.copyAsync({
+                        await FileSystem.copyAsync({
               from: uri,
               to: destUri,
             });
             base64Data = await FileSystem.readAsStringAsync(destUri, {
               encoding: FileSystem.EncodingType.Base64,
             });
-          } catch (secondError) {
+          } catch {
             // Dernier recours: essayer de lire directement
             try {
               base64Data = await FileSystem.readAsStringAsync(uri, {
                 encoding: FileSystem.EncodingType.Base64,
               });
-            } catch (readError) {
+            } catch {
               throw new Error('Fichier non accessible. Veuillez réessayer de sélectionner le document.');
             }
           }
@@ -118,7 +114,11 @@ function PdfViewer({ uri }: { uri: string }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [uri]);
+
+  useEffect(() => {
+    loadPdf();
+  }, [loadPdf]);
 
   if (loading) {
     return (
@@ -308,47 +308,38 @@ interface LabAnalysisViewerProps {
 export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerProps) {
   const insets = useSafeAreaInsets();
   const [showViewer, setShowViewer] = useState(false);
-  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
-  const [resolveError, setResolveError] = useState<string | null>(null);
+  const [imageLoadError, setImageLoadError] = useState(false);
 
   // Zoom pour la visualisation d'image
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
 
-  const displayUrl = resolvedUrl ?? url;
+  // Résolution synchrone de l'URL (pas besoin de useEffect, tout est sync)
+  const { displayUrl, resolveError } = useMemo(() => {
+    if (!url) return { displayUrl: '', resolveError: null };
+
+    const isRemote = url.startsWith('http://') || url.startsWith('https://');
+    const isLocal = isLikelyLocalPath(url);
+    if (isRemote || isLocal) return { displayUrl: url, resolveError: null };
+
+    try {
+      const { url: supabaseUrl } = getSupabaseConfig();
+      const storagePath = url.startsWith('lab-analyses/') ? url : `lab-analyses/${url}`;
+      return { displayUrl: `${supabaseUrl}/storage/v1/object/public/${storagePath}`, resolveError: null };
+    } catch {
+      return { displayUrl: url, resolveError: 'Configuration Supabase manquante' };
+    }
+  }, [url]);
 
   // Déterminer si c'est un PDF ou une image
   const isPdf = displayUrl?.toLowerCase().endsWith('.pdf') || displayUrl?.includes('application/pdf');
 
-  useEffect(() => {
-    if (!url) {
-      setResolvedUrl(null);
-      return;
-    }
-
-    const isRemote = url.startsWith('http://') || url.startsWith('https://');
-    const isLocal = url.startsWith('file://') || url.startsWith('/data/') || url.includes('/cache/');
-    if (isRemote || isLocal) {
-      setResolvedUrl(url);
-      return;
-    }
-
-    // Le bucket lab-analyses est public — construire l'URL publique directement
-    try {
-      const { url: supabaseUrl } = getSupabaseConfig();
-      const storagePath = url.startsWith('lab-analyses/') ? url : `lab-analyses/${url}`;
-      setResolvedUrl(`${supabaseUrl}/storage/v1/object/public/${storagePath}`);
-    } catch {
-      setResolveError('Configuration Supabase manquante');
-      setResolvedUrl(null);
-    }
-  }, [url]);
-
   // Ouvrir le visualiseur
   const openViewer = () => {
-    // Reset zoom
+    // Reset zoom and error state
     scale.value = 1;
     savedScale.value = 1;
+    setImageLoadError(false);
     setShowViewer(true);
   };
 
@@ -366,7 +357,7 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
                 url: displayUrl,
               });
               return;
-            } catch (shareError) {
+            } catch {
               // Si l'utilisateur annule ou l'API échoue, ouvrir dans un nouvel onglet
             }
           }
@@ -405,7 +396,7 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
         } else {
           throw new Error('Échec du téléchargement');
         }
-      } else if (displayUrl.startsWith('file://') || displayUrl.startsWith('/data/') || displayUrl.includes('/cache/')) {
+      } else if (isLikelyLocalPath(displayUrl)) {
         // Pour les fichiers locaux ou dans le cache
         const extension = isPdf ? '.pdf' : '.jpg';
         const fileName = `analyse_labo_${Date.now()}${extension}`;
@@ -434,7 +425,7 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
             dialogTitle: 'Partager l\'analyse',
             UTI: isPdf ? 'com.adobe.pdf' : 'public.jpeg',
           });
-        } catch (copyError) {
+        } catch {
           await Share.share({
             message: `Analyse de laboratoire: ${displayUrl}`,
           });
@@ -569,6 +560,26 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
           ) : (
             // Affichage Image avec zoom
             <View className="flex-1">
+              {imageLoadError ? (
+                <View className="flex-1 items-center justify-center px-6">
+                  <FileText size={64} color={COLORS.accent.red} />
+                  <Text style={{ color: COLORS.text.cream }} className="text-lg font-bold mt-4 text-center">
+                    Impossible de charger l'analyse
+                  </Text>
+                  <Text style={{ color: COLORS.text.muted }} className="text-sm text-center mt-2">
+                    Le document n'est pas accessible
+                  </Text>
+                  <Pressable
+                    onPress={() => { setImageLoadError(false); }}
+                    className="mt-4 px-6 py-3 rounded-xl"
+                    style={{ backgroundColor: COLORS.primary.gold }}
+                  >
+                    <Text style={{ color: COLORS.text.dark }} className="font-bold">
+                      Réessayer
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
               <GestureDetector gesture={pinchGesture}>
                 <View className="flex-1 items-center justify-center">
                   <Animated.Image
@@ -581,9 +592,11 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
                       animatedImageStyle,
                     ]}
                     resizeMode="contain"
+                    onError={() => setImageLoadError(true)}
                   />
                 </View>
               </GestureDetector>
+              )}
 
               {/* Controles de zoom */}
               <View
@@ -619,3 +632,4 @@ export function LabAnalysisViewer({ url, compact = false }: LabAnalysisViewerPro
     </>
   );
 }
+

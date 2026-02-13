@@ -1,4 +1,4 @@
-/* eslint-disable no-undef */
+ 
 /**
  * Script to automatically generate asset-images.ts from all images in the assets folder.
  * Run this script whenever new images are added to the assets folder.

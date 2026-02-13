@@ -1,12 +1,9 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { View, Pressable, Image, Dimensions, Alert } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Sparkles, Ticket, Volume2, VolumeX } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-
-// Preload the machine image at module level for instant display
-const machineImage = require('../../../assets/image-1767822177.png');
 import Animated, { useSharedValue, useAnimatedStyle, withSequence, withTiming, withRepeat, Easing } from 'react-native-reanimated';
 import { ProductReveal } from '@/components/ProductReveal';
 import { drawRandomProduct } from '@/lib/products';
@@ -15,7 +12,9 @@ import { CBDProduct } from '@/lib/types';
 import { isSupabaseSyncConfigured, fetchAllLotsWithItems, recordUserWonLot } from '@/lib/supabase-sync';
 import { usePermissions } from '@/lib/useAuth';
 
-const SPIN_PRICE = 25;
+// Preload the machine image at module level for instant display
+const machineImage = require('../../../assets/image-1767822177.png');
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // Helper to convert Lot to CBDProduct for display
@@ -217,7 +216,7 @@ export default function HomeScreen() {
       setShowReveal(true);
       incrementSpins();
     }, 1500);
-  }, [isSpinning, incrementSpins, leverRotation, machineShake, drawLot, tickets, consumeTicket, isAdmin, myCode, generateMyCode]);
+  }, [isSpinning, incrementSpins, leverRotation, machineShake, drawLot, tickets, consumeTicket, myCode, generateMyCode]);
 
   const handleCloseReveal = useCallback(() => {
     if (revealedProduct) {

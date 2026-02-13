@@ -35,6 +35,13 @@ function jsonResponse(payload: unknown, status = 200, corsHeaders: Record<string
   });
 }
 
+function logDatabaseError(stage: string, error: unknown, userId: string) {
+  console.error(`[direct-sales-cart-mutations] ${stage} failed`, {
+    userId,
+    error,
+  });
+}
+
 async function getUserFromRequest(req: Request, responseCorsHeaders: Record<string, string>) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -115,6 +122,34 @@ serve(async (req) => {
 
   if (parsed.data.action === 'addItem') {
     const { productId, producerId, quantity } = parsed.data.item;
+    const { data: existingItem, error: existingItemError } = await serviceClient
+      .from('panier_vente_directe')
+      .select('id, quantity')
+      .eq('user_id', user.id)
+      .eq('product_id', productId)
+      .eq('producer_id', producerId)
+      .maybeSingle();
+
+    if (existingItemError) {
+      logDatabaseError('addItem.lookup', existingItemError, user.id);
+      return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
+    }
+
+    if (existingItem?.id) {
+      const { error: updateError } = await serviceClient
+        .from('panier_vente_directe')
+        .update({ quantity: existingItem.quantity + quantity })
+        .eq('id', existingItem.id)
+        .eq('user_id', user.id);
+
+      if (updateError) {
+        logDatabaseError('addItem.update', updateError, user.id);
+        return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
+      }
+
+      return jsonResponse({ success: true }, 200, responseCorsHeaders);
+    }
+
     const { error: insertError } = await serviceClient
       .from('panier_vente_directe')
       .insert({
@@ -125,6 +160,7 @@ serve(async (req) => {
       });
 
     if (insertError) {
+      logDatabaseError('addItem.insert', insertError, user.id);
       return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
     }
 
@@ -142,6 +178,7 @@ serve(async (req) => {
         .eq('user_id', user.id);
 
       if (deleteError) {
+        logDatabaseError('updateQuantity.delete', deleteError, user.id);
         return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
       }
 
@@ -155,6 +192,7 @@ serve(async (req) => {
       .eq('user_id', user.id);
 
     if (updateError) {
+      logDatabaseError('updateQuantity.update', updateError, user.id);
       return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
     }
 
@@ -169,6 +207,7 @@ serve(async (req) => {
       .eq('user_id', user.id);
 
     if (deleteError) {
+      logDatabaseError('removeItem.delete', deleteError, user.id);
       return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
     }
 
@@ -182,6 +221,7 @@ serve(async (req) => {
       .eq('user_id', user.id);
 
     if (clearError) {
+      logDatabaseError('clearCart.delete', clearError, user.id);
       return jsonResponse({ error: 'DATABASE_ERROR' }, 500, responseCorsHeaders);
     }
 

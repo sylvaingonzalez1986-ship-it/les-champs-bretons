@@ -3,7 +3,7 @@
  * Permet de commander directement un produit auprès d'un producteur local
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Modal,
@@ -69,6 +69,7 @@ export default function LocalMarketOrderModal({
 
   // État du formulaire
   const [quantity, setQuantity] = useState(1);
+  const [quantityInput, setQuantityInput] = useState('1');
   const [customerName, setCustomerName] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -78,6 +79,7 @@ export default function LocalMarketOrderModal({
   const [deliveryMethod, setDeliveryMethod] = useState<'pickup' | 'shipping'>('pickup');
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryInstructions, setDeliveryInstructions] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'payment_link' | 'on_site'>('on_site');
 
   // État de l'UI
   const [step, setStep] = useState<'details' | 'confirm' | 'success'>('details');
@@ -89,36 +91,7 @@ export default function LocalMarketOrderModal({
   const [producerEmail, setProducerEmail] = useState(producer.email || '');
 
   // Charger l'email du producteur si nécessaire
-  useEffect(() => {
-    if (!producer.email && producer.id) {
-      fetchProducerEmail();
-    }
-  }, [producer.id]);
-
-  // Pré-remplir avec les infos du profil
-  useEffect(() => {
-    if (profile) {
-      const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
-      if (fullName) setCustomerName(fullName);
-      if (profile.email) setCustomerEmail(profile.email);
-      if (profile.phone) setCustomerPhone(profile.phone);
-    }
-  }, [profile]);
-
-  // Reset au changement de visibilité
-  useEffect(() => {
-    if (visible) {
-      setStep('details');
-      setQuantity(1);
-      setError(null);
-      setPickupCode(null);
-      setDeliveryMethod('pickup');
-      setDeliveryAddress('');
-      setDeliveryInstructions('');
-    }
-  }, [visible]);
-
-  const fetchProducerEmail = async () => {
+  const fetchProducerEmail = useCallback(async () => {
     try {
       const response = await fetch(
         `${SUPABASE_URL}/rest/v1/producers?id=eq.${producer.id}&select=email`,
@@ -138,7 +111,48 @@ export default function LocalMarketOrderModal({
     } catch (e) {
       console.warn('[LocalMarketOrderModal] Error fetching producer email:', e);
     }
-  };
+  }, [producer.id]);
+
+  useEffect(() => {
+    setProducerEmail(producer.email || '');
+  }, [producer.email]);
+
+  useEffect(() => {
+    if (!producer.email && producer.id) {
+      void fetchProducerEmail();
+    }
+  }, [producer.email, producer.id, fetchProducerEmail]);
+
+  // Pré-remplir avec les infos du profil
+  useEffect(() => {
+    if (profile) {
+      const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
+      if (fullName) setCustomerName(fullName);
+      if (profile.email) setCustomerEmail(profile.email);
+      if (profile.phone) setCustomerPhone(profile.phone);
+    }
+  }, [profile]);
+
+  // Reset au changement de visibilité
+  useEffect(() => {
+    if (visible) {
+      setStep('details');
+      setQuantity(1);
+      setQuantityInput('1');
+      setError(null);
+      setPickupCode(null);
+      setDeliveryMethod('pickup');
+      setDeliveryAddress('');
+      setDeliveryInstructions('');
+      setPaymentMethod('on_site');
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (deliveryMethod === 'shipping') {
+      setPaymentMethod('payment_link');
+    }
+  }, [deliveryMethod]);
 
   // Calculer le prix unitaire selon la quantité (avec paliers)
   const pricingProduct: PricingProduct = {
@@ -160,9 +174,12 @@ export default function LocalMarketOrderModal({
   const pickupCodeNote = isShipping
     ? 'Gardez ce code pour le suivi de votre commande.'
     : 'Présentez ce code au producteur lors du retrait.';
-  const paymentSummaryLabel = isShipping ? 'Total à régler' : 'Total à payer sur place';
-  const paymentNotice = isShipping
-    ? "Le paiement s'effectue à distance en suivant les instructions du producteur reçues par email. Votre commande sera expédiée une fois le paiement reçu."
+  const paymentMethodLabel = paymentMethod === 'payment_link'
+    ? 'Lien de paiement'
+    : 'Paiement sur place';
+  const paymentSummaryLabel = paymentMethod === 'payment_link' ? 'Total à régler' : 'Total à payer sur place';
+  const paymentNotice = paymentMethod === 'payment_link'
+    ? "Le producteur vous enverra un lien de paiement à distance. La commande sera validée après paiement."
     : "Le paiement s'effectue en personne lors du retrait de votre commande.";
 
   // Calculer le prochain palier pour afficher les économies potentielles
@@ -174,8 +191,43 @@ export default function LocalMarketOrderModal({
     const newQty = quantity + delta;
     if (newQty >= 1 && newQty <= maxStock) {
       setQuantity(newQty);
+      setQuantityInput(String(newQty));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
+  };
+
+  const handleQuantityInputChange = (value: string) => {
+    const digitsOnly = value.replace(/[^0-9]/g, '');
+
+    if (!digitsOnly) {
+      setQuantityInput('');
+      return;
+    }
+
+    const parsed = parseInt(digitsOnly, 10);
+    if (Number.isNaN(parsed)) return;
+    const clamped = Math.max(1, Math.min(parsed, maxStock));
+    setQuantityInput(String(clamped));
+    setQuantity(clamped);
+  };
+
+  const handleQuantityInputBlur = () => {
+    if (!quantityInput) {
+      setQuantity(1);
+      setQuantityInput('1');
+      return;
+    }
+
+    const parsed = parseInt(quantityInput, 10);
+    if (Number.isNaN(parsed)) {
+      setQuantity(1);
+      setQuantityInput('1');
+      return;
+    }
+
+    const clamped = Math.max(1, Math.min(parsed, maxStock));
+    setQuantity(clamped);
+    setQuantityInput(String(clamped));
   };
 
   const handleContinue = () => {
@@ -229,6 +281,7 @@ export default function LocalMarketOrderModal({
         delivery_fee: deliveryFee,
         delivery_address: deliveryMethod === 'shipping' ? deliveryAddress.trim() : undefined,
         delivery_instructions: deliveryMethod === 'shipping' ? deliveryInstructions.trim() || undefined : undefined,
+        payment_method: paymentMethod,
         customer_notes: customerNotes.trim() || undefined,
       };
 
@@ -359,6 +412,9 @@ export default function LocalMarketOrderModal({
                         Frais de livraison: {deliveryFee.toFixed(2)}€
                       </Text>
                     )}
+                    <Text className="text-xs mt-2" style={{ color: COLORS.text.muted }}>
+                      Paiement: {paymentMethodLabel}
+                    </Text>
                   </View>
 
                   {/* Infos livraison / retrait */}
@@ -476,10 +532,20 @@ export default function LocalMarketOrderModal({
                           <Minus size={20} color={quantity <= 1 ? COLORS.text.muted : COLORS.text.white} />
                         </Pressable>
 
-                        <View className="w-20 items-center">
-                          <Text className="text-2xl font-bold" style={{ color: COLORS.text.cream }}>
-                            {quantity}
-                          </Text>
+                        <View className="w-24 items-center">
+                          <TextInput
+                            value={quantityInput}
+                            onChangeText={handleQuantityInputChange}
+                            onBlur={handleQuantityInputBlur}
+                            keyboardType="number-pad"
+                            className="w-full px-2 py-2 rounded-xl text-center text-xl font-bold"
+                            style={{
+                              backgroundColor: `${COLORS.text.white}08`,
+                              color: COLORS.text.cream,
+                              borderWidth: 1,
+                              borderColor: `${COLORS.accent.hemp}30`,
+                            }}
+                          />
                         </View>
 
                         <Pressable
@@ -685,6 +751,54 @@ export default function LocalMarketOrderModal({
                     </View>
                   )}
 
+                  {/* Mode de paiement */}
+                  <View className="mb-6">
+                    <Text className="text-sm font-semibold mb-3" style={{ color: COLORS.text.lightGray }}>
+                      Mode de paiement
+                    </Text>
+                    <View className="flex-row gap-3">
+                      <Pressable
+                        onPress={() => setPaymentMethod('payment_link')}
+                        className="flex-1 py-3 rounded-xl items-center"
+                        style={{
+                          backgroundColor: paymentMethod === 'payment_link' ? COLORS.accent.hemp : `${COLORS.text.white}08`,
+                          borderWidth: 1,
+                          borderColor: paymentMethod === 'payment_link' ? COLORS.accent.hemp : `${COLORS.accent.hemp}30`,
+                        }}
+                      >
+                        <Text
+                          className="font-semibold"
+                          style={{ color: paymentMethod === 'payment_link' ? COLORS.text.white : COLORS.text.lightGray }}
+                        >
+                          Lien de paiement
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => !isShipping && setPaymentMethod('on_site')}
+                        disabled={isShipping}
+                        className="flex-1 py-3 rounded-xl items-center"
+                        style={{
+                          backgroundColor: paymentMethod === 'on_site' ? COLORS.accent.hemp : `${COLORS.text.white}08`,
+                          borderWidth: 1,
+                          borderColor: paymentMethod === 'on_site' ? COLORS.accent.hemp : `${COLORS.accent.hemp}30`,
+                          opacity: isShipping ? 0.5 : 1,
+                        }}
+                      >
+                        <Text
+                          className="font-semibold"
+                          style={{ color: paymentMethod === 'on_site' ? COLORS.text.white : COLORS.text.lightGray }}
+                        >
+                          Paiement sur place
+                        </Text>
+                      </Pressable>
+                    </View>
+                    {isShipping && (
+                      <Text className="text-xs mt-2" style={{ color: COLORS.text.muted }}>
+                        En livraison, le paiement se fait uniquement via lien envoyé par le producteur.
+                      </Text>
+                    )}
+                  </View>
+
                   {/* Formulaire client */}
                   <View className="mb-6">
                     <Text className="text-sm font-semibold mb-3" style={{ color: COLORS.text.lightGray }}>
@@ -865,6 +979,13 @@ export default function LocalMarketOrderModal({
                         </Text>
                       </View>
                     )}
+
+                    <View className="flex-row justify-between mb-2">
+                      <Text style={{ color: COLORS.text.lightGray }}>Mode de paiement</Text>
+                      <Text style={{ color: COLORS.text.cream }}>
+                        {paymentMethodLabel}
+                      </Text>
+                    </View>
 
                     <View
                       className="flex-row justify-between pt-3 mt-2"

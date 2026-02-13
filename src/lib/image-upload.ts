@@ -3,7 +3,6 @@
 // With retry logic, user-friendly error messages, and server-side validation
 
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system';
 import { isSupabaseConfigured, getSupabaseConfig } from './env-validation';
 import { getValidSession } from './supabase-auth';
 import { ensureDeviceId } from './device-id';
@@ -20,9 +19,6 @@ const JPEG_QUALITY = 0.7;
 const MAX_UPLOAD_RETRIES = 3;
 const UPLOAD_TIMEOUT = 30000; // 30 seconds
 const RETRY_DELAY_BASE = 2000; // 2 seconds
-
-// Track if bucket has been verified
-let bucketVerified = false;
 
 // Upload state for UI feedback
 export type UploadStatus = 'idle' | 'compressing' | 'validating' | 'uploading' | 'retrying' | 'success' | 'error';
@@ -80,74 +76,6 @@ export function isSupabaseStorageConfigured(): boolean {
   return isSupabaseConfigured();
 }
 
-/**
- * Ensure the storage bucket exists
- */
-async function ensureBucketExists(): Promise<boolean> {
-  if (bucketVerified) return true;
-  if (!isSupabaseConfigured()) return false;
-
-  const { url, anonKey } = getSupabaseConfig();
-
-  try {
-    // Check if bucket exists
-    const checkResponse = await fetch(
-      `${url}/storage/v1/bucket/${STORAGE_BUCKET}`,
-      {
-        method: 'GET',
-        headers: {
-          'apikey': anonKey,
-          'Authorization': `Bearer ${anonKey}`,
-        },
-      }
-    );
-
-    if (checkResponse.ok) {
-      bucketVerified = true;
-      return true;
-    }
-
-    // Bucket doesn't exist - try to create it
-    const createResponse = await fetch(
-      `${url}/storage/v1/bucket`,
-      {
-        method: 'POST',
-        headers: {
-          'apikey': anonKey,
-          'Authorization': `Bearer ${anonKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          id: STORAGE_BUCKET,
-          name: STORAGE_BUCKET,
-          public: false,
-          file_size_limit: 5242880, // 5MB
-          allowed_mime_types: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-        }),
-      }
-    );
-
-    if (createResponse.ok) {
-      bucketVerified = true;
-      return true;
-    }
-
-    // If we get a permission error (403), the bucket likely exists but we can't create it via API
-    // This is normal - bucket should be created manually in Supabase Dashboard
-    if (createResponse.status === 400 || createResponse.status === 403) {
-      // Try uploading anyway - the bucket exists
-      bucketVerified = true;
-      return true;
-    }
-
-    const errorText = await createResponse.text();
-    return false;
-  } catch (error) {
-    // Network error doesn't mean bucket doesn't exist - try anyway
-    bucketVerified = true;
-    return true;
-  }
-}
 
 /**
  * Validate file on server before upload (calls Supabase RPC)
@@ -199,7 +127,7 @@ async function validateFileOnServer(
 
     const result = await response.json();
     return result as ValidationResult;
-  } catch (error) {
+  } catch {
     return {
       valid: false,
       status: 'rejected',
@@ -226,32 +154,6 @@ function validateFileClient(fileSize: number, mimeType: string): { valid: boolea
   return { valid: true };
 }
 
-/**
- * Get file info from URI
- */
-async function getFileInfo(uri: string): Promise<{ size: number; mimeType: string } | null> {
-  try {
-    const fileInfo = await FileSystem.getInfoAsync(uri, { size: true });
-    if (!fileInfo.exists) return null;
-
-    // Déterminer le type MIME à partir de l'extension
-    const extension = uri.split('.').pop()?.toLowerCase();
-    const mimeMap: Record<string, string> = {
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      png: 'image/png',
-      webp: 'image/webp',
-      gif: 'image/gif',
-    };
-
-    return {
-      size: fileInfo.size ?? 0,
-      mimeType: mimeMap[extension || ''] || 'application/octet-stream',
-    };
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Compress an image before upload
@@ -613,3 +515,5 @@ export async function deleteImageFromSupabase(path: string): Promise<boolean> {
     return false;
   }
 }
+
+

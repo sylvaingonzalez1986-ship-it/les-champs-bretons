@@ -3,11 +3,9 @@
  * Gestion de l'état d'authentification avec migration progressive
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  AuthSession,
-  AuthUser,
   UserProfile,
   loadStoredSession,
   signIn,
@@ -20,13 +18,11 @@ import {
   fetchProfile,
   updateProfile,
   linkUserCode,
-  getSession,
-  getCurrentUser,
   refreshSession,
   resendConfirmationEmail,
 } from './supabase-auth';
 import { useReferralStore, useCollectionStore, useSubscriptionStore, useCartStore } from './store';
-import { getAuthErrorType, AuthErrorType } from '@/components/AuthErrorBanner';
+import { getAuthErrorType } from '@/components/AuthErrorBanner';
 
 // Query keys
 export const AUTH_QUERY_KEYS = {

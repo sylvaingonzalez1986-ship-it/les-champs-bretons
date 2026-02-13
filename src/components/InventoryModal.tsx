@@ -11,7 +11,7 @@ import { X, Package, Percent, Gift, Check, Sparkles } from 'lucide-react-native'
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { COLORS } from '@/lib/colors';
 import { useCollectionStore, RARITY_CONFIG } from '@/lib/store';
-import { CollectionItem, RARITY_CONFIG as RARITY_TYPES } from '@/lib/types';
+import { CollectionItem } from '@/lib/types';
 
 interface InventoryModalProps {
   visible: boolean;

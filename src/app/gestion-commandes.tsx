@@ -6,7 +6,7 @@
  * - Export CSV/PDF
  */
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   ScrollView,
@@ -30,8 +30,7 @@ import {
   Eye,
   Printer,
   Mail,
-  Store,
-  Phone,
+    Phone,
   Users,
   Truck,
   MapPin,
@@ -39,18 +38,16 @@ import {
 import { router } from 'expo-router';
 import { COLORS, withOpacity } from '@/lib/colors';
 import { useOrdersStore, Order, ORDER_STATUS_CONFIG, useProducerStore, useSupabaseSyncStore } from '@/lib/store';
-import { getStatusLabel, getStatusColor, type LocalMarketOrder } from '@/lib/local-market-orders';
+import { type LocalMarketOrder } from '@/lib/local-market-orders';
 import { usePermissions, useAuth } from '@/lib/useAuth';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase-auth';
-import { useQueryClient } from '@tanstack/react-query';
 import { useMyProducerQuery, useProducerLocalOrdersQuery, useProducerProOrdersQuery, useUserOrdersQuery } from '@/api/orders';
-import { useLocalMarketOrdersInfinite } from '@/api/local-market';
+import { useLocalMarketOrdersInfinite, useProducerDirectSaleOrdersInfinite, type ProducerDirectSaleOrder } from '@/api/local-market';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
 import * as Print from 'expo-print';
-import * as MailComposer from 'expo-mail-composer';
 import { getSafeMailtoUrl, getSafeTelUrl, safeOpenExternalUrl } from '@/lib/safe-linking';
 import { useOrderQueueStore } from '@/lib/order-queue-store';
 import { isSupabaseSyncConfigured } from '@/lib/supabase-sync';
@@ -68,27 +65,24 @@ const PERIOD_FILTERS: { value: PeriodFilter; label: string }[] = [
   { value: '12months', label: '12 derniers mois' },
 ];
 
-const PAYMENT_LINK_EMAIL = 'leschanvriersunis@gmail.com';
+const MONOSPACE_FONT = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 
 export default function GestionCommandesScreen({ mode }: { mode?: GestionMode }) {
   const insets = useSafeAreaInsets();
   const { isAdmin, isPro, isProducer } = usePermissions();
   const { session, profile } = useAuth();
   const ordersFromStore = useOrdersStore((s) => s.orders);
-  const updateOrderStatus = useOrdersStore((s) => s.updateOrderStatus);
-  const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPeriod, setSelectedPeriod] = useState<PeriodFilter>('all');
   const [showPeriodPicker, setShowPeriodPicker] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isExporting, setIsExporting] = useState(false);
-  const [isRequestingPaymentLink, setIsRequestingPaymentLink] = useState(false);
   const [showSuppliers, setShowSuppliers] = useState(false);
   const [producerOrdersView, setProducerOrdersView] = useState<'pro' | 'local'>('pro');
   const { toast, showToast, hideToast } = useToast();
   const { data: myProducer } = useMyProducerQuery();
-  const producerId = myProducer?.id ?? '';
+  const producerId = myProducer?.id ?? profile?.linked_producer_id ?? '';
   const {
     data: producerProOrders = [],
     isLoading: isLoadingProOrders,
@@ -108,6 +102,15 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
     data: producerLocalOrders = [],
     isLoading: isLoadingLocalOrders,
   } = useProducerLocalOrdersQuery(producerId, session?.access_token ?? '');
+  const {
+    data: producerDirectSalePages,
+    isFetching: isFetchingProducerDirectSales,
+  } = useProducerDirectSaleOrdersInfinite(
+    isProducerMode ? producerId : undefined,
+    isProducerMode ? session?.access_token : undefined,
+    200,
+    isProducerMode
+  );
 
   const {
     data: localMarketPages,
@@ -121,6 +124,10 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
   const localMarketOrders = useMemo(
     () => localMarketPages?.pages.flat() ?? [],
     [localMarketPages]
+  );
+  const producerDirectSaleOrders = useMemo(
+    () => producerDirectSalePages?.pages.flat() ?? [],
+    [producerDirectSalePages]
   );
 
   const pendingOrders = useOrderQueueStore((s) => s.pendingOrders);
@@ -140,14 +147,14 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
 
   const suppliersListMax = 8;
   const supplierContacts = useMemo(() => {
-    if (!isProMode) return [] as Array<{
+    if (!isProMode) return [] as {
       id: string;
       name: string;
       email?: string;
       phone?: string;
       city?: string;
       region?: string;
-    }>;
+    }[];
 
     let baseProducers: Producer[] = [];
     if (isAdminMode) {
@@ -215,7 +222,7 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
   const hasAccess = isAdminMode || isProMode || isProducerMode;
 
   const isLoadingOrders = isProducerMode
-    ? isLoadingProOrders || isLoadingLocalOrders
+    ? isLoadingProOrders || isLoadingLocalOrders || isFetchingProducerDirectSales
     : isLocalMarketFetching || (shouldLoadUserOrders && isLoadingUserOrders);
 
   const convertLocalOrders = useCallback((orders: LocalMarketOrder[]): Order[] => (
@@ -260,9 +267,71 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
     [convertLocalOrders, producerLocalOrders]
   );
 
+  const convertProducerDirectSaleOrders = useCallback((orders: ProducerDirectSaleOrder[]): Order[] => (
+    orders.map((order) => {
+      const customer = Array.isArray(order.customer) ? order.customer[0] : order.customer;
+      const firstName = customer?.first_name?.trim() || 'Client';
+      const lastName = customer?.last_name?.trim() || '';
+      const lines = Array.isArray(order.lines) ? order.lines : [];
+      const mappedItems = lines.map((line) => {
+        const product = Array.isArray(line.product) ? line.product[0] : line.product;
+        const lineTotal = Number(line.sous_total) || 0;
+        const quantity = Number(line.quantite) || 0;
+        const unitPrice = Number(line.prix_unitaire) || (quantity > 0 ? lineTotal / quantity : 0);
+        return {
+          productId: line.product_id,
+          productName: product?.name || 'Produit',
+          productType: 'fleur' as const,
+          producerId: order.producer_id,
+          producerName: myProducer?.name || 'Producteur',
+          quantity,
+          unitPrice,
+          totalPrice: lineTotal,
+          tvaRate: 20,
+        };
+      });
+
+      const statusMap: Record<ProducerDirectSaleOrder['statut'], Order['status']> = {
+        en_attente: 'pending',
+        confirmee: 'payment_sent',
+        prete: 'paid',
+        recuperee: 'shipped',
+        annulee: 'cancelled',
+      };
+
+      return {
+        id: String(order.id),
+        customerInfo: {
+          firstName,
+          lastName,
+          email: customer?.email || '',
+          phone: customer?.phone || '',
+          address: order.delivery_method === 'shipping' ? (order.delivery_address || '') : '',
+          postalCode: '',
+          city: '',
+        },
+        items: mappedItems,
+        subtotal: Number(order.total) || 0,
+        shippingFee: 0,
+        total: Number(order.total) || 0,
+        status: statusMap[order.statut] ?? 'pending',
+        createdAt: new Date(order.created_at).getTime(),
+        updatedAt: new Date(order.updated_at).getTime(),
+        notes: order.delivery_instructions || undefined,
+        isProOrder: false,
+        deliveryMethod: order.delivery_method || 'pickup',
+      };
+    })
+  ), [myProducer?.name]);
+
+  const producerLocalDirectSaleConverted = useMemo(
+    () => convertProducerDirectSaleOrders(producerDirectSaleOrders),
+    [convertProducerDirectSaleOrders, producerDirectSaleOrders]
+  );
+
   // Combiner les commandes boutique et marché local
   const allOrders = useMemo(() => {
-    // Pour les producteurs, utiliser producerLocalOrders et producerProOrders
+    // Pour les producteurs, utiliser producerLocalOrders + commandes panier local + producerProOrders
     // Pour admin/pro, utiliser localMarketOrders et ordersFromStore
     const localOrdersSource = isProducerMode ? producerLocalOrders : localMarketOrders;
     const baseProOrdersSource = isProducerMode
@@ -281,13 +350,20 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
         ];
 
     const localOrdersConverted = convertLocalOrders(localOrdersSource);
+    const producerLocalUnified = isProducerMode
+      ? [...localOrdersConverted, ...producerLocalDirectSaleConverted]
+      : localOrdersConverted;
+    const dedupedLocal = producerLocalUnified.filter(
+      (order, index, list) => index === list.findIndex((candidate) => candidate.id === order.id)
+    );
 
-    return [...proOrdersSource, ...localOrdersConverted];
+    return [...proOrdersSource, ...dedupedLocal];
   }, [
     ordersFromStore,
     localMarketOrders,
     producerLocalOrders,
     producerProOrders,
+    producerLocalDirectSaleConverted,
     convertLocalOrders,
     isProducerMode,
     shouldLoadUserOrders,
@@ -340,10 +416,13 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
     [filterOrders, producerProOrders]
   );
 
-  const filteredProducerLocalOrders = useMemo(
-    () => filterOrders(producerLocalOrdersConverted),
-    [filterOrders, producerLocalOrdersConverted]
-  );
+  const filteredProducerLocalOrders = useMemo(() => {
+    const merged = [...producerLocalOrdersConverted, ...producerLocalDirectSaleConverted];
+    const deduped = merged.filter(
+      (order, index, list) => index === list.findIndex((candidate) => candidate.id === order.id)
+    );
+    return filterOrders(deduped);
+  }, [filterOrders, producerLocalOrdersConverted, producerLocalDirectSaleConverted]);
 
   const computeStats = useCallback((orders: Order[]) => {
     const total = orders.length;
@@ -703,7 +782,7 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
                 }
               }
             }
-          } catch (err) {
+          } catch {
           }
         }
       }
@@ -977,94 +1056,6 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
     }
   };
 
-  const markPaymentLinkSent = (orderId: string) => {
-    updateOrderStatus(orderId, 'payment_sent');
-    if (isProducerMode && producerId) {
-      queryClient.setQueryData<Order[]>(['orders', 'pro', producerId], (prev) =>
-        prev ? prev.map((o) => (o.id === orderId ? { ...o, status: 'payment_sent' } : o)) : prev
-      );
-    }
-    if (!isProducerMode && session?.user?.id) {
-      queryClient.setQueryData<Order[]>(['orders', 'user', session.user.id], (prev) =>
-        prev ? prev.map((o) => (o.id === orderId ? { ...o, status: 'payment_sent' } : o)) : prev
-      );
-    }
-    setSelectedOrder((prev) => (prev && prev.id === orderId ? { ...prev, status: 'payment_sent' } : prev));
-  };
-
-  const requestPaymentLink = async (order: Order) => {
-    if (!order.customerInfo.email) {
-      Alert.alert('Email manquant', "Ajoutez l'email du client avant d'envoyer un lien de paiement.");
-      return;
-    }
-
-    if (!order.isProOrder) {
-      Alert.alert('Non disponible', "Le lien de paiement est disponible uniquement pour les commandes boutique.");
-      return;
-    }
-
-    try {
-      setIsRequestingPaymentLink(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-      const itemsSummary = order.items
-        .map(
-          (item) =>
-            `- ${item.productName} (${item.quantity} x ${item.unitPrice.toFixed(2)}€) = ${item.totalPrice.toFixed(2)}€`
-        )
-        .join('\n');
-
-      const clientName = `${order.customerInfo.firstName} ${order.customerInfo.lastName}`.trim();
-      const emailSubject = `Demande lien de paiement - Commande ${order.id}`;
-      const emailBody =
-        `DEMANDE LIEN DE PAIEMENT\n` +
-        `==========================\n\n` +
-        `Commande: ${order.id}\n` +
-        `Type: ${order.isProOrder ? 'PRO' : 'CLIENT'}\n` +
-        `Montant TTC: ${order.total.toFixed(2)} EUR\n` +
-        `Client: ${clientName || 'Non renseigné'}\n` +
-        `Email client: ${order.customerInfo.email}\n` +
-        `Téléphone: ${order.customerInfo.phone || 'Non renseigné'}\n\n` +
-        `PRODUITS\n` +
-        `--------\n` +
-        `${itemsSummary}\n\n` +
-        `Merci d'envoyer le lien de paiement au client à l'adresse ci-dessus.\n` +
-        `\n` +
-        `Mode DEV - Paiement externe (pas de paiement intégré dans l'app).\n`;
-
-      const isAvailable = await MailComposer.isAvailableAsync();
-
-      if (isAvailable) {
-        const result = await MailComposer.composeAsync({
-          recipients: [PAYMENT_LINK_EMAIL],
-          subject: emailSubject,
-          body: emailBody,
-        });
-
-        if (result.status !== MailComposer.MailComposerStatus.CANCELLED) {
-          markPaymentLinkSent(order.id);
-          Alert.alert('Email prêt', "Vérifiez et envoyez l'email pour déclencher le bot.");
-        }
-        return;
-      }
-
-      const mailtoUrl = `mailto:${PAYMENT_LINK_EMAIL}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
-      const opened = await safeOpenExternalUrl(mailtoUrl, { allowMailto: true });
-
-      if (opened) {
-        markPaymentLinkSent(order.id);
-        Alert.alert('Email prêt', "Vérifiez et envoyez l'email pour déclencher le bot.");
-        return;
-      }
-
-      Alert.alert('Erreur', "Impossible d'ouvrir l'email sur cet appareil.");
-    } catch (error) {
-      Alert.alert('Erreur', "Impossible de préparer l'email de demande de paiement.");
-    } finally {
-      setIsRequestingPaymentLink(false);
-    }
-  };
-
   if (!hasAccess) {
     return (
       <View style={{ flex: 1, backgroundColor: COLORS.background.nightSky }}>
@@ -1140,7 +1131,7 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
                 <Text style={{ fontSize: 12, color: COLORS.text.muted, marginBottom: 5 }}>
                   ID Commande
                 </Text>
-                <Text style={{ fontSize: 14, color: COLORS.text.white, fontFamily: 'monospace' }}>
+                <Text style={{ fontSize: 14, color: COLORS.text.white, fontFamily: MONOSPACE_FONT }}>
                   {selectedOrder.id}
                 </Text>
               </View>
@@ -1345,52 +1336,6 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
               <Text style={{ fontSize: 14, color: COLORS.text.white }}>{selectedOrder.notes}</Text>
             </View>
           )}
-
-          {/* Actions */}
-          <View
-            style={{
-              backgroundColor: COLORS.background.charcoal,
-              borderRadius: 12,
-              padding: 16,
-              marginBottom: 16,
-              borderWidth: 1,
-              borderColor: `${COLORS.primary.gold}25`,
-            }}
-          >
-            <Text style={{ fontSize: 14, fontWeight: 'bold', color: COLORS.primary.gold, marginBottom: 6 }}>
-              Paiement (DEV)
-            </Text>
-            <Text style={{ fontSize: 13, color: COLORS.text.muted }}>
-              Aucun paiement intégré dans l'app. Le lien est envoyé par email via le bot.
-            </Text>
-          </View>
-
-          <Pressable
-            onPress={() => requestPaymentLink(selectedOrder)}
-            disabled={isRequestingPaymentLink || !selectedOrder.customerInfo.email}
-            style={{
-              backgroundColor: COLORS.accent.hemp,
-              padding: 16,
-              borderRadius: 12,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 10,
-              opacity: isRequestingPaymentLink || !selectedOrder.customerInfo.email ? 0.6 : 1,
-              marginBottom: 12,
-            }}
-          >
-            {isRequestingPaymentLink ? (
-              <ActivityIndicator color={COLORS.text.white} />
-            ) : (
-              <>
-                <Mail size={20} color={COLORS.text.white} />
-                <Text style={{ fontSize: 16, fontWeight: 'bold', color: COLORS.text.white }}>
-                  Demander lien de paiement
-                </Text>
-              </>
-            )}
-          </Pressable>
 
           <Pressable
             onPress={() => generateInvoice(selectedOrder)}
@@ -1800,7 +1745,7 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
                   >
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 12, color: COLORS.text.muted, fontFamily: 'monospace' }}>
+                        <Text style={{ fontSize: 12, color: COLORS.text.muted, fontFamily: MONOSPACE_FONT }}>
                           {order.id.slice(0, 12)}...
                         </Text>
                         <Text style={{ fontSize: 16, color: COLORS.text.white, fontWeight: 'bold', marginTop: 5 }}>
@@ -2016,7 +1961,7 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
               >
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }}>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 12, color: COLORS.text.muted, fontFamily: 'monospace' }}>
+                    <Text style={{ fontSize: 12, color: COLORS.text.muted, fontFamily: MONOSPACE_FONT }}>
                       {order.id.slice(0, 12)}...
                     </Text>
                     <Text style={{ fontSize: 16, color: COLORS.text.white, fontWeight: 'bold', marginTop: 5 }}>
@@ -2096,3 +2041,5 @@ export default function GestionCommandesScreen({ mode }: { mode?: GestionMode })
     </View>
   );
 }
+
+

@@ -34,7 +34,7 @@ export default function ForgotPasswordScreen() {
     try {
       await resetPassword(email);
       setEmailSent(true);
-    } catch (err) {
+    } catch {
       setError('Erreur lors de l\'envoi');
     }
   };

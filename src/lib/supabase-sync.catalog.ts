@@ -1,7 +1,7 @@
 // Supabase sync client for producers and products
 // This syncs admin-configured data to all users
 
-import { Producer, ProducerProduct } from './producers';
+import { Producer, ProducerProduct, PriceTier } from './producers';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   SUPABASE_URL,
@@ -14,7 +14,7 @@ import {
 } from './supabase-sync-core';
 import { ensureDeviceId } from './device-id';
 import { getValidSession } from './supabase-auth';
-import { PriceTier } from './producers';
+
 import { getSignedImageUrl, getSignedLabAnalysisUrl } from './storage-utils';
 
 // ==================== PRODUCERS ====================
@@ -132,53 +132,6 @@ async function postProducerMutation(
   }
 
   return response;
-}
-
-// Convert Supabase producer to app Producer format
-function supabaseToProducer(sp: SupabaseProducer, products: ProducerProduct[]): Producer {
-  return {
-    id: sp.id,
-    name: sp.name,
-    companyName: sp.profile?.company_name ?? undefined,
-    businessName: sp.profile?.business_name ?? undefined,
-    profileId: sp.profile_id ?? undefined, // Lien vers le profil utilisateur
-    email: sp.email ?? undefined,
-    region: sp.region,
-    department: sp.department,
-    city: sp.city,
-    image: sp.image,
-    description: sp.description,
-    coordinates: {
-      latitude: sp.latitude,
-      longitude: sp.longitude,
-    },
-    mapPosition: sp.map_position_x !== null && sp.map_position_y !== null
-      ? { x: sp.map_position_x, y: sp.map_position_y }
-      : undefined,
-    soil: {
-      type: sp.soil_type,
-      ph: sp.soil_ph,
-      characteristics: sp.soil_characteristics,
-    },
-    climate: {
-      type: sp.climate_type,
-      avgTemp: sp.climate_avg_temp,
-      rainfall: sp.climate_rainfall,
-    },
-    products,
-    cultureOutdoor: sp.culture_outdoor ?? undefined,
-    cultureGreenhouse: sp.culture_greenhouse ?? undefined,
-    cultureIndoor: sp.culture_indoor ?? undefined,
-    socialLinks: {
-      instagram: sp.instagram_url ?? undefined,
-      facebook: sp.facebook_url ?? undefined,
-      twitter: sp.twitter_url ?? undefined,
-      tiktok: sp.tiktok_url ?? undefined,
-      youtube: sp.youtube_url ?? undefined,
-      website: sp.website_url ?? undefined,
-      linkedin: sp.linkedin_url ?? undefined,
-    },
-  };
 }
 
 // Convert app Producer to Supabase format
@@ -879,3 +832,4 @@ export async function syncProductToSupabase(product: ProducerProduct, producerId
     await addProductToSupabase(product, producerId);
   }
 }
+

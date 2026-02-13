@@ -4,8 +4,6 @@ import {
   ScrollView,
   Pressable,
   Image,
-  KeyboardAvoidingView,
-  Platform,
   Modal,
   Dimensions,
 } from 'react-native';
@@ -18,7 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { FadeInDown, FadeInUp, FadeIn } from 'react-native-reanimated';
 import { COLORS } from '@/lib/colors';
 import { useProducerStore, useCartStore, useProducerReviewsStore, useSupabaseSyncStore, ProducerReview } from '@/lib/store';
-import { SAMPLE_PRODUCERS, PRODUCT_TYPE_COLORS, PRODUCT_TYPE_LABELS, ProducerProduct, getPriceForQuantity } from '@/lib/producers';
+import { SAMPLE_PRODUCERS, PRODUCT_TYPE_COLORS, PRODUCT_TYPE_LABELS, ProducerProduct } from '@/lib/producers';
 import { getImageSource } from '@/lib/asset-images';
 import { usePermissions, useAuth } from '@/lib/useAuth';
 import { usePricingMode } from '@/lib/useProductPricing';

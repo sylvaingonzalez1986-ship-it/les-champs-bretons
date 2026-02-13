@@ -7,11 +7,11 @@
 import React, { useCallback, useMemo } from 'react';
 import { View, Pressable, ActivityIndicator } from 'react-native';
 import { Text } from '@/components/ui';
-import { WifiOff, RefreshCw, Database, CheckCircle, AlertTriangle } from 'lucide-react-native';
+import { WifiOff, RefreshCw, Database, AlertTriangle } from 'lucide-react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { COLORS } from '@/lib/colors';
-import { useSyncState, forceDataSync, type SyncStatus } from '@/lib/useDataSync';
+import { useSyncState, forceDataSync } from '@/lib/useDataSync';
 
 interface CacheStatusBannerProps {
   /** Style personnalisé pour le conteneur */
@@ -57,8 +57,6 @@ function CacheStatusBannerComponent({
     return status === 'error' || status === 'syncing' || isUsingCache;
   }, [showOnlyOnError, status, isUsingCache]);
 
-  if (!shouldShow) return null;
-
   // Configuration de l'affichage selon l'état
   const config = useMemo(() => {
     if (status === 'error') {
@@ -102,7 +100,8 @@ function CacheStatusBannerComponent({
 
     return null;
   }, [error, isUsingCache, status]);
-  if (!config) return null;
+
+  if (!shouldShow || !config) return null;
 
   const IconComponent = config.icon;
 
@@ -233,3 +232,4 @@ function formatLastSync(timestamp: number): string {
   if (hours < 24) return `il y a ${hours}h`;
   return `il y a ${days}j`;
 }
+

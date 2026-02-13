@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   ScrollView,
@@ -30,12 +30,15 @@ import { OfflineDisabledButton } from '@/components/OfflineDisabledButton';
 import { useOfflineStatus } from '@/lib/network-context';
 import { useOrderQueueStore } from '@/lib/order-queue-store';
 import { PendingOrdersBanner } from '@/components/PendingOrdersBanner';
+import { useDirectSalesCart } from '@/lib/direct-sales-cart';
+import PanierVenteDirecte from '@/app/panier-vente-directe';
 
 const ORDER_EMAIL = 'leschanvriersunis@gmail.com';
 
 export default function CartScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const [activeCart, setActiveCart] = useState<'packs' | 'local'>('packs');
   const [showOrderConfirmation, setShowOrderConfirmation] = useState(false);
   const [showProfileWarning, setShowProfileWarning] = useState(false);
   const [editingQuantity, setEditingQuantity] = useState<string | null>(null);
@@ -53,7 +56,7 @@ export default function CartScreen() {
   const [currentOrderData, setCurrentOrderData] = useState<{
     orderId: string;
     customerInfo: CustomerInfo;
-    items: Array<{
+    items: {
       productId: string;
       productName: string;
       productType: string;
@@ -62,7 +65,7 @@ export default function CartScreen() {
       quantity: number;
       unitPrice: number;
       totalPrice: number;
-    }>;
+    }[];
     subtotal: number;
     shippingFee: number;
     total: number;
@@ -70,13 +73,13 @@ export default function CartScreen() {
   } | null>(null);
 
   // Pricing context pour afficher le label approprié
-  const { isPro, priceLabel } = usePricingContext();
+  const { isPro } = usePricingContext();
 
   // Toast pour les feedbacks utilisateur
   const { toast, showToast, hideToast } = useToast();
 
   // État offline pour désactiver les actions d'écriture
-  const { isOffline } = useOfflineStatus();
+  useOfflineStatus();
 
   const items = useCartStore((s) => s.items);
   const updateQuantity = useCartStore((s) => s.updateQuantity);
@@ -99,8 +102,16 @@ export default function CartScreen() {
   const collection = useCollectionStore((s) => s.collection);
   const markItemAsUsed = useCollectionStore((s) => s.useCollectionItem);
   const availableLotsCount = collection.filter((item) => !item.used).length;
+  const localCartItems = useDirectSalesCart((s) => s.items);
 
   const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
+  const localTotalItems = localCartItems.reduce((sum, item) => sum + item.quantity, 0);
+
+  useEffect(() => {
+    if (isPro && activeCart !== 'packs') {
+      setActiveCart('packs');
+    }
+  }, [isPro, activeCart]);
 
   // Helper function to get base price (Pro or Public) - sans paliers
   const getBasePriceWithoutTiers = (item: typeof items[0]) => {
@@ -152,12 +163,6 @@ export default function CartScreen() {
 
   // Calcul de la TVA par produit (prix TTC - prix HT)
   // TVA = Prix TTC - (Prix TTC / (1 + taux TVA))
-  const totalTva = items.reduce((sum, item) => {
-    const tvaRate = item.product.tvaRate ?? 20; // Défaut 20%
-    const itemTotal = getItemPrice(item) * item.quantity;
-    const tvaAmount = itemTotal - (itemTotal / (1 + tvaRate / 100));
-    return sum + tvaAmount;
-  }, 0);
 
   // Frais de port selon l'option de livraison choisie
   const FREE_SHIPPING_THRESHOLD = 79;
@@ -177,7 +182,6 @@ export default function CartScreen() {
   }
 
   // Calculate product lots value
-  const productLotsValue = selectedProducts.reduce((sum, item) => sum + (item.product.value ?? 0), 0);
 
   const totalPrice = subtotal + shippingFee - discountAmount;
 
@@ -361,7 +365,7 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
         'Veuillez configurer une application mail sur votre appareil pour envoyer la commande.'
       );
       return { success: false, cancelled: false, noMailApp: true };
-    } catch (error) {
+    } catch {
       return { success: false, cancelled: false, error: true };
     }
   };
@@ -766,12 +770,14 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
                 <Sparkles size={18} color={COLORS.primary.brightYellow} style={{ marginLeft: 8 }} />
               </View>
               <Text style={{ color: COLORS.text.muted }} className="text-sm">
-                {totalItems} article{totalItems > 1 ? 's' : ''} magique{totalItems > 1 ? 's' : ''}
+                {activeCart === 'packs'
+                  ? `${totalItems} article${totalItems > 1 ? 's' : ''} magique${totalItems > 1 ? 's' : ''}`
+                  : `${localTotalItems} article${localTotalItems > 1 ? 's' : ''} en vente directe`}
               </Text>
             </View>
           </View>
 
-          {items.length > 0 && (
+          {activeCart === 'packs' && items.length > 0 && (
             <Pressable
               onPress={clearCart}
               className="flex-row items-center px-4 py-2.5 rounded-2xl"
@@ -788,16 +794,84 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
         </Animated.View>
       </View>
 
-      {/* Bannière des commandes en attente de synchronisation */}
-      <PendingOrdersBanner
-        onSyncComplete={(result) => {
-          if (result.success > 0) {
-            showToast(`${result.success} commande(s) synchronisée(s) avec succès !`, 'success');
-          }
-        }}
-      />
+      {!isPro && (
+        <View className="px-5 pt-4">
+        <View
+          className="rounded-2xl p-1 flex-row"
+          style={{
+            backgroundColor: 'rgba(20, 29, 47, 0.7)',
+            borderWidth: 1,
+            borderColor: 'rgba(212, 168, 83, 0.2)',
+          }}
+        >
+          <Pressable
+            onPress={() => setActiveCart('packs')}
+            className="flex-1 rounded-xl py-2.5 items-center"
+            style={{
+              backgroundColor: activeCart === 'packs' ? 'rgba(212, 168, 83, 0.2)' : 'transparent',
+            }}
+          >
+            <Text
+              className="font-semibold"
+              style={{ color: activeCart === 'packs' ? COLORS.primary.paleGold : COLORS.text.muted }}
+            >
+              Packs
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setActiveCart('local')}
+            className="flex-1 rounded-xl py-2.5 items-center"
+            style={{
+              backgroundColor: activeCart === 'local' ? 'rgba(90, 158, 90, 0.2)' : 'transparent',
+            }}
+          >
+            <Text
+              className="font-semibold"
+              style={{ color: activeCart === 'local' ? COLORS.accent.hemp : COLORS.text.muted }}
+            >
+              Marché local
+            </Text>
+          </Pressable>
+        </View>
+        <View className="flex-row items-center justify-center mt-2 gap-4">
+          <View className="flex-row items-center">
+            <View
+              className="w-2.5 h-2.5 rounded-full mr-1.5"
+              style={{ backgroundColor: COLORS.accent.red }}
+            />
+            <Text className="text-xs" style={{ color: COLORS.text.muted }}>
+              Packs ({totalItems})
+            </Text>
+          </View>
+          <View className="flex-row items-center">
+            <View
+              className="w-2.5 h-2.5 rounded-full mr-1.5"
+              style={{ backgroundColor: COLORS.primary.orange }}
+            />
+            <Text className="text-xs" style={{ color: COLORS.text.muted }}>
+              Local ({localTotalItems})
+            </Text>
+          </View>
+        </View>
+        </View>
+      )}
 
-      {items.length === 0 ? (
+      {activeCart === 'local' ? (
+        <View className="flex-1 mt-4">
+          <PanierVenteDirecte />
+        </View>
+      ) : (
+        <>
+          {/* Bannière des commandes en attente de synchronisation */}
+          <PendingOrdersBanner
+            onSyncComplete={(result) => {
+              if (result.success > 0) {
+                showToast(`${result.success} commande(s) synchronisée(s) avec succès !`, 'success');
+              }
+            }}
+          />
+
+          {items.length === 0 ? (
         <View className="flex-1 items-center justify-center px-10">
           <Animated.View entering={FadeInUp.duration(600).delay(200)}>
             <LinearGradient
@@ -1357,25 +1431,31 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
             </LinearGradient>
           </View>
         </>
+          )}
+        </>
       )}
 
-      {/* Inventory Modal */}
-      <InventoryModal
-        visible={showInventory}
-        onClose={() => setShowInventory(false)}
-        onSelectDiscount={setSelectedDiscount}
-        onSelectProducts={setSelectedProducts}
-        selectedDiscount={selectedDiscount}
-        selectedProducts={selectedProducts}
-        orderSubtotal={subtotal}
-      />
+      {activeCart === 'packs' && (
+        <>
+          {/* Inventory Modal */}
+          <InventoryModal
+            visible={showInventory}
+            onClose={() => setShowInventory(false)}
+            onSelectDiscount={setSelectedDiscount}
+            onSelectProducts={setSelectedProducts}
+            selectedDiscount={selectedDiscount}
+            selectedProducts={selectedProducts}
+            orderSubtotal={subtotal}
+          />
 
-      {/* Écran récapitulatif avec crédit de tickets */}
-      <TicketRecapScreen
-        visible={showRecapScreen}
-        orderData={currentOrderData}
-        onClose={handleRecapClose}
-      />
+          {/* Écran récapitulatif avec crédit de tickets */}
+          <TicketRecapScreen
+            visible={showRecapScreen}
+            orderData={currentOrderData}
+            onClose={handleRecapClose}
+          />
+        </>
+      )}
 
       {/* Toast pour les notifications */}
       <Toast
@@ -1388,3 +1468,4 @@ Merci d'envoyer le lien de paiement au ${clientType.toLowerCase()} a l'adresse: 
     </View>
   );
 }
+

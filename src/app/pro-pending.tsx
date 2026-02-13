@@ -10,9 +10,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Clock, LogOut, RefreshCw, Mail, Building2, XCircle } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
-import { useAuth } from '@/lib/useAuth';
+import { useAuth, AUTH_QUERY_KEYS } from '@/lib/useAuth';
 import { useQueryClient } from '@tanstack/react-query';
-import { AUTH_QUERY_KEYS } from '@/lib/useAuth';
 
 export default function ProPendingScreen() {
   const insets = useSafeAreaInsets();

@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { View } from 'react-native';
-import Svg, { Path, Circle, Line, Defs, RadialGradient, Stop } from 'react-native-svg';
+import Svg, { Path, Line, Defs, RadialGradient, Stop } from 'react-native-svg';
 
 interface IndoorIconProps {
   size?: number;

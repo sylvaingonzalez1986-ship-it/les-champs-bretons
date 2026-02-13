@@ -8,7 +8,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { ProducerProduct, PRODUCT_TYPE_LABELS, DeliveryType, DELIVERY_TYPE_LABELS, PriceTier } from '@/lib/producers';
 import { useProducerStore, usePromoProductsStore } from '@/lib/store';
 import { COLORS } from '@/lib/colors';
-import { processImageForSync, processMultipleImagesForSync, isSupabaseStorageConfigured } from '@/lib/image-upload';
+import { processImageForSync, processMultipleImagesForSync } from '@/lib/image-upload';
 import { ImageCropper } from './ImageCropper';
 
 const MAX_IMAGES = 3;

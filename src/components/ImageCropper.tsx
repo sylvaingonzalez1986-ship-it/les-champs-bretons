@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Modal, Image, Pressable, Dimensions, StyleSheet } from 'react-native';
 import { Text } from '@/components/ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,7 +7,6 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  runOnJS,
 } from 'react-native-reanimated';
 import { X, Check, RotateCcw, ZoomIn, ZoomOut, Move } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
@@ -99,7 +98,16 @@ export const ImageCropper = ({
         }
       );
     }
-  }, [visible, imageUri]);
+  }, [
+    visible,
+    imageUri,
+    scale,
+    savedScale,
+    translateX,
+    translateY,
+    savedTranslateX,
+    savedTranslateY,
+  ]);
 
   // Reset transformations
   const resetTransform = () => {

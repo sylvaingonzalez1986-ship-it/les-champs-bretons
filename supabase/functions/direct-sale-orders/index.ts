@@ -43,6 +43,7 @@ type DirectSaleOrder = {
   id: string;
   user_id: string;
   producer_id: string;
+  pickup_code: string;
   total: number;
   statut: string;
   adresse_retrait: string;
@@ -109,13 +110,39 @@ async function getProducerId(serviceClient: ReturnType<typeof createClient>, use
     .from('producers')
     .select('id')
     .eq('profile_id', userId)
-    .single();
+    .maybeSingle();
 
-  if (error) {
+  if (!error && data?.id) {
+    return data.id;
+  }
+
+  // Fallback for legacy/misaligned producer links
+  const { data: profileData, error: profileError } = await serviceClient
+    .from('profiles')
+    .select('linked_producer_id')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (profileError) {
     return null;
   }
 
-  return data?.id ?? null;
+  const linkedProducerId = profileData?.linked_producer_id;
+  if (!linkedProducerId) {
+    return null;
+  }
+
+  const { data: linkedProducer, error: linkedError } = await serviceClient
+    .from('producers')
+    .select('id')
+    .eq('id', linkedProducerId)
+    .maybeSingle();
+
+  if (linkedError) {
+    return null;
+  }
+
+  return linkedProducer?.id ?? null;
 }
 
 async function ensureProducerAccess(
@@ -211,7 +238,7 @@ serve(async (req) => {
 
     let query = serviceClient
       .from('commandes_vente_directe')
-      .select('id,user_id,producer_id,total,statut,adresse_retrait,horaires_retrait,instructions_retrait,created_at,updated_at')
+      .select('id,user_id,producer_id,pickup_code,total,statut,adresse_retrait,horaires_retrait,instructions_retrait,created_at,updated_at')
       .eq('producer_id', targetProducerId)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -238,7 +265,7 @@ serve(async (req) => {
 
     const { data: order, error: orderError } = await serviceClient
       .from('commandes_vente_directe')
-      .select('id,user_id,producer_id,total,statut,adresse_retrait,horaires_retrait,instructions_retrait,created_at,updated_at')
+      .select('id,user_id,producer_id,pickup_code,total,statut,adresse_retrait,horaires_retrait,instructions_retrait,created_at,updated_at')
       .eq('id', orderId)
       .single();
 
@@ -308,7 +335,7 @@ serve(async (req) => {
         updated_at: new Date().toISOString(),
       })
       .eq('id', orderId)
-      .select('id,user_id,producer_id,total,statut,adresse_retrait,horaires_retrait,instructions_retrait,created_at,updated_at')
+      .select('id,user_id,producer_id,pickup_code,total,statut,adresse_retrait,horaires_retrait,instructions_retrait,created_at,updated_at')
       .single();
 
     if (updateError || !updated) {

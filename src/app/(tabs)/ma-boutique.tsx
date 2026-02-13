@@ -25,10 +25,8 @@ import {
   Check,
   Package,
   Eye,
-  EyeOff,
   AlertCircle,
   Leaf,
-  ChevronDown,
   Search,
   Save,
   ImagePlus,
@@ -59,7 +57,7 @@ import { useRouter } from 'expo-router';
 import { useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { COLORS } from '@/lib/colors';
 import { PRODUCT_TYPE_LABELS, PRODUCT_TYPE_COLORS, PriceTier } from '@/lib/producers';
-import { usePermissions } from '@/lib/useAuth';
+import { useAuth, usePermissions } from '@/lib/useAuth';
 import {
   fetchMyProducer,
   fetchProducerProducts,
@@ -77,12 +75,13 @@ import { DirectSalesSettingsForm } from '@/components/DirectSalesSettingsForm';
 import { useOrdersStore, Order, OrderStatus, ORDER_STATUS_CONFIG } from '@/lib/store';
 import { isSupabaseSyncConfigured, updateOrderInSupabase, SessionExpiredError, syncOrderToSupabase } from '@/lib/supabase-sync';
 import { useLocalMarketOrders, LocalMarketOrder, getStatusLabel, getStatusColor } from '@/lib/local-market-orders';
-import { useAuth } from '@/lib/useAuth';
 import { safeOpenExternalUrl } from '@/lib/safe-linking';
 import type { UserProfile } from '@/lib/supabase-auth';
+import { SUPABASE_URL } from '@/lib/supabase-auth';
+import { ensureDeviceId } from '@/lib/device-id';
 import { useProducerOrdersInfinite } from '@/api/orders';
 import { useOrdersRefresher } from '@/api/orders-refresh';
-import { useProducerLocalMarketOrdersInfinite } from '@/api/local-market';
+import { useProducerLocalMarketOrdersInfinite, useProducerDirectSaleOrdersInfinite, type ProducerDirectSaleOrder } from '@/api/local-market';
 
 type TabType = 'products' | 'orders' | 'direct_sales';
 
@@ -154,7 +153,7 @@ const STATUS_OPTIONS = [
 
 export default function MaBoutiqueScreen() {
   const insets = useSafeAreaInsets();
-  const { isProducer, isAdmin } = usePermissions();
+  const { isProducer } = usePermissions();
   const { session, profile, updateProfile, isUpdatingProfile, signOut } = useAuth();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -183,6 +182,7 @@ export default function MaBoutiqueScreen() {
   const { updateOrderStatus: updateLocalOrderStatus } = useLocalMarketOrders();
   const DIRECT_SALES_PAGE_SIZE = 20;
   const [selectedDirectOrder, setSelectedDirectOrder] = useState<LocalMarketOrder | null>(null);
+  const [selectedCartDirectOrder, setSelectedCartDirectOrder] = useState<ProducerDirectSaleOrder | null>(null);
 
   // Modal states
   const [showProductModal, setShowProductModal] = useState(false);
@@ -288,8 +288,75 @@ export default function MaBoutiqueScreen() {
   };
 
   const onLoadMoreDirectSales = () => {
-    if (directSalesLoadingMore || !directSalesHasMore) return;
-    void fetchNextDirectSalesPage();
+    if (directSalesHasMore && !directSalesLoadingMore) {
+      void fetchNextDirectSalesPage();
+    }
+    if (producerDirectSalesHasMore && !producerDirectSalesLoadingMore) {
+      void fetchNextProducerDirectSalesPage();
+    }
+  };
+
+  const handleDirectCartStatusChange = async (
+    order: ProducerDirectSaleOrder,
+    status: ProducerDirectSaleOrder['statut']
+  ) => {
+    if (!session?.access_token) return;
+
+    try {
+      const deviceId = await ensureDeviceId();
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/direct-sale-orders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+          'X-Device-Id': deviceId,
+        },
+        body: JSON.stringify({
+          action: 'updateStatus',
+          orderId: order.id,
+          status,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        showToast(errorText || 'Erreur mise a jour statut', 'error');
+        return;
+      }
+
+      const payload = await response.json() as { order?: ProducerDirectSaleOrder };
+      const updated = payload?.order;
+      const nextStatus = updated?.statut ?? status;
+
+      if (producer?.id) {
+        queryClient.setQueryData<InfiniteData<ProducerDirectSaleOrder[]>>(
+          ['direct-sale-orders', 'producer', producer.id],
+          (existing) => {
+            if (!existing) return existing;
+            return {
+              ...existing,
+              pages: existing.pages.map((page) =>
+                page.map((item) =>
+                  item.id === order.id
+                    ? { ...item, ...updated, statut: nextStatus, updated_at: updated?.updated_at ?? item.updated_at }
+                    : item
+                )
+              ),
+            };
+          }
+        );
+      }
+
+      setSelectedCartDirectOrder((prev) => (
+        prev && prev.id === order.id
+          ? { ...prev, ...updated, statut: nextStatus, updated_at: updated?.updated_at ?? prev.updated_at }
+          : prev
+      ));
+      showToast('Statut mis a jour', 'success');
+    } catch (error) {
+      console.error('[MaBoutique] direct cart status update error', error);
+      showToast('Erreur mise a jour statut', 'error');
+    }
   };
 
   const ordersQueryEnabled = activeTab === 'orders' && !!producer?.id && isSupabaseSyncConfigured();
@@ -317,10 +384,25 @@ export default function MaBoutiqueScreen() {
     directSalesQueryEnabled
   );
 
+  const {
+    data: producerDirectSalePages,
+    isFetching: isProducerDirectSalesFetching,
+    isFetchingNextPage: isProducerDirectSalesFetchingMore,
+    fetchNextPage: fetchNextProducerDirectSalesPage,
+    hasNextPage: producerDirectSalesHasMore,
+  } = useProducerDirectSaleOrdersInfinite(
+    producer?.id,
+    session?.access_token,
+    DIRECT_SALES_PAGE_SIZE,
+    directSalesQueryEnabled
+  );
+
   const ordersLoading = isOrdersFetching && !producerOrdersPages;
   const ordersLoadingMore = isOrdersFetchingMore;
   const directSalesLoading = isDirectSalesFetching && !directSalesPages;
   const directSalesLoadingMore = isDirectSalesFetchingMore;
+  const producerDirectSalesLoading = isProducerDirectSalesFetching && !producerDirectSalePages;
+  const producerDirectSalesLoadingMore = isProducerDirectSalesFetchingMore;
 
   const ordersFromQuery = useMemo(
     () => producerOrdersPages?.pages.flat() ?? [],
@@ -330,6 +412,11 @@ export default function MaBoutiqueScreen() {
   const directSalesOrders = useMemo(
     () => directSalesPages?.pages.flat() ?? [],
     [directSalesPages]
+  );
+
+  const producerDirectSaleOrders = useMemo(
+    () => producerDirectSalePages?.pages.flat() ?? [],
+    [producerDirectSalePages]
   );
 
   useEffect(() => {
@@ -769,7 +856,8 @@ export default function MaBoutiqueScreen() {
 
     // Upload analyse labo si nécessaire
     let labAnalysisUrl = formData.lab_analysis_url || null;
-    if (labAnalysisUrl && !(labAnalysisUrl.startsWith('http://') || labAnalysisUrl.startsWith('https://'))) {
+    if (labAnalysisUrl && !(labAnalysisUrl.startsWith('http://') || labAnalysisUrl.startsWith('https://') || labAnalysisUrl.startsWith('lab-analyses/'))) {
+      // C'est un chemin local (file://, /data/, etc.) — il faut uploader
       if (isLabAnalysesConfigured()) {
         try {
           setUploadingLabAnalysis(true);
@@ -777,9 +865,12 @@ export default function MaBoutiqueScreen() {
         } catch (error: any) {
           console.error('[MaBoutique] Lab analysis upload error:', error);
           Alert.alert('Erreur upload', error?.message || 'Impossible d\'uploader l\'analyse de laboratoire');
+          labAnalysisUrl = null; // Ne pas sauvegarder le chemin local en base
         } finally {
           setUploadingLabAnalysis(false);
         }
+      } else {
+        labAnalysisUrl = null; // Service non configuré — ne pas sauvegarder le chemin local
       }
     }
 
@@ -858,7 +949,7 @@ export default function MaBoutiqueScreen() {
           setError('Erreur lors de la création');
         }
       }
-    } catch (err) {
+    } catch {
       setError('Une erreur est survenue');
     } finally {
       setSaving(false);
@@ -1781,12 +1872,11 @@ export default function MaBoutiqueScreen() {
                       );
                       setFormData((f) => ({ ...f, lab_analysis_url: publicUrl }));
                     } else {
-                      setFormData((f) => ({ ...f, lab_analysis_url: uri }));
+                      Alert.alert('Erreur', 'Le service d\'upload n\'est pas configuré');
                     }
                   } catch (error: any) {
                     console.error('[MaBoutique] Lab analysis upload error:', error);
                     Alert.alert('Erreur upload', error?.message || 'Impossible d\'uploader l\'analyse de laboratoire');
-                    setFormData((f) => ({ ...f, lab_analysis_url: uri }));
                   } finally {
                     setUploadingLabAnalysis(false);
                   }
@@ -2911,14 +3001,14 @@ export default function MaBoutiqueScreen() {
           </View>
 
           {/* Liste des commandes */}
-          {directSalesLoading && directSalesOrders.length === 0 ? (
+          {directSalesLoading && producerDirectSalesLoading && directSalesOrders.length === 0 && producerDirectSaleOrders.length === 0 ? (
             <View className="items-center py-20">
               <ActivityIndicator size="large" color={COLORS.accent.hemp} />
               <Text style={{ color: COLORS.text.muted }} className="text-center mt-4">
                 Chargement des commandes...
               </Text>
             </View>
-          ) : directSalesOrders.length === 0 ? (
+          ) : directSalesOrders.length === 0 && producerDirectSaleOrders.length === 0 ? (
             <View className="items-center py-20">
               <Store size={64} color={COLORS.text.muted} />
               <Text style={{ color: COLORS.text.muted }} className="text-center mt-4 text-lg">
@@ -2930,25 +3020,44 @@ export default function MaBoutiqueScreen() {
             </View>
           ) : (
             <>
+              {producerDirectSaleOrders.length > 0 && (
+                <Text className="text-xs uppercase tracking-widest mb-2" style={{ color: COLORS.primary.gold }}>
+                  Panier local
+                </Text>
+              )}
+              {producerDirectSaleOrders.map((order, index) => (
+                <DirectCartOrderCard
+                  key={`cart-${order.id}`}
+                  order={order}
+                  index={index}
+                  onPress={() => setSelectedCartDirectOrder(order)}
+                />
+              ))}
+
+              {directSalesOrders.length > 0 && (
+                <Text className="text-xs uppercase tracking-widest mt-2 mb-2" style={{ color: COLORS.accent.hemp }}>
+                  Commandes directes
+                </Text>
+              )}
               {directSalesOrders.map((order, index) => (
                 <DirectSalesOrderCard
-                  key={order.id}
+                  key={`local-${order.id}`}
                   order={order}
                   index={index}
                   onPress={() => setSelectedDirectOrder(order)}
                 />
               ))}
 
-              {directSalesHasMore && (
+              {(directSalesHasMore || producerDirectSalesHasMore) && (
                 <View className="items-center my-6">
                   <Pressable
                     onPress={onLoadMoreDirectSales}
-                    disabled={directSalesLoadingMore}
+                    disabled={directSalesLoadingMore || producerDirectSalesLoadingMore}
                     className="px-4 py-2 rounded-full"
                     style={{ backgroundColor: `${COLORS.text.white}10` }}
                   >
                     <Text style={{ color: COLORS.text.lightGray }}>
-                      {directSalesLoadingMore ? 'Chargement...' : 'Charger plus'}
+                      {(directSalesLoadingMore || producerDirectSalesLoadingMore) ? 'Chargement...' : 'Charger plus'}
                     </Text>
                   </Pressable>
                 </View>
@@ -2956,6 +3065,15 @@ export default function MaBoutiqueScreen() {
             </>
           )}
         </ScrollView>
+      )}
+
+      {selectedCartDirectOrder && (
+        <DirectCartOrderModal
+          order={selectedCartDirectOrder}
+          onClose={() => setSelectedCartDirectOrder(null)}
+          onStatusChange={(status) => handleDirectCartStatusChange(selectedCartDirectOrder, status)}
+          insets={insets}
+        />
       )}
 
       {/* Direct Sales Order Detail Modal */}
@@ -2998,6 +3116,210 @@ export default function MaBoutiqueScreen() {
         />
       )}
     </View>
+  );
+}
+
+function getDirectCartStatusLabel(status: ProducerDirectSaleOrder['statut']): string {
+  switch (status) {
+    case 'en_attente':
+      return 'En attente';
+    case 'confirmee':
+      return 'Confirmee';
+    case 'prete':
+      return 'Prete';
+    case 'recuperee':
+      return 'Recuperee';
+    case 'annulee':
+      return 'Annulee';
+    default:
+      return status;
+  }
+}
+
+function getDirectCartStatusColor(status: ProducerDirectSaleOrder['statut']): string {
+  switch (status) {
+    case 'en_attente':
+      return '#F59E0B';
+    case 'confirmee':
+      return '#3B82F6';
+    case 'prete':
+      return '#8B5CF6';
+    case 'recuperee':
+      return '#22C55E';
+    case 'annulee':
+      return '#EF4444';
+    default:
+      return COLORS.text.muted;
+  }
+}
+
+function DirectCartOrderCard({ order, index, onPress }: { order: ProducerDirectSaleOrder; index: number; onPress: () => void }) {
+  const statusColor = getDirectCartStatusColor(order.statut);
+  const statusLabel = getDirectCartStatusLabel(order.statut);
+  const customer = Array.isArray(order.customer) ? order.customer[0] : order.customer;
+  const customerName = `${customer?.first_name ?? ''} ${customer?.last_name ?? ''}`.trim() || customer?.email || 'Client';
+  const lineCount = (Array.isArray(order.lines) ? order.lines : []).reduce((sum, line) => sum + (line.quantite ?? 0), 0);
+  const formattedDate = new Date(order.created_at).toLocaleDateString('fr-FR', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  return (
+    <Animated.View entering={FadeInDown.duration(300).delay(index * 50)} className="mb-3">
+      <Pressable
+        onPress={onPress}
+        className="rounded-2xl overflow-hidden"
+        style={{ backgroundColor: COLORS.background.charcoal, borderWidth: 1, borderColor: `${statusColor}30` }}
+      >
+        <View className="flex-row items-center justify-between px-4 py-3" style={{ backgroundColor: `${statusColor}15` }}>
+          <View className="flex-row items-center">
+            <View className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: statusColor }} />
+            <Text className="font-semibold" style={{ color: statusColor }}>{statusLabel}</Text>
+          </View>
+          <Text className="text-xs" style={{ color: COLORS.text.muted }}>{formattedDate}</Text>
+        </View>
+
+        <View className="px-4 py-3" style={{ borderBottomWidth: 1, borderBottomColor: `${COLORS.text.white}10` }}>
+          <View className="flex-row items-center justify-between">
+            <Text style={{ color: COLORS.text.cream }} className="font-medium">{customerName}</Text>
+            <Text style={{ color: COLORS.primary.brightYellow }} className="font-bold text-lg">
+              {(Number(order.total) || 0).toFixed(2)}€
+            </Text>
+          </View>
+          <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+            {lineCount} article{lineCount > 1 ? 's' : ''}
+          </Text>
+        </View>
+
+        <View className="flex-row items-center justify-between px-4 py-2" style={{ backgroundColor: `${COLORS.primary.gold}10` }}>
+          <Text style={{ color: COLORS.text.muted }} className="text-xs">
+            {(order.delivery_method ?? 'pickup') === 'shipping' ? 'Code commande' : 'Code retrait'}
+          </Text>
+          <Text style={{ color: COLORS.primary.gold }} className="font-bold">
+            {order.pickup_code || order.id.slice(0, 8).toUpperCase()}
+          </Text>
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+function DirectCartOrderModal({
+  order,
+  onClose,
+  onStatusChange,
+  insets,
+}: {
+  order: ProducerDirectSaleOrder;
+  onClose: () => void;
+  onStatusChange: (status: ProducerDirectSaleOrder['statut']) => void;
+  insets: { bottom: number };
+}) {
+  const statusColor = getDirectCartStatusColor(order.statut);
+  const statusLabel = getDirectCartStatusLabel(order.statut);
+  const customer = Array.isArray(order.customer) ? order.customer[0] : order.customer;
+  const lines = Array.isArray(order.lines) ? order.lines : [];
+  const statusOptions: ProducerDirectSaleOrder['statut'][] = ['en_attente', 'confirmee', 'prete', 'recuperee', 'annulee'];
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View className="flex-1 bg-black/80 justify-end">
+        <View className="rounded-t-3xl max-h-[90%]" style={{ backgroundColor: COLORS.background.charcoal, paddingBottom: insets.bottom + 20 }}>
+          <View className="flex-row items-center justify-between px-5 py-4" style={{ borderBottomWidth: 1, borderBottomColor: `${COLORS.primary.gold}20` }}>
+            <View>
+              <Text style={{ color: COLORS.text.cream }} className="text-xl font-bold">
+                Commande #{order.pickup_code || order.id.slice(0, 8).toUpperCase()}
+              </Text>
+              <Text style={{ color: COLORS.text.muted }} className="text-sm">
+                {new Date(order.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </Text>
+            </View>
+            <Pressable onPress={onClose} className="w-10 h-10 rounded-full items-center justify-center" style={{ backgroundColor: `${COLORS.text.white}10` }}>
+              <X size={20} color={COLORS.text.muted} />
+            </Pressable>
+          </View>
+
+          <ScrollView className="px-5" showsVerticalScrollIndicator={false}>
+            <View className="py-4">
+              <Text style={{ color: COLORS.text.lightGray }} className="font-medium mb-3">Statut</Text>
+              <View className="flex-row items-center p-4 rounded-xl" style={{ backgroundColor: `${statusColor}20` }}>
+                <View className="w-4 h-4 rounded-full mr-3" style={{ backgroundColor: statusColor }} />
+                <Text style={{ color: statusColor }} className="font-bold text-lg">{statusLabel}</Text>
+              </View>
+            </View>
+
+            <View className="py-1">
+              <Text style={{ color: COLORS.text.lightGray }} className="font-medium mb-3">Changer le statut</Text>
+              <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+                {statusOptions.map((status) => {
+                  const color = getDirectCartStatusColor(status);
+                  const label = getDirectCartStatusLabel(status);
+                  const isActive = order.statut === status;
+                  return (
+                    <Pressable
+                      key={status}
+                      onPress={() => onStatusChange(status)}
+                      className="px-4 py-2 rounded-full"
+                      style={{
+                        backgroundColor: isActive ? color : `${color}20`,
+                        borderWidth: isActive ? 0 : 1,
+                        borderColor: `${color}50`,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: isActive ? COLORS.text.white : color,
+                          fontSize: 12,
+                          fontWeight: 'bold',
+                        }}
+                      >
+                        {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View className="py-2">
+              <Text style={{ color: COLORS.text.lightGray }} className="font-medium mb-2">Client</Text>
+              <Text style={{ color: COLORS.text.cream }} className="text-sm">
+                {`${customer?.first_name ?? ''} ${customer?.last_name ?? ''}`.trim() || customer?.email || 'Client'}
+              </Text>
+              {customer?.email ? <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">{customer.email}</Text> : null}
+              {customer?.phone ? <Text style={{ color: COLORS.text.muted }} className="text-xs">{customer.phone}</Text> : null}
+            </View>
+
+            <View className="py-4">
+              <Text style={{ color: COLORS.text.lightGray }} className="font-medium mb-3">Produits</Text>
+              {lines.map((line) => {
+                const product = Array.isArray(line.product) ? line.product[0] : line.product;
+                return (
+                  <View key={line.id} className="rounded-xl p-3 mb-2" style={{ backgroundColor: `${COLORS.text.white}06` }}>
+                    <Text style={{ color: COLORS.text.cream }} className="font-medium">{product?.name || 'Produit'}</Text>
+                    <Text style={{ color: COLORS.text.muted }} className="text-xs mt-1">
+                      {line.quantite} x {(Number(line.prix_unitaire) || 0).toFixed(2)}€
+                    </Text>
+                    <Text style={{ color: COLORS.primary.brightYellow }} className="font-semibold mt-1">
+                      {(Number(line.sous_total) || 0).toFixed(2)}€
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+
+            <View className="py-4 mb-2">
+              <Text style={{ color: COLORS.text.lightGray }} className="font-medium">Total</Text>
+              <Text style={{ color: COLORS.primary.brightYellow }} className="text-2xl font-bold">
+                {(Number(order.total) || 0).toFixed(2)}€
+              </Text>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 

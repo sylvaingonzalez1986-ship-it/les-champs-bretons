@@ -73,7 +73,6 @@ export default function MusicScreen() {
   const toggleMute = useAudioStore((s) => s.toggleMute);
   const setRepeatMode = useAudioStore((s) => s.setRepeatMode);
   const toggleShuffle = useAudioStore((s) => s.toggleShuffle);
-  const stop = useAudioStore((s) => s.stop);
 
   // Animations
   const discRotation = useSharedValue(0);
@@ -89,7 +88,7 @@ export default function MusicScreen() {
         false
       );
     }
-  }, [isPlaying]);
+  }, [isPlaying, discRotation]);
 
   // Format time
   const formatTime = (ms: number) => {

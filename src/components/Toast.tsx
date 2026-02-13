@@ -3,14 +3,13 @@
  * Composant de notification temporaire réutilisable
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { View, Pressable } from 'react-native';
 import { Text } from '@/components/ui';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
-  withSequence,
   runOnJS,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -80,6 +79,13 @@ export const Toast: React.FC<ToastProps> = ({
   const config = TOAST_CONFIG[type];
   const IconComponent = config.icon;
 
+  const hideToast = useCallback(() => {
+    translateY.value = withTiming(position === 'top' ? -100 : 100, { duration: 300 });
+    opacity.value = withTiming(0, { duration: 300 }, () => {
+      runOnJS(onHide)();
+    });
+  }, [onHide, opacity, position, translateY]);
+
   useEffect(() => {
     if (visible) {
       // Animate in
@@ -93,14 +99,7 @@ export const Toast: React.FC<ToastProps> = ({
 
       return () => clearTimeout(timer);
     }
-  }, [visible]);
-
-  const hideToast = () => {
-    translateY.value = withTiming(position === 'top' ? -100 : 100, { duration: 300 });
-    opacity.value = withTiming(0, { duration: 300 }, () => {
-      runOnJS(onHide)();
-    });
-  };
+  }, [duration, hideToast, opacity, translateY, visible]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
@@ -159,8 +158,7 @@ export const Toast: React.FC<ToastProps> = ({
   );
 };
 
-// Hook pour gérer facilement les toasts
-import { useState, useCallback } from 'react';
+// Hook pour gerer facilement les toasts
 
 interface ToastState {
   visible: boolean;
@@ -189,3 +187,4 @@ export const useToast = () => {
     hideToast,
   };
 };
+

@@ -90,7 +90,7 @@ export async function fetchMusicTracks(): Promise<MusicTrack[]> {
     }
 
     return response.json();
-  } catch (error) {
+  } catch {
     return [];
   }
 }

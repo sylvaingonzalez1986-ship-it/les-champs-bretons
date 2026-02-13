@@ -11,8 +11,6 @@
 import { getValidSession, AuthSession, SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-auth';
 import {
   userProfileSchema,
-  userProfileUpdateSchema,
-  producerSchema,
   validateSafe,
   validateArraySafe,
   toUserError,

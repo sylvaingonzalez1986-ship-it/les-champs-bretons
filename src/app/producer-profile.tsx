@@ -23,7 +23,6 @@ import {
   User,
   MapPin,
   FileText,
-  Image as ImageIcon,
   Leaf,
   Thermometer,
   Droplets,
@@ -43,10 +42,9 @@ import {
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
 import { useAuth } from '@/lib/useAuth';
-import { useProducerStore } from '@/lib/store';
+import { useProducerStore, useSupabaseSyncStore } from '@/lib/store';
 import { Producer } from '@/lib/producers';
 import { syncProducerToSupabase, isSupabaseSyncConfigured, fetchAllProducersWithProducts } from '@/lib/supabase-sync';
-import { useSupabaseSyncStore } from '@/lib/store';
 import { forceDataSync } from '@/lib/useDataSync';
 import { ProducerPhotoManager } from '@/components/ProducerPhotoManager';
 import {
@@ -418,7 +416,11 @@ export default function ProducerProfileScreen() {
       setSuccessMessage('Fiche producteur enregistrée !');
       setTimeout(() => {
         setSuccessMessage('');
-        router.canGoBack() ? router.back() : router.replace('/(tabs)/ma-boutique');
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/(tabs)/ma-boutique');
+        }
       }, 1500);
     } catch (error) {
       console.error('[ProducerProfile] Error saving producer profile:', error);

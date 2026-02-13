@@ -17,11 +17,8 @@ import {
   fetchAllUserData,
   upsertUserSubscription,
   addToUserCollection,
-  deleteCollectionItem,
   upsertUserReferral,
-  fetchUserStats,
   incrementUserSpins as incrementSpinsSupabase,
-  SupabaseUserCollectionItem,
 } from './supabase-sync';
 import { CollectionItem, CBDProduct } from './types';
 
@@ -35,8 +32,6 @@ export function useUserDataSync() {
   const lastUserIdRef = useRef<string | null>(null);
 
   // Stores
-  const setSubscription = useSubscriptionStore((s) => s.setSubscription);
-  const addTickets = useSubscriptionStore((s) => s.addTickets);
   const subscriptionResetStore = useSubscriptionStore((s) => s.resetStore);
 
   const collectionResetStore = useCollectionStore((s) => s.resetStore);

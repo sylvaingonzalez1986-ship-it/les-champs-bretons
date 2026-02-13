@@ -158,7 +158,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     isAuthenticated,
     isInitialized,
     profile,
-    session,
     isLoadingSession,
     isLoadingProfile,
     sessionError,
@@ -182,8 +181,6 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     const inAuthGroup = segments[0] === 'auth';
     const inAgeVerification = segments[0] === 'age-verification';
     const inProPendingPage = segments[0] === 'pro-pending';
-    const inTabs = segments[0] === '(tabs)';
-
     let targetRoute: RootRoute | null = null;
 
     // Skip navigation if user is on reset-password page (deep link from email)
@@ -240,6 +237,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     segments,
     router,
     rootNavState?.key,
+    rootNavState?.routes?.length,
   ]);
 
   // Reset navigation tracking when auth state changes

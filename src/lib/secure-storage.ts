@@ -454,7 +454,7 @@ export async function setItem(
     await SecureStore.setItemAsync(key, value, {
       keychainAccessible: options?.keychainAccessible ?? SecureStore.WHEN_UNLOCKED,
     });
-  } catch (error) {
+  } catch {
     console.warn('[SecureStorage] SecureStore indisponible, fallback AsyncStorage');
     await AsyncStorage.setItem(prefixedKey, value);
   }

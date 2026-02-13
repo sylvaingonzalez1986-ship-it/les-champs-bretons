@@ -1,13 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Pressable, ScrollView, ActivityIndicator } from 'react-native';
 import { Text } from '@/components/ui';
 import {
-  TrendingUp,
   Users,
   Package,
   ShoppingCart,
   DollarSign,
-  Eye,
   ChevronDown,
   ChevronUp,
   Truck,
@@ -20,7 +18,7 @@ import {
   RefreshCw,
 } from 'lucide-react-native';
 import { COLORS } from '@/lib/colors';
-import { useOrdersStore, useProducerStore, Order } from '@/lib/store';
+import { useOrdersStore, useProducerStore } from '@/lib/store';
 import { fetchUsers, UserProfile, USER_ROLE_LABELS, USER_ROLE_COLORS, UserRole } from '@/lib/supabase-users';
 import { fetchOrders, isSupabaseSyncConfigured } from '@/lib/supabase-sync';
 
@@ -50,12 +48,7 @@ export const AdminDashboard = ({ onNavigateToUsers }: AdminDashboardProps) => {
   const setOrders = useOrdersStore((s) => s.setOrders);
   const producers = useProducerStore((s) => s.producers);
 
-  // Load data
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
       // Fetch users
@@ -83,7 +76,12 @@ export const AdminDashboard = ({ onNavigateToUsers }: AdminDashboardProps) => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [setOrders]);
+
+  // Load data
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
